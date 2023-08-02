@@ -1,0 +1,14 @@
+# Changes here will be overwritten by Copier; NEVER EDIT MANUALLY
+_commit: v4.1.0
+_src_path: https://github.com/jupyterlab/extension-template
+author_email: wengxili@umich.edu
+author_name: Wengxi
+has_binder: true
+has_settings: false
+kind: server
+labextension_name: jlab-ext-example
+project_short_description: A JupyterLab extension with backend and frontend parts.
+python_name: jlab_ext_example
+repository: https://github.com/imerlwx/jlab-ext-example
+test: true
+
