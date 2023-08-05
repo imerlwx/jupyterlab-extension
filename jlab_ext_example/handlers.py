@@ -5,14 +5,20 @@ import json
 import isodate
 import datetime
 import requests
+import openai
 from jupyter_server.base.handlers import APIHandler
 from jupyter_server.utils import url_path_join
 import tornado
 from googleapiclient.discovery import build
+from youtube_transcript_api import YouTubeTranscriptApi
 
+# YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
+openai.api_key = os.getenv("OPENAI_API_KEY")
 YOUTUBE_API_KEY = "AIzaSyA_72GvOE9OdRKdCIk2-lXC_BTUrGwnz2A"
+openai.api_key = "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"
 youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
 URL = "https://api.github.com/repos/rfordatascience/tidytuesday/contents/data/"
+TRANSCRIPT_CACHE = {}
 
 
 class DataHandler(APIHandler):
@@ -43,20 +49,25 @@ class SegmentHandler(APIHandler):
             self.set_status(400)
             self.finish(json.dumps({"error": "Missing video_id"}))
             return
-        video_response = (
-            youtube.videos().list(part="contentDetails", id=video_id).execute()
-        )
+        # video_response = (
+        #     youtube.videos().list(part="contentDetails", id=video_id).execute()
+        # )
 
-        duration = video_response["items"][0]["contentDetails"]["duration"]
-        total_seconds = iso8601_duration_as_seconds(duration)
-        segment_duration = total_seconds // 10
+        # duration = video_response["items"][0]["contentDetails"]["duration"]
+        # total_seconds = iso8601_duration_as_seconds(duration)
+        # segment_duration = total_seconds // 10
+        # segments = [
+        #     {
+        #         "start": i * segment_duration,
+        #         "end": (i + 1) * segment_duration,
+        #         "url": f"https://www.youtube.com/embed/{video_id}?start={i * segment_duration}&end={(i + 1) * segment_duration}&autoplay=0",
+        #     }
+        #     for i in range(10)
+        # ]
+        llm_response = get_video_segment(video_id)
         segments = [
-            {
-                "start": i * segment_duration,
-                "end": (i + 1) * segment_duration,
-                "url": f"https://www.youtube.com/embed/{video_id}?start={i * segment_duration}&end={(i + 1) * segment_duration}&autoplay=0",
-            }
-            for i in range(10)
+            {"start": item["start"], "end": item["end"], "name": item["category"]}
+            for item in llm_response
         ]
 
         self.finish(json.dumps(segments))
@@ -128,6 +139,84 @@ def get_csv_from_youtube_video(youtube_api, video_id):
     closest_folder = get_closest_date_folder(video_publish_date)
     csv_list = get_csv_file(closest_folder)
     return csv_list
+
+
+def get_transcript(video_id):
+    if video_id not in TRANSCRIPT_CACHE.keys():
+        data = YouTubeTranscriptApi.get_transcript(video_id)
+        transcript = [i for i in data if i["start"] < 900]
+        for item in transcript:
+            del item["duration"]
+        TRANSCRIPT_CACHE[video_id] = transcript
+    return TRANSCRIPT_CACHE[video_id]
+
+
+def get_video_segment(video_id):
+    transcript_1 = get_transcript("Kd9BNI6QMmQ")
+    transcript_2 = get_transcript("nx5yhXAQLxw")
+    transcript_3 = get_transcript(video_id)
+
+    completion = openai.ChatCompletion.create(
+        model="gpt-4-32k",
+        messages=[
+            {
+                "role": "system",
+                "content": """
+                            You are the most experienced transcript segment assistant in the world who is focused on segmenting the transcripts of videos teaching exploratory data analysis. 
+                            You have read countless video transcripts about exploratory data analysis so you are confident to segment one into the following 6 categories.
+                            1. Introduction; 2. Load data / packages; 3. Initial observation on raw data; 4. Data processing; 5. Data visualization; 6. Chart interpretation / insights.
+                            Specifically, you can find categories that correspond to nothing in the transcript, and can find parts in the transcript that correspond to the same category.
+                            It is okay if the transcript for you to segment is shorter then the example. 
+                            Restriction:
+                            - Don't assume the example is the answer. 
+                            - You will not make any assumptions without the input transcript.
+                            - You will not omit any video transcript segment.
+                            - Output all the times in integer seconds.
+                            - Each category could have multiple time period.
+                            - Don't segment time that do not appear in the video.
+                            """,
+            },
+            {"role": "user", "content": str(transcript_1)},
+            {
+                "role": "assistant",
+                "content": """[
+                                {'category': 'Introduction', 'start': 1, 'end': 102}, 
+                                {'category': 'Load data / packages', 'start': 103, 'end': 137}, 
+                                {'category': 'Initial observation on raw data', 'start': 138, 'end': 220}, 
+                                {'category': 'Data processing', 'start': 221, 'end': 568}, 
+                                {'category': 'Data visualization', 'start': 569, 'end': 580}, 
+                                {'category': 'Chart interpretation / insights', 'start': 581, 'end': 596},
+                                {'category': 'Data visualization', 'start': 597, 'end': 655}, 
+                                {'category': 'Chart interpretation / insights', 'start': 656, 'end': 680},
+                                {'category': 'Data processing', 'start': 681, 'end': 715}, 
+                                {'category': 'Chart interpretation / insights', 'start': 716, 'end': 740},
+                                {'category': 'Data visualization', 'start': 741, 'end': 884}, 
+                                {'category': 'Chart interpretation / insights', 'start': 885, 'end': 900}
+                            ]""",
+            },
+            {"role": "user", "content": str(transcript_2)},
+            {
+                "role": "assistant",
+                "content": """[
+                                {'category': 'Introduction', 'start': 1, 'end': 120}, 
+                                {'category': 'Load data / packages', 'start': 121, 'end': 220}, 
+                                {'category': 'Initial observation on raw data', 'start': 221, 'end': 435}, 
+                                {'category': 'Data visualization', 'start': 436, 'end': 463}, 
+                                {'category': 'Chart interpretation / insights', 'start': 464, 'end': 512},
+                                {'category': 'Data visualization', 'start': 513, 'end': 600}, 
+                                {'category': 'Chart interpretation / insights', 'start': 601, 'end': 640},
+                                {'category': 'Data visualization', 'start': 641, 'end': 695}, 
+                                {'category': 'Chart interpretation / insights', 'start': 696, 'end': 720},
+                                {'category': 'Data processing', 'start': 721, 'end': 780}, 
+                                {'category': 'Data visualization', 'start': 781, 'end': 900} 
+                            ]""",
+            },
+            {"role": "user", "content": str(transcript_3)},
+        ],
+        temperature=0.5,
+    )
+    llm_response = completion.choices[0].message["content"]
+    return json.loads(llm_response.replace("'", '"'))
 
 
 def setup_handlers(web_app):

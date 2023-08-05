@@ -70,22 +70,6 @@ const plugin: JupyterFrontEndPlugin<void> = {
       }
     });
 
-    // const createDataTableCommand = CommandIDs.createDataTable;
-    // commands.addCommand(createDataTableCommand, {
-    //   label: trans.__('Open a Datatable'),
-    //   caption: trans.__('Open a Datatable Panel'),
-    //   icon: args => (args['isPalette'] ? undefined : reactIcon),
-    //   execute: () => {
-    //     const csvUrl =
-    //       'https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2018/2018-10-16/recent-grads.csv'; // Replace with your actual CSV URL.
-    //     const content = new DataTableWidget(csvUrl);
-    //     const widget = new MainAreaWidget<DataTableWidget>({ content });
-    //     widget.title.label = 'Open a Datatable';
-    //     widget.title.icon = reactIcon;
-    //     app.shell.add(widget, 'main');
-    //   }
-    // });
-    // palette.addItem({ command, category: 'Extension Examples' });
     const createDataTableCommand = CommandIDs.createDataTable;
     commands.addCommand(createDataTableCommand, {
       caption: 'Create a new Data Table Widget',

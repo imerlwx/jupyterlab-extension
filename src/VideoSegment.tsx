@@ -7,7 +7,7 @@ import { requestAPI } from './handler';
 export interface ISegment {
   start: number;
   end: number;
-  url: string;
+  name: string;
 }
 
 export interface IVideoId {
@@ -75,9 +75,10 @@ const VideoSegmentComponent = (
         <Button onClick={handleSubmit}>Submit</Button>
         <Typography variant="h5">Video Segments</Typography>
         <div>
-          {videoSegments.map((segment, index) => (
+          {videoSegments.map((segment: ISegment, index) => (
             <Button key={index} onClick={() => handleSegmentClick(segment)}>
-              Segment {index + 1}
+              {/* Segment {index + 1} */}
+              {segment.name}
             </Button>
           ))}
         </div>

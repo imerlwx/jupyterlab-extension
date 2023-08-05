@@ -34,7 +34,7 @@ const VideoPlayerComponent = (props: IVideoPlayerProps): JSX.Element => {
               title="video"
               width="100%"
               height="100%"
-              src={`https://www.youtube.com/embed/${props.videoId}?start=${props.segment.start}&autoplay=1`}
+              src={`https://www.youtube.com/embed/${props.videoId}?start=${props.segment.start}&end=${props.segment.end}&autoplay=0`}
               frameBorder="0"
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
               allowFullScreen
@@ -48,7 +48,7 @@ const VideoPlayerComponent = (props: IVideoPlayerProps): JSX.Element => {
 };
 
 export class VideoPlayerWidget extends ReactWidget {
-  private _segment: ISegment = { start: 0, end: 0, url: '' };
+  private _segment: ISegment = { start: 1, end: 10, name: '' };
   private _videoId = '';
 
   constructor(videoSegmentWidget: VideoSegmentWidget) {
