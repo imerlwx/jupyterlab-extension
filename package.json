@@ -58,6 +58,7 @@
         "watch:labextension": "jupyter labextension watch ."
     },
     "dependencies": {
+        "@chatscope/chat-ui-kit-react": "^1.10.1",
         "@emotion/react": "^11.11.1",
         "@emotion/styled": "^11.11.0",
         "@jupyterlab/application": "^4.0.3",
@@ -70,6 +71,7 @@
         "ag-grid-react": "^30.0.6",
         "axios": "^1.4.0",
         "papaparse": "^5.4.1",
+        "react-youtube": "^10.1.0",
         "webpack": "^5.88.2"
     },
     "devDependencies": {
@@ -79,6 +81,8 @@
         "@types/json-schema": "^7.0.11",
         "@types/papaparse": "^5.3.7",
         "@types/react": "^18.0.26",
+        "@types/youtube": "^0.0.47",
+        "@types/youtube-player": "^5.5.7",
         "@typescript-eslint/eslint-plugin": "^6.1.0",
         "@typescript-eslint/parser": "^6.1.0",
         "css-loader": "^6.7.1",

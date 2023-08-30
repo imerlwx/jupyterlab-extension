@@ -10,6 +10,10 @@ export interface ISegment {
   name: string;
 }
 
+export interface IVideoSegments {
+  segments: ISegment[];
+}
+
 export interface IVideoId {
   videoId: string;
 }
@@ -17,6 +21,7 @@ export interface IVideoId {
 type VideoSegmentComponentProps = {
   onSegmentSelected: (segment: ISegment) => void;
   onVideoIdChange: (videoId: IVideoId) => void;
+  onVideoSegmentsChange: (segments: IVideoSegments) => void;
 };
 
 const VideoSegmentComponent = (
@@ -25,6 +30,7 @@ const VideoSegmentComponent = (
   const [input, setInput] = useState(''); // Input state
   // const [videoId, setVideoId] = useState('');
   const [videoSegments, setVideoSegments] = useState([]);
+  const [selectedSegment, setSelectedSegment] = useState<ISegment | null>(null);
 
   const handleInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     setInput(event.target.value);
@@ -41,6 +47,7 @@ const VideoSegmentComponent = (
       .then(response => {
         console.log(response);
         setVideoSegments(response);
+        props.onVideoSegmentsChange({ segments: response }); // Emit signal for videoSegments
       })
       .catch(reason => {
         console.error(
@@ -50,6 +57,7 @@ const VideoSegmentComponent = (
   };
 
   const handleSegmentClick = (segment: ISegment) => {
+    setSelectedSegment(segment);
     props.onSegmentSelected(segment);
   };
 
@@ -76,8 +84,13 @@ const VideoSegmentComponent = (
         <Typography variant="h5">Video Segments</Typography>
         <div>
           {videoSegments.map((segment: ISegment, index) => (
-            <Button key={index} onClick={() => handleSegmentClick(segment)}>
-              {/* Segment {index + 1} */}
+            <Button
+              key={index}
+              onClick={() => handleSegmentClick(segment)}
+              variant={segment === selectedSegment ? 'contained' : 'outlined'} // Conditionally set variant
+              color={segment === selectedSegment ? 'primary' : undefined} // Conditionally set color
+              style={{ margin: '10px' }}
+            >
               {segment.name}
             </Button>
           ))}
@@ -95,15 +108,19 @@ export class VideoSegmentWidget extends ReactWidget {
 
   // Send the videoId and chosen segment to the VideoPlayerWidget
   private _segmentSelected = new Signal<this, ISegment>(this);
-
   public get segmentSelected(): ISignal<this, ISegment> {
     return this._segmentSelected;
   }
 
   private _videoIdChanged = new Signal<this, IVideoId>(this);
-
   public get videoIdChanged(): ISignal<this, IVideoId> {
     return this._videoIdChanged;
+  }
+
+  // Signal for VideoSegments to send to the chatbot
+  private _videoSegmentsChanged = new Signal<this, IVideoSegments>(this);
+  public get videoSegmentsChanged(): ISignal<this, IVideoSegments> {
+    return this._videoSegmentsChanged;
   }
 
   render(): JSX.Element {
@@ -114,6 +131,9 @@ export class VideoSegmentWidget extends ReactWidget {
         }
         onVideoIdChange={(videoId: IVideoId) =>
           this._videoIdChanged.emit(videoId)
+        }
+        onVideoSegmentsChange={(segments: IVideoSegments) =>
+          this._videoSegmentsChanged.emit(segments)
         }
       />
     );

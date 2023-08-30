@@ -1351,7 +1351,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@babel/types@npm:^7.0.0, @babel/types@npm:^7.20.7, @babel/types@npm:^7.22.5, @babel/types@npm:^7.3.3, @babel/types@npm:^7.4.4, @babel/types@npm:^7.8.3":
+"@babel/types@npm:^7.0.0, @babel/types@npm:^7.20.7, @babel/types@npm:^7.22.5, @babel/types@npm:^7.3.3, @babel/types@npm:^7.4.4":
   version: 7.22.5
   resolution: "@babel/types@npm:7.22.5"
   dependencies:
@@ -1362,10 +1362,47 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@babel/types@npm:^7.8.3":
+  version: 7.22.11
+  resolution: "@babel/types@npm:7.22.11"
+  dependencies:
+    "@babel/helper-string-parser": ^7.22.5
+    "@babel/helper-validator-identifier": ^7.22.5
+    to-fast-properties: ^2.0.0
+  checksum: 431a6446896adb62c876d0fe75263835735d3c974aae05356a87eb55f087c20a777028cf08eadcace7993e058bbafe3b21ce2119363222c6cef9eedd7a204810
+  languageName: node
+  linkType: hard
+
 "@bcoe/v8-coverage@npm:^0.2.3":
   version: 0.2.3
   resolution: "@bcoe/v8-coverage@npm:0.2.3"
   checksum: 850f9305536d0f2bd13e9e0881cb5f02e4f93fad1189f7b2d4bebf694e3206924eadee1068130d43c11b750efcc9405f88a8e42ef098b6d75239c0f047de1a27
+  languageName: node
+  linkType: hard
+
+"@chatscope/chat-ui-kit-react@npm:^1.10.1":
+  version: 1.10.1
+  resolution: "@chatscope/chat-ui-kit-react@npm:1.10.1"
+  dependencies:
+    "@chatscope/chat-ui-kit-styles": ^1.2.0
+    "@fortawesome/fontawesome-free": ^5.12.1
+    "@fortawesome/fontawesome-svg-core": ^1.2.26
+    "@fortawesome/free-solid-svg-icons": ^5.12.0
+    "@fortawesome/react-fontawesome": ^0.1.8
+    classnames: ^2.2.6
+    prop-types: ^15.7.2
+  peerDependencies:
+    prop-types: ^15.7.2
+    react: ^16.12.0 || ^17.0.0 || ^18.2.0
+    react-dom: ^16.12.0 || ^17.0.0 || ^18.2.0
+  checksum: 66bd88819375bedd54015d6fe8efa438c7373ff1f0107f713802fadbb82c4a4916a6e0dae41370083a566e335120f89f731f2da48d1f773becc52b10d60c82b2
+  languageName: node
+  linkType: hard
+
+"@chatscope/chat-ui-kit-styles@npm:^1.2.0":
+  version: 1.4.0
+  resolution: "@chatscope/chat-ui-kit-styles@npm:1.4.0"
+  checksum: f43fc7f07cf1dd457f27fe54c2bd887d31a2fe88a6f5d489d3a8d73e22bced337ae2a02ee2ce9851dd828ac01add5db02b14eca195e4e9d644f7d88398070ce7
   languageName: node
   linkType: hard
 
@@ -1852,10 +1889,47 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@fortawesome/fontawesome-free@npm:^5.12.0":
+"@fortawesome/fontawesome-common-types@npm:^0.2.36":
+  version: 0.2.36
+  resolution: "@fortawesome/fontawesome-common-types@npm:0.2.36"
+  checksum: d604ac51da0b1597127fde70c64157b70ead6af7f2643ab7dfca268ef99d4ed0b4cc823afba206362422a622e389828408bec573df802bf4f02b118d0fa18dc8
+  languageName: node
+  linkType: hard
+
+"@fortawesome/fontawesome-free@npm:^5.12.0, @fortawesome/fontawesome-free@npm:^5.12.1":
   version: 5.15.4
   resolution: "@fortawesome/fontawesome-free@npm:5.15.4"
   checksum: 32281c3df4075290d9a96dfc22f72fadb3da7055d4117e48d34046b8c98032a55fa260ae351b0af5d6f6fb57a2f5d79a4abe52af456da35195f7cb7dda27b4a2
+  languageName: node
+  linkType: hard
+
+"@fortawesome/fontawesome-svg-core@npm:^1.2.26":
+  version: 1.2.36
+  resolution: "@fortawesome/fontawesome-svg-core@npm:1.2.36"
+  dependencies:
+    "@fortawesome/fontawesome-common-types": ^0.2.36
+  checksum: 3011d8c1452b5df52a62eaee8b1ec925b9fdfabcc170fd6da5eaac7cfdef56258b9292ddd06c30f03a6a8ed6faa886565211f2e469fee3c9831c32f93e9383d8
+  languageName: node
+  linkType: hard
+
+"@fortawesome/free-solid-svg-icons@npm:^5.12.0":
+  version: 5.15.4
+  resolution: "@fortawesome/free-solid-svg-icons@npm:5.15.4"
+  dependencies:
+    "@fortawesome/fontawesome-common-types": ^0.2.36
+  checksum: eb037b703827ee37af3387a964afc7a190ff42a674ef46f4a6c295b634a38e849741eca78306b6423eaf3062d6ab1e7372aac5be2aec06f0fd9e8bd8110efcf9
+  languageName: node
+  linkType: hard
+
+"@fortawesome/react-fontawesome@npm:^0.1.8":
+  version: 0.1.19
+  resolution: "@fortawesome/react-fontawesome@npm:0.1.19"
+  dependencies:
+    prop-types: ^15.8.1
+  peerDependencies:
+    "@fortawesome/fontawesome-svg-core": ~1 || ~6
+    react: ">=16.x"
+  checksum: 77dbe1d5fa156a2ff4aa069d6c11f0ba1fcf43df72c9f03f1eec353d23798513a1f2773957a2bc3107fb8dc79fa606999ed91bf21659745bcc166abc4072819e
   languageName: node
   linkType: hard
 
@@ -4288,6 +4362,20 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@types/youtube-player@npm:^5.5.7":
+  version: 5.5.7
+  resolution: "@types/youtube-player@npm:5.5.7"
+  checksum: 5e18dc1b48a62e416a920b5dd3076c443c15537f2c96d9a834c715864c4cde2e7f8a2b5de7d8a6addfb2b26e5dbc4dd5d61319e7e9c8a9fbb90275dd06e61ef7
+  languageName: node
+  linkType: hard
+
+"@types/youtube@npm:^0.0.47":
+  version: 0.0.47
+  resolution: "@types/youtube@npm:0.0.47"
+  checksum: 837d84ae727a045743ff0e1740bebd05f6f968ae2c1575108b037bdba43ee93e39848560b45bddeffd98f463e18e6ade71c208e4c5514ca29a85a5c5ebc0cc54
+  languageName: node
+  linkType: hard
+
 "@typescript-eslint/eslint-plugin@npm:^6.1.0":
   version: 6.2.1
   resolution: "@typescript-eslint/eslint-plugin@npm:6.2.1"
@@ -4704,13 +4792,11 @@ __metadata:
   linkType: hard
 
 "agentkeepalive@npm:^4.2.1":
-  version: 4.3.0
-  resolution: "agentkeepalive@npm:4.3.0"
+  version: 4.5.0
+  resolution: "agentkeepalive@npm:4.5.0"
   dependencies:
-    debug: ^4.1.0
-    depd: ^2.0.0
     humanize-ms: ^1.2.1
-  checksum: 982453aa44c11a06826c836025e5162c846e1200adb56f2d075400da7d32d87021b3b0a58768d949d824811f5654223d5a8a3dad120921a2439625eb847c6260
+  checksum: 13278cd5b125e51eddd5079f04d6fe0914ac1b8b91c1f3db2c1822f99ac1a7457869068997784342fe455d59daaff22e14fb7b8c3da4e741896e7e31faf92481
   languageName: node
   linkType: hard
 
@@ -5187,14 +5273,14 @@ __metadata:
   linkType: hard
 
 "cacache@npm:^17.0.0":
-  version: 17.1.3
-  resolution: "cacache@npm:17.1.3"
+  version: 17.1.4
+  resolution: "cacache@npm:17.1.4"
   dependencies:
     "@npmcli/fs": ^3.1.0
     fs-minipass: ^3.0.0
     glob: ^10.2.2
     lru-cache: ^7.7.1
-    minipass: ^5.0.0
+    minipass: ^7.0.3
     minipass-collect: ^1.0.2
     minipass-flush: ^1.0.5
     minipass-pipeline: ^1.2.4
@@ -5202,7 +5288,7 @@ __metadata:
     ssri: ^10.0.0
     tar: ^6.1.11
     unique-filename: ^3.0.0
-  checksum: 385756781e1e21af089160d89d7462b7ed9883c978e848c7075b90b73cb823680e66092d61513050164588387d2ca87dd6d910e28d64bc13a9ac82cd8580c796
+  checksum: b7751df756656954a51201335addced8f63fc53266fa56392c9f5ae83c8d27debffb4458ac2d168a744a4517ec3f2163af05c20097f93d17bdc2dc8a385e14a6
   languageName: node
   linkType: hard
 
@@ -5316,6 +5402,13 @@ __metadata:
   version: 1.2.3
   resolution: "cjs-module-lexer@npm:1.2.3"
   checksum: 5ea3cb867a9bb609b6d476cd86590d105f3cfd6514db38ff71f63992ab40939c2feb68967faa15a6d2b1f90daa6416b79ea2de486e9e2485a6f8b66a21b4fb0a
+  languageName: node
+  linkType: hard
+
+"classnames@npm:^2.2.6":
+  version: 2.3.2
+  resolution: "classnames@npm:2.3.2"
+  checksum: 2c62199789618d95545c872787137262e741f9db13328e216b093eea91c85ef2bfb152c1f9e63027204e2559a006a92eb74147d46c800a9f96297ae1d9f96f4e
   languageName: node
   linkType: hard
 
@@ -5889,7 +5982,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"debug@npm:^2.6.9":
+"debug@npm:^2.6.6, debug@npm:^2.6.9":
   version: 2.6.9
   resolution: "debug@npm:2.6.9"
   dependencies:
@@ -6014,13 +6107,6 @@ __metadata:
   version: 1.0.0
   resolution: "delegates@npm:1.0.0"
   checksum: a51744d9b53c164ba9c0492471a1a2ffa0b6727451bdc89e31627fdf4adda9d51277cfcbfb20f0a6f08ccb3c436f341df3e92631a3440226d93a8971724771fd
-  languageName: node
-  linkType: hard
-
-"depd@npm:^2.0.0":
-  version: 2.0.0
-  resolution: "depd@npm:2.0.0"
-  checksum: abbe19c768c97ee2eed6282d8ce3031126662252c58d711f646921c9623f9052e3e1906443066beec1095832f534e57c523b7333f8e7e0d93051ab6baef5ab3a
   languageName: node
   linkType: hard
 
@@ -6587,7 +6673,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"fast-deep-equal@npm:^3.1.1, fast-deep-equal@npm:^3.1.3, fast-deep-equal@npm:~3.1.3":
+"fast-deep-equal@npm:3.1.3, fast-deep-equal@npm:^3.1.1, fast-deep-equal@npm:^3.1.3, fast-deep-equal@npm:~3.1.3":
   version: 3.1.3
   resolution: "fast-deep-equal@npm:3.1.3"
   checksum: e21a9d8d84f53493b6aa15efc9cfd53dd5b714a1f23f67fb5dc8f574af80df889b3bce25dc081887c6d25457cce704e636395333abad896ccdec03abaf1f3f9d
@@ -6783,11 +6869,11 @@ __metadata:
   linkType: hard
 
 "fs-minipass@npm:^3.0.0":
-  version: 3.0.2
-  resolution: "fs-minipass@npm:3.0.2"
+  version: 3.0.3
+  resolution: "fs-minipass@npm:3.0.3"
   dependencies:
-    minipass: ^5.0.0
-  checksum: e9cc0e1f2d01c6f6f62f567aee59530aba65c6c7b2ae88c5027bc34c711ebcfcfaefd0caf254afa6adfe7d1fba16bc2537508a6235196bac7276747d078aef0a
+    minipass: ^7.0.3
+  checksum: 8722a41109130851d979222d3ec88aabaceeaaf8f57b2a8f744ef8bd2d1ce95453b04a61daa0078822bc5cd21e008814f06fe6586f56fef511e71b8d2394d802
   languageName: node
   linkType: hard
 
@@ -8269,6 +8355,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "jlab-ext-example@workspace:."
   dependencies:
+    "@chatscope/chat-ui-kit-react": ^1.10.1
     "@emotion/react": ^11.11.1
     "@emotion/styled": ^11.11.0
     "@jupyterlab/application": ^4.0.3
@@ -8283,6 +8370,8 @@ __metadata:
     "@types/json-schema": ^7.0.11
     "@types/papaparse": ^5.3.7
     "@types/react": ^18.0.26
+    "@types/youtube": ^0.0.47
+    "@types/youtube-player": ^5.5.7
     "@typescript-eslint/eslint-plugin": ^6.1.0
     "@typescript-eslint/parser": ^6.1.0
     ag-grid-community: ^30.0.6
@@ -8297,6 +8386,7 @@ __metadata:
     npm-run-all: ^4.1.5
     papaparse: ^5.4.1
     prettier: ^3.0.0
+    react-youtube: ^10.1.0
     rimraf: ^5.0.1
     source-map-loader: ^1.0.2
     style-loader: ^3.3.1
@@ -8567,6 +8657,13 @@ __metadata:
     pify: ^3.0.0
     strip-bom: ^3.0.0
   checksum: 8f5d6d93ba64a9620445ee9bde4d98b1eac32cf6c8c2d20d44abfa41a6945e7969456ab5f1ca2fb06ee32e206c9769a20eec7002fe290de462e8c884b6b8b356
+  languageName: node
+  linkType: hard
+
+"load-script@npm:^1.0.0":
+  version: 1.0.0
+  resolution: "load-script@npm:1.0.0"
+  checksum: 8458e3f07b4a86f8d9d66e47a987811491a5d013af23ba7b371c6d3c9dc899885b072ccf65abf7874c10cb197d4975eacd8a7a125bfb38dbbcb267539f5dc1e9
   languageName: node
   linkType: hard
 
@@ -8944,17 +9041,17 @@ __metadata:
   linkType: hard
 
 "minipass-fetch@npm:^3.0.0":
-  version: 3.0.3
-  resolution: "minipass-fetch@npm:3.0.3"
+  version: 3.0.4
+  resolution: "minipass-fetch@npm:3.0.4"
   dependencies:
     encoding: ^0.1.13
-    minipass: ^5.0.0
+    minipass: ^7.0.3
     minipass-sized: ^1.0.3
     minizlib: ^2.1.2
   dependenciesMeta:
     encoding:
       optional: true
-  checksum: af5ab2552a16fcf505d35fd7ffb84b57f4a0eeb269e6e1d9a2a75824dda48b36e527083250b7cca4a4def21d9544e2ade441e4730e233c0bc2133f6abda31e18
+  checksum: af7aad15d5c128ab1ebe52e043bdf7d62c3c6f0cecb9285b40d7b395e1375b45dcdfd40e63e93d26a0e8249c9efd5c325c65575aceee192883970ff8cb11364a
   languageName: node
   linkType: hard
 
@@ -9005,6 +9102,13 @@ __metadata:
   version: 7.0.2
   resolution: "minipass@npm:7.0.2"
   checksum: 46776de732eb7cef2c7404a15fb28c41f5c54a22be50d47b03c605bf21f5c18d61a173c0a20b49a97e7a65f78d887245066410642551e45fffe04e9ac9e325bc
+  languageName: node
+  linkType: hard
+
+"minipass@npm:^7.0.3":
+  version: 7.0.3
+  resolution: "minipass@npm:7.0.3"
+  checksum: 6f1614f5b5b55568a46bca5fec0e7c46dac027691db27d0e1923a8192866903144cd962ac772c0e9f89b608ea818b702709c042bce98e190d258847d85461531
   languageName: node
   linkType: hard
 
@@ -9731,7 +9835,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"prop-types@npm:^15.6.2, prop-types@npm:^15.8.1":
+"prop-types@npm:15.8.1, prop-types@npm:^15.6.2, prop-types@npm:^15.7.2, prop-types@npm:^15.8.1":
   version: 15.8.1
   resolution: "prop-types@npm:15.8.1"
   dependencies:
@@ -9838,6 +9942,19 @@ __metadata:
     react: ">=16.6.0"
     react-dom: ">=16.6.0"
   checksum: 75602840106aa9c6545149d6d7ae1502fb7b7abadcce70a6954c4b64a438ff1cd16fc77a0a1e5197cdd72da398f39eb929ea06f9005c45b132ed34e056ebdeb1
+  languageName: node
+  linkType: hard
+
+"react-youtube@npm:^10.1.0":
+  version: 10.1.0
+  resolution: "react-youtube@npm:10.1.0"
+  dependencies:
+    fast-deep-equal: 3.1.3
+    prop-types: 15.8.1
+    youtube-player: 5.5.2
+  peerDependencies:
+    react: ">=0.14.1"
+  checksum: 514678c2a2038f8821e67cd6f95a715cacf8ecc22c02171abeb187e3265dd606c231c15082d42ebccdca08cb18909e26f12c0867dfe24699d5e59f5c6cbc42d4
   languageName: node
   linkType: hard
 
@@ -10404,6 +10521,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"sister@npm:^3.0.0":
+  version: 3.0.2
+  resolution: "sister@npm:3.0.2"
+  checksum: 8a1eb9d20a0bc7d05b723f59f4e2b022c777c152119f69175d3ad1a50e16161d2f084d3acc69106454bfcffd8392b4d2153fa2d2c0c5be3991cfb7acbf627c4a
+  languageName: node
+  linkType: hard
+
 "sisteransi@npm:^1.0.5":
   version: 1.0.5
   resolution: "sisteransi@npm:1.0.5"
@@ -10578,11 +10702,11 @@ __metadata:
   linkType: hard
 
 "ssri@npm:^10.0.0":
-  version: 10.0.4
-  resolution: "ssri@npm:10.0.4"
+  version: 10.0.5
+  resolution: "ssri@npm:10.0.5"
   dependencies:
-    minipass: ^5.0.0
-  checksum: fb14da9f8a72b04eab163eb13a9dda11d5962cd2317f85457c4e0b575e9a6e0e3a6a87b5bf122c75cb36565830cd5f263fb457571bf6f1587eb5f95d095d6165
+    minipass: ^7.0.3
+  checksum: 0a31b65f21872dea1ed3f7c200d7bc1c1b91c15e419deca14f282508ba917cbb342c08a6814c7f68ca4ca4116dd1a85da2bbf39227480e50125a1ceffeecb750
   languageName: node
   linkType: hard
 
@@ -12381,5 +12505,16 @@ __metadata:
   version: 0.1.0
   resolution: "yocto-queue@npm:0.1.0"
   checksum: f77b3d8d00310def622123df93d4ee654fc6a0096182af8bd60679ddcdfb3474c56c6c7190817c84a2785648cdee9d721c0154eb45698c62176c322fb46fc700
+  languageName: node
+  linkType: hard
+
+"youtube-player@npm:5.5.2":
+  version: 5.5.2
+  resolution: "youtube-player@npm:5.5.2"
+  dependencies:
+    debug: ^2.6.6
+    load-script: ^1.0.0
+    sister: ^3.0.0
+  checksum: 42693af5d7cef728fb9d60f31e79bb9551fc6ec594fdcec45faa7b54f5b5f9800d3cda591dcc57ed5e6fa201b53a08571f776fbe4df919759b05e5a25aec9754
   languageName: node
   linkType: hard

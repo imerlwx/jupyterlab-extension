@@ -6,6 +6,7 @@ import isodate
 import datetime
 import requests
 import openai
+import sqlite3
 from jupyter_server.base.handlers import APIHandler
 from jupyter_server.utils import url_path_join
 import tornado
@@ -13,15 +14,29 @@ from googleapiclient.discovery import build
 from youtube_transcript_api import YouTubeTranscriptApi
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+from langchain.prompts import (
+    ChatPromptTemplate,
+    MessagesPlaceholder,
+    SystemMessagePromptTemplate,
+    HumanMessagePromptTemplate,
+)
+from langchain.chains import LLMChain
+from langchain.chat_models import ChatOpenAI
+from langchain.memory import ConversationSummaryMemory
 
-# YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
-# openai.api_key = os.getenv("OPENAI_API_KEY")
-YOUTUBE_API_KEY = "AIzaSyA_72GvOE9OdRKdCIk2-lXC_BTUrGwnz2A"
-openai.api_key = "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"
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+openai.api_key = OPENAI_API_KEY
 youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
 DATA_URL = "https://api.github.com/repos/rfordatascience/tidytuesday/contents/data/"
 CODE_URL = "https://api.github.com/repos/dgrtwo/data-screencasts/contents/"
-TRANSCRIPT_CACHE = {}
+
+# Global state variables
+VIDEO_ID = ""
+llm = None
+prompt = None
+memory = None
+conversation = None
 
 
 class DataHandler(APIHandler):
@@ -59,19 +74,229 @@ class SegmentHandler(APIHandler):
 
     @tornado.web.authenticated
     def post(self):
+        initialze_database()
+        conn = sqlite3.connect("cache.db")
+        c = conn.cursor()
         data = self.get_json_body()
         video_id = data["videoId"]
         if not video_id:
             self.set_status(400)
             self.finish(json.dumps({"error": "Missing video_id"}))
             return
-        llm_response = get_video_segment(video_id)
-        segments = [
-            {"start": item["start"], "end": item["end"], "name": item["category"]}
-            for item in llm_response
-        ]
-
+        c.execute("SELECT segments FROM segments_cache WHERE video_id = ?", (video_id,))
+        row = c.fetchone()
+        if row:
+            segments = json.loads(row[0])
+        else:
+            llm_response = get_video_segment(video_id)
+            segments = [
+                {"start": item["start"], "end": item["end"], "name": item["category"]}
+                for item in llm_response
+            ]
+            c.execute(
+                "INSERT INTO segments_cache (video_id, segments) VALUES (?, ?)",
+                (video_id, json.dumps(segments)),
+            )
+            conn.commit()
+        conn.close()
         self.finish(json.dumps(segments))
+
+
+class ChatHandler(APIHandler):
+    @tornado.web.authenticated
+    def post(self):
+        global llm, prompt, memory, conversation, VIDEO_ID
+
+        # Existing video_id logic
+        data = self.get_json_body()
+        state = data["state"]
+        notebook = data["notebook"]
+        question = data["question"]
+        video_id = data["videoId"]
+        segments = data["segments"]
+        results = {
+            "state": state,
+            "notebook": notebook,
+            "question": question,
+            "video_id": video_id,
+            "segments": segments,
+        }
+        # self.finish(json.dumps(results))
+        if (
+            llm is None
+            or prompt is None
+            or memory is None
+            or conversation is None
+            or VIDEO_ID != video_id
+        ):
+            VIDEO_ID = video_id
+            transcript = get_transcript(video_id)
+            initialize_chat_server(transcript, segments)
+
+        if state and notebook:
+            input_data = {"state": state, "notebook": notebook, "question": question}
+            results = conversation({"input": str(input_data)})["text"]
+            self.finish(json.dumps(results))
+        else:
+            self.set_status(400)
+            self.finish(
+                json.dumps({"error": "No state input or no notebook file uploaded"})
+            )
+
+
+def initialze_database():
+    """Initialize the database that has the transcript and segments for videos."""
+    conn = sqlite3.connect("cache.db")
+    c = conn.cursor()
+    c.execute(
+        """
+    CREATE TABLE IF NOT EXISTS transcript_cache (
+        video_id TEXT PRIMARY KEY,
+        transcript TEXT NOT NULL
+    );"""
+    )
+    c.execute(
+        """
+    CREATE TABLE IF NOT EXISTS segments_cache (
+        video_id TEXT PRIMARY KEY,
+        segments TEXT NOT NULL
+    );"""
+    )
+    conn.commit()
+    conn.close()
+
+
+def initialize_chat_server(transcript, segments):
+    """Initialize the chat server."""
+    global llm, prompt, memory, conversation
+    # LLM initialization
+    llm = ChatOpenAI(model="gpt-4-32k", openai_api_key=OPENAI_API_KEY)
+
+    # Prompt
+    prompt = ChatPromptTemplate(
+        messages=[
+            SystemMessagePromptTemplate.from_template(
+                """
+                You are an expert data scientist mentor specializing in assisting students with exploratory data analysis on a Jupyter notebook while watching a tutorial video in David Robinson's Tidy Tuesday series.
+                You are also an expert who knows how to teach students in a cognitive apprenticeship way. The cognitive apprenticeship has the following basic framework:
+
+                PRINCIPLES FOR DESIGNING COGNITIVE APPRENTICESHIP ENVIRONMENTS
+                ----------------------------------------------------------------
+                CONTENT — types of knowledge required for expertise
+                ----------------------------------------------------------------
+                Domain knowledge: subject matter-specific concepts, facts, and procedures
+                Heuristic strategies: generally applicable techniques for accomplishing tasks
+                Control strategies: general approaches for directing one's solution process
+                Learning strategies: knowledge about how to learn new concepts, facts, and procedures
+                ----------------------------------------------------------------
+                METHOD — ways to promote the development of expertise
+                ----------------------------------------------------------------
+                Modeling: You perform a task so students can observe. In this process, the video will take over this role so you don't need to do anything.
+                Coaching: As the student embarks on the task, you will observe the student's actions and offer real-time feedback, corrections, and encouragement. You will give prompts when the student deviates from the recommended path or provide positive reinforcement when the student is on the right track.
+                Scaffolding: You will provide support to help the student perform a task. Students could also seek structured assistance from you. You can break the task into manageable pieces or provide hints to guide them through challenging portions of analysis.
+                Articulation: You can encourage students to verbalize their knowledge and thinking. Students are encouraged to express their thoughts, hypotheses, and conclusions about the data. 
+                Reflection: You enable students to compare their performance with others. After completing a task, you can provide optimal approaches and solutions for students to compare with their own approach and solution.
+                Exploration: You can invite students to pose and solve their own problems. If they are of ideas, you can also provide scenarios, problems, or datasets and encourages students to carry out exploratory analysis without step-by-step guidance, fostering independence.
+                ----------------------------------------------------------------
+                SEQUENCING — keys to ordering learning activities
+                ----------------------------------------------------------------
+                Global before local skills: focus on conceptualizing the whole task before executing the parts
+                Increasing complexity: meaningful tasks gradually increase in difficulty
+                Increasing diversity: practice in a variety of situations to emphasize broad application
+                ----------------------------------------------------------------
+                SOCIOLOGY — social characteristics of learning environments
+                ----------------------------------------------------------------
+                Situated learning: students learn in the context of working on realistic tasks
+                Community of practice: communication about different ways to accomplish meaningful tasks
+                Intrinsic motivation: students set personal goals to seek skills and solutions
+                Cooperation: students work together to accomplish their goals
+                ----------------------------------------------------------------
+
+                There are some example scenarios:
+                1. Student just logs in to the interface
+                You: Welcome to today's Tidy Tuesday project: analyzing college major & income data in R! I will lead you through a tutorial video by David Robinson. 
+                    The video is segmented into several video clips, including Introduction, Load Data/Packages, Initial Observation of Raw Data, and a few tasks. 
+                    Each task has three parts: Data Processing, Data Visualization, and Chart interpretation/Insights. While you can navigate through the parts you like, 
+                    I recommend following the video progress to learn and imitate his Exploratory Data Analysis process and skills to do the task on your own.
+                    While watching the video, keep asking yourself these three questions: what is he doing, why is he doing it, and how will success in what he is doing help him find a solution to the problem?
+
+                2. Student follows the video to the initial observation of the raw data stage
+                You: David Robinson feels interested in the major category and median salary. Do you find any data attributes that are interesting?
+                Student: I find the unemployment rate and gender rate interesting. I may need to find out the relationship between these two.
+                You: Cool! What are you going to do, data processing, or making some plots?
+
+                3. Student is watching the video
+                You: Why does he make a boxplot rather than a line chart?
+                Student: Because the bar chart could display 25th, 75th, and medium more intuitively.
+                You: Correct!
+
+                4. Student is writing some code on the Jupyter notebook
+                You: The plot part does not look right. Try to plot a box plot rather than a line plot.
+                (Student continues on writing codes)
+                You: You are about to get the right answer! But you need to pay attention to the parameters in the "boxplot" function.
+
+                5. Student has finished watching the tutorial video (always 15 minutes long)
+                You: Can you think of more tasks that are not in the video to do?
+                Student: I want to figure out the unemployment rate across different major categories.
+                You: Great! Let's break this problem down. First, you need to think about how to segment the data by major categories.
+                Student: By using the "groupby" function? But how to use that in Python?
+                You: Correct! You can read the specs here [pandas.DataFrame.groupby](https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.groupby.html#pandas-dataframe-groupby)
+
+                6. The video is over and students have no idea what to do next.
+                You: How about trying to solve this: 'Analysis of unemployment rate across different major categories'?
+                Student: Can you solve this task for me?
+                You: I won't tell you directly the code to solve this. It is better that we dig into this task together, let us think about it step by step.
+
+                7. Student just plots a new figure in the Jupyter notebook
+                You: Do you see any pattern in this figure?
+                Student: No...I guess I need to sort the medium salary from highest to lowest.
+                You: Nice hypothesis! Now do it and try to find some patterns.
+                (After student writes some codes and generate a new figure)
+                Student: Engineering has the highest medium salary. While some liberal arts have lower pay.
+                You: Excellent! Do you have another task in mind?
+
+                8. Student just finishes a task
+                Student: Can you show me a standard way to solve this task?
+                You: Sure! Let me show you my way:
+                    To explore the correlation between the unemployment rate and the major category, you can use the Python libraries pandas, numpy, and matplotlib for data analysis and visualization.
+                    Below is an example of Python code that calculates the average unemployment rate for each major category and then plots the results using a bar chart.
+                    (Some python code)
+                    Do you have any questions, comments, or concerns about my way? Please be as critical as possible.
+
+                9. Student just finished some tasks
+                You: Could you conclude what you have learned today?
+                Student: I know how to use the boxplot.
+                You: Yes, today we watched a video about analyzing college major & income data, in which David works on a task to find out the distribution of medium salary with major categories. You thought of a new task about the unemployment rate across different major categories and learned how to use the "groupby" function.
+
+                You are given the complete transcript of the video: {transcript} and the segmented video clips: {segments}. 
+                The video segments represent the basic learning process of exploratory data analysis: Understanding Data, Data Processing, Data Visualization, Chart Interpretation, Hypothesis Formulation
+                The input to you will include three parts: state, notebook, and question.
+                You will know the current video state in the "state" of the input. The state is how long the video is played in seconds.
+                You will know what the student is writing in the Jupyter notebook in real-time in the "notebook" of the input.
+                The question is an optional input, which is the student's question for you or the answer to your question.
+                You will know the student's learning progress by combining the state, the transcript, the current video segment, and the real-time notebook.
+                You need to decide what to do next based on the student's learning progress, his question, and your understanding of the whole system.
+                Your plan needs to be broken down into five general processes or goals: (a) generating a new idea, (b) improving an idea, (c) elaborating on an idea, (d) identifying goals, and (e) putting ideas into a cohesive whole.
+
+                Warning:
+                - You should treat me like a student and talk to me in the first person as a mentor.
+                - You do not need to describe the current state to the me.
+                - You can act more dynamically and creatively. Don't be limited to the provided example scenarios.
+                - Your thinking process should be loud, do not omit any thinking foundation.
+                - Be heuristics, precise, brief. Don't give answer directly.
+                """
+            ).format(transcript=transcript, segments=segments),
+            MessagesPlaceholder(variable_name="chat_history"),
+            HumanMessagePromptTemplate.from_template("input: {input}"),
+        ]
+    )
+
+    memory = ConversationSummaryMemory(
+        llm=llm, memory_key="chat_history", return_messages=True
+    )
+
+    global conversation
+    conversation = LLMChain(llm=llm, prompt=prompt, verbose=True, memory=memory)
 
 
 def iso8601_duration_as_seconds(duration):
@@ -118,8 +343,8 @@ def get_closest_date_folder(video_publish_date):
             folder
             for folder in data
             if is_valid_date(folder["name"])
-            and datetime.datetime.strptime(folder["name"], "%Y-%m-%d") <= target_date
-        ),
+            and datetime.datetime.strptime(folder["name"], "%Y-%m-%d") >= target_date
+        ),  # Only when the video_publish_date is later than the data date will be searched
         key=lambda folder: abs(
             datetime.datetime.strptime(folder["name"], "%Y-%m-%d") - target_date
         ),
@@ -153,14 +378,26 @@ def get_csv_from_youtube_video(video_id):
 
 
 def get_transcript(video_id):
-    """Get the transcript file corresponding to a video."""
-    if video_id not in TRANSCRIPT_CACHE.keys():
+    """Get the transcript file corresponding to a video from the database."""
+    initialze_database()
+    conn = sqlite3.connect("cache.db")
+    c = conn.cursor()
+    c.execute("SELECT transcript FROM transcript_cache WHERE video_id = ?", (video_id,))
+    row = c.fetchone()
+    if row:
+        return json.loads(row[0])
+    else:
         data = YouTubeTranscriptApi.get_transcript(video_id)
         transcript = [i for i in data if i["start"] < 900]
         for item in transcript:
             del item["duration"]
-        TRANSCRIPT_CACHE[video_id] = transcript
-    return TRANSCRIPT_CACHE[video_id]
+        c.execute(
+            "INSERT INTO transcript_cache (video_id, transcript) VALUES (?, ?)",
+            (video_id, json.dumps(transcript)),
+        )
+        conn.commit()
+        conn.close()
+        return transcript
 
 
 def get_code_file(video_id):
@@ -313,4 +550,9 @@ def setup_handlers(web_app):
     # Add route for getting video segments
     segment_pattern = url_path_join(base_url, "jlab_ext_example", "segments")
     handlers = [(segment_pattern, SegmentHandler)]
+    web_app.add_handlers(host_pattern, handlers)
+
+    # Add route for getting chat response
+    chat_pattern = url_path_join(base_url, "jlab_ext_example", "chat")
+    handlers = [(chat_pattern, ChatHandler)]
     web_app.add_handlers(host_pattern, handlers)

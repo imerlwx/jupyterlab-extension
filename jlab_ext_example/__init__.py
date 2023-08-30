@@ -3,16 +3,11 @@ from .handlers import setup_handlers
 
 
 def _jupyter_labextension_paths():
-    return [{
-        "src": "labextension",
-        "dest": "@jupyterlab-examples/server-extension"
-    }]
+    return [{"src": "labextension", "dest": "@jupyterlab-examples/server-extension"}]
 
 
 def _jupyter_server_extension_points():
-    return [{
-        "module": "jlab_ext_example"
-    }]
+    return [{"module": "jlab_ext_example"}]
 
 
 def _load_jupyter_server_extension(server_app):
