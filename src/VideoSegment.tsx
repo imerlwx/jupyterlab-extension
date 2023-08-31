@@ -54,6 +54,20 @@ const VideoSegmentComponent = (
           `Error on POST /jlab_ext_example/segments ${input}.\n${reason}`
         );
       });
+
+    // Fetch code file from server
+    requestAPI<any>('code', {
+      body: JSON.stringify({ videoId: input }),
+      method: 'POST'
+    })
+      .then(response => {
+        console.log('Received code file:', response);
+      })
+      .catch(reason => {
+        console.error(
+          `Error on POST /jlab_ext_example/code ${input}.\n${reason}`
+        );
+      });
   };
 
   const handleSegmentClick = (segment: ISegment) => {
