@@ -128,3 +128,4 @@ dmypy.json
 .env
 
 *.ipynb
+*.Rmd
