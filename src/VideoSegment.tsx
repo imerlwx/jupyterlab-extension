@@ -7,7 +7,7 @@ import { requestAPI } from './handler';
 export interface ISegment {
   start: number;
   end: number;
-  name: string;
+  category: string;
 }
 
 export interface IVideoSegments {
@@ -105,7 +105,7 @@ const VideoSegmentComponent = (
               color={segment === selectedSegment ? 'primary' : undefined} // Conditionally set color
               style={{ margin: '10px' }}
             >
-              {segment.name}
+              {segment.category}
             </Button>
           ))}
         </div>

@@ -5,7 +5,7 @@ import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-alpine.css';
 import Papa from 'papaparse';
 import { ReactWidget } from '@jupyterlab/ui-components';
-import { VideoSegmentWidget, IVideoId } from './VideoSegment';
+import { ChatWidget, IVideoId } from './Chat';
 import { requestAPI } from './handler';
 import { Tabs, Tab, Paper } from '@mui/material';
 
@@ -111,16 +111,13 @@ const DataTableComponent = (props: IDataTableProps): JSX.Element => {
 export class DataTableWidget extends ReactWidget {
   private _videoId = '';
 
-  constructor(videoSegmentWidget: VideoSegmentWidget) {
+  constructor(ChatWidget: ChatWidget) {
     super();
     this.addClass('jp-react-widget');
-    videoSegmentWidget.videoIdChanged.connect(this._onVideoIdChanged, this);
+    ChatWidget.videoIdChanged.connect(this._onVideoIdChanged, this);
   }
 
-  private _onVideoIdChanged = (
-    emitter: VideoSegmentWidget,
-    videoId: IVideoId
-  ) => {
+  private _onVideoIdChanged = (emitter: ChatWidget, videoId: IVideoId) => {
     this._videoId = videoId.videoId;
     this.update();
   };

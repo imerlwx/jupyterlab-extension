@@ -89,7 +89,7 @@ const VideoPlayerComponent = (props: IVideoPlayerProps): JSX.Element => {
 };
 
 export class VideoPlayerWidget extends ReactWidget {
-  private _segment: ISegment = { start: 1, end: 10, name: '' };
+  private _segment: ISegment = { start: 1, end: 10, category: '' };
   private _videoId = '';
 
   // New Signal for emitting the current time of the video

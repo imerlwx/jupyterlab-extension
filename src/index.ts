@@ -10,6 +10,7 @@ import { VideoSegmentWidget } from './VideoSegment';
 import { VideoPlayerWidget } from './VideoPlayer';
 import { DataTableWidget } from './DataTable';
 import { ConversationWidget } from './Conversation';
+import { ChatWidget } from './Chat';
 
 /**
  * The command IDs used by the react-widget plugin.
@@ -19,6 +20,7 @@ namespace CommandIDs {
   export const createVideo = 'create-video-widget';
   export const createDataTable = 'create-datatable-widget';
   export const createConversation = 'create-conversation-widget';
+  export const createChat = 'create-chat-widget';
 }
 
 /**
@@ -42,6 +44,7 @@ const plugin: JupyterFrontEndPlugin<void> = {
 
     // Create shared instances
     const sharedVideoSegmentWidget = new VideoSegmentWidget();
+    const sharedChatWidget = new ChatWidget(notebookTracker);
     const sharedVideoPlayerWidget = new VideoPlayerWidget(
       sharedVideoSegmentWidget
     );
@@ -57,7 +60,7 @@ const plugin: JupyterFrontEndPlugin<void> = {
       label: 'Video Segment Widget',
       icon: args => (args['isPalette'] ? undefined : reactIcon),
       execute: () => {
-        // Use the shared instance when creating the MainAreaWidget
+        // Use the shared instance when creating the VideoSegmentWidget
         const widget = new MainAreaWidget<VideoSegmentWidget>({
           content: sharedVideoSegmentWidget
         });
@@ -89,8 +92,8 @@ const plugin: JupyterFrontEndPlugin<void> = {
       label: 'Data Table Widget',
       icon: args => (args['isPalette'] ? undefined : reactIcon),
       execute: () => {
-        // You should pass the url of the CSV file
-        const content = new DataTableWidget(sharedVideoSegmentWidget);
+        // Use the shared instance when creating the DataTableWidget
+        const content = new DataTableWidget(sharedChatWidget);
         const widget = new MainAreaWidget<DataTableWidget>({ content });
         widget.title.label = 'Data Table Widget';
         widget.title.icon = reactIcon;
@@ -104,11 +107,27 @@ const plugin: JupyterFrontEndPlugin<void> = {
       label: 'Conversation Widget',
       icon: args => (args['isPalette'] ? undefined : reactIcon),
       execute: () => {
-        // You should pass the url of the CSV file
+        // Use the shared instance when creating the ConversationWidget
         const widget = new MainAreaWidget<ConversationWidget>({
           content: sharedConversationWidget
         });
         widget.title.label = 'Conversation Widget';
+        widget.title.icon = reactIcon;
+        app.shell.add(widget, 'main');
+      }
+    });
+
+    const createChatCommand = CommandIDs.createChat;
+    commands.addCommand(createChatCommand, {
+      caption: 'Create a new Chat Widget',
+      label: 'Chat Widget',
+      icon: args => (args['isPalette'] ? undefined : reactIcon),
+      execute: () => {
+        // Use the shared instance when creating the ChatWidget
+        const widget = new MainAreaWidget<ChatWidget>({
+          content: sharedChatWidget
+        });
+        widget.title.label = 'Chat Widget';
         widget.title.icon = reactIcon;
         app.shell.add(widget, 'main');
       }
@@ -126,6 +145,9 @@ const plugin: JupyterFrontEndPlugin<void> = {
       });
       launcher.add({
         command: createConversationCommand
+      });
+      launcher.add({
+        command: createChatCommand
       });
     }
   }
