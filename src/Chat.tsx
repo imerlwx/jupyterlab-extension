@@ -12,11 +12,11 @@ import {
   MessageSeparator
 } from '@chatscope/chat-ui-kit-react';
 import { MessageDirection } from '@chatscope/chat-ui-kit-react/src/types/unions';
-import { INotebookTracker } from '@jupyterlab/notebook';
+import { INotebookTracker, NotebookActions } from '@jupyterlab/notebook';
 import YouTube, { YouTubeEvent } from 'react-youtube';
 import { Button } from '@mui/material';
 import { ISignal, Signal } from '@lumino/signaling';
-import { ICodeCellModel } from '@jupyterlab/cells';
+import { CodeCell } from '@jupyterlab/cells';
 
 export interface ISegment {
   start: number;
@@ -101,6 +101,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
       setMessages(newMessages);
 
       if (videoId === '') {
+        console.log(question);
         setIsTyping(true);
         setCanGoOn(true);
         setVideoId(question);
@@ -187,58 +188,44 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
               if (code) {
                 const activatedNotebook = props.getCurrentNotebook();
                 if (activatedNotebook) {
-                  const nbContent = activatedNotebook;
-                  if (nbContent && nbContent.contentFactory) {
-                    try {
-                      const cellModel: ICodeCellModel =
-                        nbContent.contentFactory.createCodeCell({
-                          cell: {
-                            cell_type: 'code',
-                            source: ['some code line 1', 'some code line 2'],
-                            metadata: {}
-                          },
-                          metadataChanged: props.getMetaDataChange()
-                        });
-                      const cells = nbContent.model.cells;
-                      cells.insert(cells.length, cellModel);
-                    } catch (error) {
-                      console.error(error);
+                  try {
+                    NotebookActions.insertBelow(activatedNotebook);
+                    const newCellIndex = activatedNotebook.activeCellIndex;
+                    const newCell = activatedNotebook.widgets[
+                      newCellIndex
+                    ] as CodeCell;
+                    if (newCell) {
+                      newCell.model.sharedModel.setSource(code);
+                      // Add unique identifier to the new cell's node
+                      const uniqueID = `flash-${Date.now()}`;
+                      newCell.node.id = uniqueID;
+
+                      // Create dynamic CSS rules
+                      const styleEl = document.createElement('style');
+                      styleEl.innerHTML = `
+                        @keyframes flashAnimation {
+                          0% { background-color: yellow; }
+                          100% { background-color: initial; }
+                        }
+                        #${uniqueID} {
+                          animation: flashAnimation 1s ease;
+                        }
+                      `;
+                      // Inject dynamic CSS into the DOM
+                      document.head.appendChild(styleEl);
+
+                      // Remove dynamic CSS and ID after 1 second
+                      setTimeout(() => {
+                        styleEl.remove();
+                        newCell.node.id = '';
+                      }, 1000);
                     }
-                  } else {
-                    console.error('nbContent or contentFactory is undefined');
+                  } catch (error) {
+                    console.error(error);
                   }
                 } else {
                   console.error('No active notebook');
-                  // nbContent.model.initialize();
-                  // model.cells.push(newCell);
-                  // const newCell = activatedNotebook.createCodeCell({
-                  //   cell: {
-                  //     cell_type: 'code',
-                  //     source: ["print('hello')"],
-                  //     metadata: {}
-                  //   }
-                  // });
-                  // console.log('New cell:', newCell);
-                  // if (newCell) {
-                  //   activatedNotebook.model.cells.push(newCell);
-                  // } else {
-                  //   console.error('New cell was not created.');
-                  // }
                 }
-                // Assuming the notebook exposes a way to get the DOM element for a cell
-                // const cellIndex = props.activeNotebook.model.cells.length - 1;
-                // const cellElement =
-                //   props.activeNotebook.getCellElement(cellIndex);
-
-                // // Apply the flash effect
-                // if (cellElement) {
-                //   cellElement.classList.add('flash-cell');
-
-                //   // Remove the class after animation to reset the cell's appearance
-                //   setTimeout(() => {
-                //     cellElement.classList.remove('flash-cell');
-                //   }, 1000);
-                // }
               }
             }
             setIsTyping(false);

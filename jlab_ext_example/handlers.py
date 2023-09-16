@@ -89,6 +89,7 @@ class SegmentHandler(APIHandler):
     def post(self):
         data = self.get_json_body()
         video_id = data["videoId"]
+        print(video_id)
         segments = get_segments(video_id)
         self.finish(json.dumps(segments))
 
