@@ -1,5 +1,5 @@
 import { ReactWidget } from '@jupyterlab/ui-components';
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, CSSProperties } from 'react';
 import { requestAPI } from './handler';
 import '@chatscope/chat-ui-kit-styles/dist/default/styles.min.css';
 import {
@@ -47,7 +47,7 @@ type ChatComponentProps = {
   onVideoIdChange: (videoId: IVideoId) => void;
   getCurrentNotebookContent: () => any;
   getCurrentNotebook: () => any;
-  getMetaDataChange: () => void;
+  getCurrentNotebookKernel: () => any;
 };
 
 // Create a new React component for the Chat logic
@@ -73,9 +73,45 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
   const [canGoOn, setCanGoOn] = useState(false);
   const [currentSegmentIndex, setCurrentSegmentIndex] = useState(0);
   const [lastActivityTime, setLastActivityTime] = useState<number>(Date.now());
+  const [kernelType, setKernelType] = useState('');
+  const [popupStates, setPopupStates] = useState<Record<number, boolean>>({});
 
   const handleReady = (event: YouTubeEvent<number>) => {
     setPlayer(event.target);
+  };
+
+  const openPopup = (index: number) => {
+    setPopupStates(prevStates => ({ ...prevStates, [index]: true }));
+  };
+
+  const closePopup = (index: number) => {
+    setPopupStates(prevStates => ({ ...prevStates, [index]: false }));
+  };
+
+  const backdropStyle: CSSProperties = {
+    position: 'fixed',
+    top: 0,
+    left: 0,
+    width: '100%',
+    height: '100%',
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    zIndex: 15
+  };
+
+  const openerAboveStyle: CSSProperties = {
+    zIndex: 16
+  };
+
+  const openerBelowStyle: CSSProperties = {
+    zIndex: 14
+  };
+
+  const popupStyle: CSSProperties = {
+    position: 'fixed',
+    top: '50%',
+    left: '50%',
+    transform: 'translate(-50%, -50%)',
+    zIndex: 20
   };
 
   function stripHTMLTags(input: string) {
@@ -106,6 +142,9 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
         setCanGoOn(true);
         setVideoId(question);
         props.onVideoIdChange({ videoId: question }); // Emit signal
+        const kernel = props.getCurrentNotebookKernel();
+        console.log(kernel.name);
+        setKernelType(kernel.name);
         requestAPI<any>('segments', {
           body: JSON.stringify({ videoId: question }),
           method: 'POST'
@@ -161,7 +200,8 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
             question: question,
             videoId: videoId,
             segments: segments,
-            category: category
+            category: category,
+            kernelType: kernelType
           }),
           method: 'POST'
         })
@@ -218,7 +258,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                       setTimeout(() => {
                         styleEl.remove();
                         newCell.node.id = '';
-                      }, 1000);
+                      }, 2000);
                     }
                   } catch (error) {
                     console.error(error);
@@ -328,12 +368,19 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
   };
 
   const checkForInactivity = useCallback(() => {
-    if (Date.now() - lastActivityTime >= 240000) {
+    if (Date.now() - lastActivityTime >= 180000) {
       // 2 minutes in milliseconds
       handleSend('');
       setLastActivityTime(Date.now()); // Reset the last activity time
     }
   }, [lastActivityTime, handleSend]);
+
+  // useEffect(() => {
+  //   // If canGoOn is true and no one is typing and videoId is not empty, automatically go on to the next stage
+  //   if (canGoOn && !isTyping && videoId !== '') {
+  //     handleGoOn();
+  //   }
+  // }, [canGoOn, isTyping, videoId]);
 
   // Update lastActivityTime whenever user types something
   useEffect(() => {
@@ -363,7 +410,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
           style={{ height: '100%', width: '100%' }}
         >
           <MessageList
-            scrollBehavior="smooth"
+            scrollBehavior="auto"
             typingIndicator={
               isTyping ? <TypingIndicator content="iTutor is typing" /> : null
             }
@@ -389,25 +436,85 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                     }}
                   />
                   {message.videoId && (
+                    // <div
+                    //   style={{
+                    //     overflow: 'hidden', // make sure the radius applies to the inner iframe
+                    //     marginTop: '8px', // set distance between this video and the next message
+                    //     paddingBottom: isTyping ? '40px' : '20px'
+                    //   }}
+                    // >
+                    //   <YouTube
+                    //     videoId={message.videoId}
+                    //     opts={{
+                    //       height: '240',
+                    //       width: '430',
+                    //       playerVars: {
+                    //         start: message.start || undefined, // Use the start and end time from the message
+                    //         end: message.end || undefined,
+                    //         controls: 0
+                    //       }
+                    //     }}
+                    //     onReady={handleReady}
+                    //     onEnd={event => {
+                    //       if (message.category === 'Introduction') {
+                    //         setCanGoOn(true);
+                    //       } else {
+                    //         handleSend('');
+                    //       }
+                    //     }}
+                    //   />
+                    // </div>
                     <div
                       style={{
-                        overflow: 'hidden', // make sure the radius applies to the inner iframe
-                        marginTop: '8px', // set distance between this video and the next message
+                        marginTop: '8px',
                         paddingBottom: isTyping ? '40px' : '20px'
                       }}
                     >
-                      <YouTube
-                        videoId={message.videoId}
-                        opts={{
-                          height: '240',
-                          width: '430',
-                          playerVars: {
-                            start: message.start || undefined, // Use the start and end time from the message
-                            end: message.end || undefined
-                          }
-                        }}
-                        onReady={handleReady}
-                      />
+                      {popupStates[i] ? (
+                        <div
+                          style={backdropStyle}
+                          onClick={() => closePopup(i)}
+                        ></div>
+                      ) : null}
+                      <div
+                        style={
+                          popupStates[i] ? openerAboveStyle : openerBelowStyle
+                        }
+                        onClick={() => openPopup(i)}
+                      >
+                        <img
+                          src={`https://img.youtube.com/vi/${message.videoId}/0.jpg`}
+                          alt="YouTube Thumbnail"
+                          style={{ width: '430px', height: '240px' }}
+                        />
+                      </div>
+                      {popupStates[i] && (
+                        <div style={popupStyle}>
+                          <YouTube
+                            key={i}
+                            videoId={message.videoId}
+                            opts={{
+                              height: '540',
+                              width: '960',
+                              playerVars: {
+                                start: message.start || undefined,
+                                end: message.end || undefined,
+                                controls: 0,
+                                rel: 0
+                              }
+                            }}
+                            onReady={handleReady}
+                            onEnd={event => {
+                              handleSend('');
+                              // if (message.category === 'Introduction') {
+                              //   setCanGoOn(true);
+                              // } else {
+                              //   handleSend('');
+                              // }
+                            }}
+                          />
+                        </div>
+                      )}
                     </div>
                   )}
                 </>
@@ -434,7 +541,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
             position: 'absolute',
             bottom: 60, // Adjust as needed
             right: 10,
-            zIndex: 1 // Make sure it appears above other elements
+            zIndex: 14 // Make sure it appears above other elements
           }}
           disabled={!canGoOn || isTyping || videoId === ''} // Disable the input when isTyping is true
         >
@@ -455,11 +562,6 @@ export class ChatWidget extends ReactWidget {
   private _videoIdChanged = new Signal<this, IVideoId>(this);
   public get videoIdChanged(): ISignal<this, IVideoId> {
     return this._videoIdChanged;
-  }
-
-  private _metadataChanged = new Signal<this, void>(this);
-  public get metadataChanged(): ISignal<this, void> {
-    return this._metadataChanged;
   }
 
   private _getCurrentNotebookContent(): any {
@@ -491,6 +593,10 @@ export class ChatWidget extends ReactWidget {
     return this.notebookTracker.currentWidget?.content;
   }
 
+  private _getCurrentNotebookKernel(): any {
+    return this.notebookTracker.currentWidget?.sessionContext.session?.kernel;
+  }
+
   render(): JSX.Element {
     return (
       <div style={{ height: '100%', width: '100%' }}>
@@ -500,7 +606,7 @@ export class ChatWidget extends ReactWidget {
             this._videoIdChanged.emit(videoId)
           }
           getCurrentNotebook={this._getCurrentNotebook.bind(this)}
-          getMetaDataChange={() => this._metadataChanged.emit()}
+          getCurrentNotebookKernel={this._getCurrentNotebookKernel.bind(this)}
         />
       </div>
     );

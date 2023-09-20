@@ -107,28 +107,14 @@ class ChatHandler(APIHandler):
         video_id = data["videoId"]
         segments = data["segments"]
         category = data["category"]
+        kernelType = data["kernelType"]
         skills_data = get_skills(video_id)
-        # results = {
-        #     "state": state,
-        #     "notebook": notebook,
-        #     "question": question,
-        #     "video_id": video_id,
-        #     "segments": segments,
-        # }
-        # self.finish(json.dumps(results))
-        if (
-            llm is None
-            or prompt is None
-            or memory is None
-            or conversation is None
-            or VIDEO_ID != video_id
-            or bkt_params == {}
-        ):
+        if llm is None or prompt is None or memory is None or conversation is None:
             VIDEO_ID = video_id
             transcript = get_transcript(video_id)
             data = get_csv_from_youtube_video(video_id)
             init_bkt_params(video_id)
-            initialize_chat_server(transcript, segments, data)
+            initialize_chat_server(transcript, segments, data, kernelType)
 
         if state and notebook:
             bkt_params = update_bkt_params(
@@ -176,9 +162,9 @@ class GoOnHandler(APIHandler):
                     {
                         "role": "system",
                         "content": f"""
-                                    Give the transcript of a tutorial video of EDA: {str(transcript)} and the video segments' category: {str(segments)}, 
-                                    determine if the student's current performance (including the current video play time and category, notebook content, 
-                                    and the current answer in the chat) is good enough to advance the next stage. Output yes or no.
+                                    Give the transcript of a tutorial video of EDA: {str(transcript)} and the video segments' category: {str(segments)}, find out the action the author taken and the outcome in each category.
+                                    Determine if the student's current performance, including the current video play time and category, notebook content and output (important!), and the current answer in the chat, is good enough to advance the next stage.
+                                    Only output yes (for good enough) or no (for not ready).
                                     """,
                     },
                     {"role": "user", "content": str(input_data)},
@@ -232,11 +218,79 @@ def initialze_database():
         skills TEXT NOT NULL
     );"""
     )
+    video_id = "nx5yhXAQLxw"
+    skills_set = [
+        {"category": "Load data/packages", "skill": "load data directly with an URL"},
+        {"category": "Load data/packages", "skill": "load necessary packages for EDA"},
+        {
+            "category": "Initial observation on raw data",
+            "skill": "inspect raw data in a new dataset",
+        },
+        {
+            "category": "Initial observation on raw data",
+            "skill": "explanatory analysis of different columns and their meanings",
+        },
+        {
+            "category": "Data visualization",
+            "skill": "use box plot to visualise the data",
+        },
+        {
+            "category": "Chart interpretation/insights",
+            "skill": "interpret box plots and histograms to draw insights",
+        },
+        {
+            "category": "Data visualization",
+            "skill": "use histograms to visualise the data",
+        },
+        {
+            "category": "Chart interpretation/insights",
+            "skill": "draw insights from visualizations and generate hypothesis",
+        },
+        {
+            "category": "Data visualization",
+            "skill": "use dot plot to visualise the data",
+        },
+        {
+            "category": "Chart interpretation/insights",
+            "skill": "identify outliers in the data",
+        },
+        {"category": "Data processing", "skill": "reorder, group and summarize data"},
+        {"category": "Data visualization", "skill": "customize plot appearance"},
+    ]
+    skills_json = json.dumps(skills_set)
+    segments_set = [
+        {"category": "Introduction", "start": 1, "end": 120},
+        {"category": "Load data/packages", "start": 121, "end": 220},
+        {"category": "Initial observation on raw data", "start": 221, "end": 435},
+        {"category": "Data visualization", "start": 436, "end": 463},
+        {"category": "Chart interpretation/insights", "start": 464, "end": 512},
+        {"category": "Data visualization", "start": 513, "end": 600},
+        {"category": "Chart interpretation/insights", "start": 601, "end": 640},
+        {"category": "Data visualization", "start": 641, "end": 695},
+        {"category": "Chart interpretation/insights", "start": 696, "end": 720},
+        {"category": "Data processing", "start": 721, "end": 780},
+        {"category": "Data visualization", "start": 781, "end": 900},
+    ]
+    segments_json = json.dumps(segments_set)
+    c.execute("SELECT * FROM skills_cache WHERE video_id = ?", (video_id,))
+    if c.fetchone() is None:
+        # Insert new data if video_id doesn't exist
+        c.execute(
+            "INSERT INTO skills_cache (video_id, skills) VALUES (?, ?)",
+            (video_id, skills_json),
+        )
+    c.execute("SELECT * FROM segments_cache WHERE video_id = ?", (video_id,))
+    if c.fetchone() is None:
+        # Insert new data if video_id doesn't exist
+        c.execute(
+            "INSERT INTO segments_cache (video_id, segments) VALUES (?, ?)",
+            (video_id, segments_json),
+        )
     conn.commit()
     conn.close()
 
 
-def initialize_chat_server(transcript, segments, data):
+def initialize_chat_server(transcript, segments, data, kernelType):
     """Initialize the chat server."""
     global llm, prompt, memory, conversation
     # LLM initialization
@@ -247,10 +301,10 @@ def initialize_chat_server(transcript, segments, data):
         messages=[
             SystemMessagePromptTemplate.from_template(
                 """
-                Role: You're an expert data science mentor focused on real-time guidance in Exploratory Data Analysis (EDA) on Jupyter notebooks during David Robinson's Tidy Tuesday tutorials.
-                Pedagogy: Use Cognitive Apprenticeship to offer feedback, corrections, and suggestions. Encourage students to verbalize their thought processes, self-reflect, and engage in independent exploration. 
-                          Adapt your mentorship style based on Bayesian Knowledge Tracing: act more like a driver and scaffold if the student has a low probability of mastery on the skill; as a navigater and coach if the understanding is high.
-                Resources: You have the complete transcript ({transcript}), segmented video clips ({segments}), and dataset information ({data}) from the video.
+                As an expert data science mentor focused on real-time guidance in Exploratory Data Analysis (EDA) on Jupyter notebooks during David Robinson's Tidy Tuesday tutorials, your role is to use Cognitive Apprenticeship to offer feedback, corrections, and suggestions. You encourage students to verbalize their thought processes, self-reflect, and engage in independent exploration.
+                You adapt your mentorship style based on Bayesian Knowledge Tracing. If a student has a low probability of mastery on the skill, you act more like a driver and scaffold their learning. If the student's understanding is high, you act more like a navigator and coach.
+                During the self-exploration process, you provide topics that can improve the student's understanding of the lowest-mastery-probability skills if they don't know what to do next.
+                You have access to the complete transcript ({transcript}), segmented video clips ({segments}), and dataset information ({data}) from the video.
 
                 Here are some guidelines for your interaction with the student in different scenarios:
                 1. If the student just starts watching the video (current_category: "Introduction" or "Load data/packages"):
@@ -278,10 +332,16 @@ def initialize_chat_server(transcript, segments, data):
                 - Encourage the student to ask questions or provide feedback on the suggested approach.
 
                 Notes:
-                - Interact in the first person as a mentor.
+                - You interact in the first person as a mentor.
                 - Be heuristic, brief, and prioritize the video until the "Self-Exploration" phase.
+                - You give advice based on the student's using programming language ({kernelType}), it can be ir(R) or python3(Python).
                 """
-            ).format(transcript=transcript, segments=segments, data=data),
+            ).format(
+                transcript=transcript,
+                segments=segments,
+                data=data,
+                kernelType=kernelType,
+            ),
             MessagesPlaceholder(variable_name="chat_history"),
             HumanMessagePromptTemplate.from_template("input: {input}"),
         ]
@@ -632,30 +692,50 @@ def get_skills(video_id):
     if row:
         return json.loads(row[0])
     else:
-        transcript = get_transcript(video_id)
-        segments = get_segments(video_id)
+        transcript_1 = get_transcript("nx5yhXAQLxw")
+        segments_1 = get_segments("nx5yhXAQLxw")
+        transcript_2 = get_transcript(video_id)
+        segments_2 = get_segments(video_id)
         completion = openai.ChatCompletion.create(
-            model="gpt-4",
+            model="gpt-4-32k",
             messages=[
                 {
                     "role": "system",
-                    "content": """You are an expert in Exploratory Data Analysis. Give the following transcript of a tutorial video of EDA and the video segments' category, 
-                                summarize !!all!! the EDA skills used in each category in the following format but no duplication.
-                                [
-                                    {"category": "Load data/packages", "skill": "load packages in R"},
-                                    {"category": "Initial observation on raw data", "skill": "observe trends and patterns in the data"},
-                                    {"category": "Data visualization, "skill": "uses histograms to visualise the data"},
-                                    {"category": "Data visualization, "skill": "uses dot plot to visualise the data"},
-                                    ...
-                                ]
-                                note: Don't be too specfic on the skills. If two skills are the same operation but on different tasks, they should be the same skill.
-                                """,
+                    "content": f"""
+                    You are an expert in Exploratory Data Analysis. Given the transcript of a tutorial video of EDA and the video segments, 
+                    summarize !!all!! the EDA skills used in each category with no duplication. Each category may correspond to more than one skill.
+                    note: Don't be too specific on the skills. If two skills are the same operation but on different tasks, they should be the same skill.
+                    """,
                 },
                 {
                     "role": "user",
-                    "content": f"transcript: {str(transcript)}, segments: {str(segments)}",
+                    "content": f"transcript: {transcript_1}, segments: {segments_1}",
+                },
+                {
+                    "role": "assistant",
+                    "content": """
+                    [
+                        {"category": "Load data/packages", "skill": "load data directly with an URL"},
+                        {"category": "Load data/packages", "skill": "load necessary packages for EDA"},
+                        {"category": "Initial observation on raw data", "skill": "inspect raw data in a new dataset"},
+                        {"category": "Initial observation on raw data", "skill": "explanatory analysis of different columns and their meanings"},
+                        {"category": "Data visualization", "skill": "use box plot to visualise the data"},
+                        {"category": "Chart interpretation/insights", "skill": "interpret box plots and histograms to draw insights"},
+                        {"category": "Data visualization", "skill": "use histograms to visualise the data"},
+                        {"category": "Chart interpretation/insights", "skill": "draw insights from visualizations and generate hypothesis"},
+                        {"category": "Data visualization", "skill": "use dot plot to visualise the data"},
+                        {"category": "Chart interpretation/insights", "skill": "identify outliers in the data"},
+                        {"category": "Data processing", "skill": "reorder, group and summarize data"},
+                        {"category": "Data visualization", "skill": "customize plot appearance"}
+                    ]
+                    """,
+                },
+                {
+                    "role": "user",
+                    "content": f"transcript: {transcript_2}, segments: {segments_2}",
                 },
             ],
+            temperature=0.5,
         )
         skills_data = completion.choices[0].message["content"]
         c.execute("INSERT INTO skills_cache VALUES (?, ?)", (video_id, skills_data))
@@ -680,7 +760,7 @@ def init_bkt_params(video_id):
 
 def update_bkt_param(model, is_correct):
     """Update the bkt parameters for the given skills."""
-    if is_correct or is_correct == "true":
+    if is_correct == "true" or is_correct == "True":
         numerator = model["probMastery"] * (1 - model["probSlip"])
         mastery_and_guess = (1 - model["probMastery"]) * model["probGuess"]
     else:
@@ -702,25 +782,63 @@ def update_bkt_params(previous_notebook, current_notebook, skills_data, question
             {
                 "role": "system",
                 "content": """You are an expert in Exploratory Data Analysis. The student is practicing EDA in the Jupyter notebook.
-                Now your role is to find out the skills the student practiced in the last training period and whether the student's performance is correct (true) or incorrect (false).
-                The last training period is the period between the last notebook content {} and the current notebook content {}, and the student's message {} in the chat.
-                You only need to find out the skills in the given skill set {}. If a skill is not practiced in the last period, don't include it in the answer.
-                Please give the answer in the following format:
-                [
-                    {{"customize plot appearance": "true"}},
-                    {{"use dot plot to visualise the data": "false"}},
-                    ...
-                ]
+                Now your role is to find out the skills the student practiced during the last training period and whether the student's performance is correct (true) or incorrect (false) on the skills.
+                The last training period is the period between the previous notebook and the current notebook, and the student's message in the chat. You only need to find out the skills in the given skill set {}. 
+                If a skill is not practiced in the last period or has been practiced in the previous notebook, don't include it in the answer. If no skill is being practiced in the last period, then return a empty list.
                 """.format(
-                    previous_notebook, current_notebook, question, skills_data
+                    skills_data
                 ),
             },
-            {"role": "user", "content": ""},
+            {
+                "role": "user",
+                "content": """
+                previous_notebook: '[{"cell_type":"code","source":"library(tidyverse)\n recent_grads <- read_csv("https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2018-10-16/recent-grads.csv")","output_type":null}]',
+                current_notebook: '[{"cell_type":"code","source":"library(tidyverse)\n recent_grads <- read_csv("https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2018-10-16/recent-grads.csv")\n majors_processed <- recent_grads %>%\n arrange(desc(Median)) %>%\n mutate(Major = str_to_title(Major),\n Major = fct_reorder(Major, Median))","output_type":null}]',
+                question: '',
+                """,
+            },
+            {
+                "role": "assistant",
+                "content": """
+                [
+                    {"reorder, group and summarize data": "true"}
+                ]
+                """,
+            },
+            {
+                "role": "user",
+                "content": """
+                previous_notebook: '[{"cell_type":"code","source":"","output_type":null}]',
+                current_notebook = '[{"cell_type":"code","source":"load(tidyverse)","output_type":null}]',
+                question: '',
+                """,
+            },
+            {
+                "role": "assistant",
+                "content": """
+                [
+                    {"load data/packages in R": "false"}
+                ]
+                """,
+            },
+            {
+                "role": "user",
+                "content": """
+                previous_notebook: {},
+                current_notebook: {},
+                question: {}
+                """.format(
+                    previous_notebook, current_notebook, question
+                ),
+            },
         ],
     )
     models = json.loads(completion.choices[0].message["content"])
     for model in models:
-        update_bkt_param(bkt_params[model.key], model.value)
+        for key, value in model.items():
+            print(key, value)
+            if key in bkt_params.keys():
+                update_bkt_param(bkt_params[key], value)
     return bkt_params
 
 
