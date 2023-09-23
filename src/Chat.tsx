@@ -1,5 +1,11 @@
 import { ReactWidget } from '@jupyterlab/ui-components';
-import React, { useState, useEffect, useCallback, CSSProperties } from 'react';
+import React, {
+  useState,
+  useRef,
+  useEffect,
+  useCallback,
+  CSSProperties
+} from 'react';
 import { requestAPI } from './handler';
 import '@chatscope/chat-ui-kit-styles/dist/default/styles.min.css';
 import {
@@ -72,9 +78,13 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
   const [inputValue, setInputValue] = useState('');
   const [canGoOn, setCanGoOn] = useState(false);
   const [currentSegmentIndex, setCurrentSegmentIndex] = useState(0);
-  const [lastActivityTime, setLastActivityTime] = useState<number>(Date.now());
+  // const [lastActivityTime, setLastActivityTime] = useState<number>(Date.now());
   const [kernelType, setKernelType] = useState('');
   const [popupStates, setPopupStates] = useState<Record<number, boolean>>({});
+  const [lastSendTime, setLastSendTime] = useState<number>(Date.now());
+  const currentSegmentIndexRef = useRef(currentSegmentIndex);
+  const videoIdRef = useRef(videoId);
+  const canGoOnRef = useRef(canGoOn);
 
   const handleReady = (event: YouTubeEvent<number>) => {
     setPlayer(event.target);
@@ -121,6 +131,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
   const handleSend = useCallback(
     async (question: string) => {
       setInputValue(''); // Reset inputValue after sending the message
+      setLastSendTime(Date.now()); // Update the last send time
       question = stripHTMLTags(question);
       const newMessage: IMessage = {
         message: question,
@@ -137,20 +148,20 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
       setMessages(newMessages);
 
       if (videoId === '') {
-        console.log(question);
+        // console.log(question);
         setIsTyping(true);
         setCanGoOn(true);
         setVideoId(question);
         props.onVideoIdChange({ videoId: question }); // Emit signal
         const kernel = props.getCurrentNotebookKernel();
-        console.log(kernel.name);
+        // console.log(kernel.name);
         setKernelType(kernel.name);
         requestAPI<any>('segments', {
           body: JSON.stringify({ videoId: question }),
           method: 'POST'
         })
           .then(response => {
-            console.log(response);
+            // console.log(response);
             // const parsed = JSON.parse(response.replace(/'/g, '"'));
             setSegments(response);
             setMessages([
@@ -177,7 +188,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
         const currentNotebookContent = JSON.stringify(
           props.getCurrentNotebookContent()
         );
-        console.log(currentNotebookContent);
+        // console.log(currentNotebookContent);
         const currentTime = player ? Math.round(player.getCurrentTime()) : 0;
 
         let category = '';
@@ -195,18 +206,17 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
 
         requestAPI<any>('chat', {
           body: JSON.stringify({
-            state: `${currentTime} seconds`,
             notebook: currentNotebookContent,
             question: question,
             videoId: videoId,
-            segments: segments,
             category: category,
+            segmentIndex: currentSegmentIndex,
             kernelType: kernelType
           }),
           method: 'POST'
         })
           .then(response => {
-            console.log(response);
+            // console.log(response);
             setMessages([
               ...newMessages,
               {
@@ -224,7 +234,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
             let match;
             while ((match = codeRegex.exec(response)) !== null) {
               const code = match[2].trim();
-              console.log(code);
+              // console.log(code);
               if (code) {
                 const activatedNotebook = props.getCurrentNotebook();
                 if (activatedNotebook) {
@@ -279,26 +289,26 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
         } else if (category === 'Introduction') {
           setCanGoOn(true);
         } else {
-          requestAPI<any>('go_on', {
-            body: JSON.stringify({
-              state: `${currentTime} seconds`,
-              notebook: currentNotebookContent,
-              question: question,
-              videoId: videoId,
-              segments: segments,
-              category: category
-            }),
-            method: 'POST'
-          })
-            .then(response => {
-              console.log(response);
-              setCanGoOn(response.toLowerCase() === 'yes');
+          if (canGoOn === false) {
+            requestAPI<any>('go_on', {
+              body: JSON.stringify({
+                notebook: currentNotebookContent,
+                question: question,
+                videoId: videoId,
+                segmentIndex: currentSegmentIndex
+              }),
+              method: 'POST'
             })
-            .catch(reason => {
-              console.error(
-                `Error on POST /jlab_ext_example/go_on .\n${reason}`
-              );
-            });
+              .then(response => {
+                console.log(response);
+                setCanGoOn(response.toLowerCase() === 'yes');
+              })
+              .catch(reason => {
+                console.error(
+                  `Error on POST /jlab_ext_example/go_on .\n${reason}`
+                );
+              });
+          }
         }
       }
     },
@@ -367,13 +377,72 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     }
   };
 
-  const checkForInactivity = useCallback(() => {
-    if (Date.now() - lastActivityTime >= 180000) {
-      // 2 minutes in milliseconds
-      handleSend('');
-      setLastActivityTime(Date.now()); // Reset the last activity time
+  useEffect(() => {
+    currentSegmentIndexRef.current = currentSegmentIndex;
+    videoIdRef.current = videoId;
+    canGoOnRef.current = canGoOn;
+  }, [currentSegmentIndex, videoId, canGoOn]);
+
+  function onCellExecuted(): void {
+    console.log(canGoOnRef.current);
+    if (canGoOnRef.current === false) {
+      const currentNotebookContent = props.getCurrentNotebookContent();
+      requestAPI<any>('go_on', {
+        body: JSON.stringify({
+          notebook: currentNotebookContent,
+          question: '',
+          videoId: videoIdRef.current,
+          segmentIndex: currentSegmentIndexRef.current
+        }),
+        method: 'POST'
+      })
+        .then(response => {
+          console.log(response);
+          setCanGoOn(response.toLowerCase() === 'yes');
+          console.log(canGoOnRef.current);
+        })
+        .catch(reason => {
+          console.error(`Error on POST /jlab_ext_example/go_on .\n${reason}`);
+        });
     }
-  }, [lastActivityTime, handleSend]);
+  }
+
+  useEffect(() => {
+    // Connect the signal
+    NotebookActions.executed.connect(onCellExecuted);
+    // Cleanup: disconnect the signal when the component is unmounted
+    return () => {
+      NotebookActions.executed.disconnect(onCellExecuted);
+    };
+  }, []);
+
+  const checkForInactivity = useCallback(() => {
+    const isVideoPlaying =
+      player && player.getPlayerState && player.getPlayerState() === 1;
+    if (
+      Date.now() - lastSendTime >= 180000 &&
+      inputValue === '' &&
+      !isVideoPlaying
+    ) {
+      // Auto-send every 3 minutes (180000 is in milliseconds)
+      handleSend('');
+      // setLastActivityTime(Date.now()); // Reset the last activity time
+    }
+  }, [inputValue, lastSendTime, handleSend, player]);
+
+  useEffect(() => {
+    const intervalId = setInterval(checkForInactivity, 1000);
+    return () => clearInterval(intervalId);
+  }, [checkForInactivity]);
+
+  // Update lastActivityTime whenever user types something
+  // useEffect(() => {
+  //   if (inputValue !== '') {
+  //     setLastActivityTime(Date.now());
+  //   }
+  // }, [inputValue]);
+
+  // Setup an interval to check for inactivity every second
 
   // useEffect(() => {
   //   // If canGoOn is true and no one is typing and videoId is not empty, automatically go on to the next stage
@@ -381,26 +450,6 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
   //     handleGoOn();
   //   }
   // }, [canGoOn, isTyping, videoId]);
-
-  // Update lastActivityTime whenever user types something
-  useEffect(() => {
-    if (inputValue !== '' || (player && player.getOptions('isFullScreen'))) {
-      setLastActivityTime(Date.now());
-    }
-  }, [inputValue]);
-
-  // Setup an interval to check for inactivity every second
-  useEffect(() => {
-    const intervalId = setInterval(checkForInactivity, 1000);
-    return () => clearInterval(intervalId);
-  }, [checkForInactivity]);
-
-  useEffect(() => {
-    const chatContainer = document.getElementById('chatContainerId');
-    if (chatContainer) {
-      chatContainer.scrollTop = chatContainer.scrollHeight;
-    }
-  }, [messages]);
 
   return (
     <div style={{ position: 'relative', height: '100%', width: '100%' }}>
@@ -436,34 +485,6 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                     }}
                   />
                   {message.videoId && (
-                    // <div
-                    //   style={{
-                    //     overflow: 'hidden', // make sure the radius applies to the inner iframe
-                    //     marginTop: '8px', // set distance between this video and the next message
-                    //     paddingBottom: isTyping ? '40px' : '20px'
-                    //   }}
-                    // >
-                    //   <YouTube
-                    //     videoId={message.videoId}
-                    //     opts={{
-                    //       height: '240',
-                    //       width: '430',
-                    //       playerVars: {
-                    //         start: message.start || undefined, // Use the start and end time from the message
-                    //         end: message.end || undefined,
-                    //         controls: 0
-                    //       }
-                    //     }}
-                    //     onReady={handleReady}
-                    //     onEnd={event => {
-                    //       if (message.category === 'Introduction') {
-                    //         setCanGoOn(true);
-                    //       } else {
-                    //         handleSend('');
-                    //       }
-                    //     }}
-                    //   />
-                    // </div>
                     <div
                       style={{
                         marginTop: '8px',
@@ -505,7 +526,12 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                             }}
                             onReady={handleReady}
                             onEnd={event => {
-                              handleSend('');
+                              if (
+                                message.category !== 'Introduction' &&
+                                Date.now() - lastSendTime >= 60000
+                              ) {
+                                handleSend('');
+                              }
                               // if (message.category === 'Introduction') {
                               //   setCanGoOn(true);
                               // } else {
@@ -526,7 +552,6 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
             onSend={handleSend}
             style={{ maxHeight: '100px', overflowY: 'auto' }}
             onChange={val => {
-              console.log('onChange triggered with value: ', val);
               setInputValue(val);
             }}
             // style={{ height: '50px', width: '100%' }}
@@ -541,7 +566,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
             position: 'absolute',
             bottom: 60, // Adjust as needed
             right: 10,
-            zIndex: 14 // Make sure it appears above other elements
+            zIndex: 19
           }}
           disabled={!canGoOn || isTyping || videoId === ''} // Disable the input when isTyping is true
         >

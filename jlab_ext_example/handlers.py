@@ -101,22 +101,23 @@ class ChatHandler(APIHandler):
 
         # Existing video_id logic
         data = self.get_json_body()
-        state = data["state"]
         notebook = data["notebook"]
         question = data["question"]
         video_id = data["videoId"]
-        segments = data["segments"]
         category = data["category"]
+        segmentIndex = data["segmentIndex"]
         kernelType = data["kernelType"]
         skills_data = get_skills(video_id)
+        action_outcome = get_action_outcome(video_id)
+        action = action_outcome[segmentIndex]["action"]
+        outcome = action_outcome[segmentIndex]["outcome"]
         if llm is None or prompt is None or memory is None or conversation is None:
             VIDEO_ID = video_id
-            transcript = get_transcript(video_id)
             data = get_csv_from_youtube_video(video_id)
             init_bkt_params(video_id)
-            initialize_chat_server(transcript, segments, data, kernelType)
+            initialize_chat_server(data, kernelType)
 
-        if state and notebook:
+        if notebook:
             bkt_params = update_bkt_params(
                 previous_notebook, notebook, skills_data, question
             )
@@ -128,42 +129,46 @@ class ChatHandler(APIHandler):
                     category, skills_data, bkt_params
                 )
             input_data = {
-                "state": state,
                 "notebook": notebook,
                 "question": question,
                 "current_category": category,
                 "category_params": category_params,
+                "action": action,
+                "outcome": outcome,
             }
             results = conversation({"input": str(input_data)})["text"]
             self.finish(json.dumps(results))
         else:
             self.set_status(400)
-            self.finish(
-                json.dumps({"error": "No state input or no notebook file uploaded"})
-            )
+            self.finish(json.dumps({"error": "No notebook file active"}))
 
 
 class GoOnHandler(APIHandler):
     @tornado.web.authenticated
     def post(self):
         data = self.get_json_body()
-        if VIDEO_ID != "":
-            segments = data["segments"]
-            transcript = get_transcript(VIDEO_ID)
+        video_id = data["videoId"]
+        if video_id != "":
+            segment_index = data["segmentIndex"]
+            action_outcome = get_action_outcome(video_id)
+            # action = action_outcome[segment_index]["action"]
+            outcome = action_outcome[segment_index]["outcome"]
             input_data = {
-                "state": data["state"],
+                "outcome": outcome,
                 "notebook": data["notebook"],
                 "question": data["question"],
-                "current_category": data["category"],
             }
+            print(outcome)
             response = openai.ChatCompletion.create(
                 model="gpt-4-32k",
                 messages=[
                     {
                         "role": "system",
-                        "content": f"""
-                                    Give the transcript of a tutorial video of EDA: {str(transcript)} and the video segments' category: {str(segments)}, find out the action the author taken and the outcome in each category.
-                                    Determine if the student's current performance, including the current video play time and category, notebook content and output (important!), and the current answer in the chat, is good enough to advance the next stage.
+                        "content": """
+                                    You are an experienced mentor in Exploratory Data Analysis (EDA). A student is learning EDA by watching an EDA tutorial video in David Robinson's Tidy Tuesday series.
+                                    The video is divided into many segments. The input consists of the outcome that students should learn from this clip.
+                                    Your task is to determine if the student's current performance, including the notebook content and output (important!), and the current answer in the chat, has meet the outcome of this clip.
+                                    When the student completed the tasks required by outcome, although it may not be exactly the same, he can advance to the next video clip.
                                     Only output yes (for good enough) or no (for not ready).
                                     """,
                     },
@@ -172,7 +177,7 @@ class GoOnHandler(APIHandler):
             )
             result = response.choices[0].message["content"]
         else:
-            result = "no"
+            result = "Something wrong with the video id."
         self.finish(json.dumps(result))
 
 
@@ -216,6 +221,13 @@ def initialze_database():
     CREATE TABLE IF NOT EXISTS skills_cache (
         video_id TEXT PRIMARY KEY,
         skills TEXT NOT NULL
+    );"""
+    )
+    c.execute(
+        """
+    CREATE TABLE IF NOT EXISTS action_outcome_cache (
+        video_id TEXT PRIMARY KEY,
+        action_outcome TEXT NOT NULL
     );"""
     )
     video_id = "nx5yhXAQLxw"
@@ -290,7 +302,7 @@ def initialze_database():
     conn.close()
 
 
-def initialize_chat_server(transcript, segments, data, kernelType):
+def initialize_chat_server(data, kernelType):
     """Initialize the chat server."""
     global llm, prompt, memory, conversation
     # LLM initialization
@@ -301,44 +313,43 @@ def initialize_chat_server(transcript, segments, data, kernelType):
         messages=[
             SystemMessagePromptTemplate.from_template(
                 """
-                As an expert data science mentor focused on real-time guidance in Exploratory Data Analysis (EDA) on Jupyter notebooks during David Robinson's Tidy Tuesday tutorials, your role is to use Cognitive Apprenticeship to offer feedback, corrections, and suggestions. You encourage students to verbalize their thought processes, self-reflect, and engage in independent exploration.
-                You adapt your mentorship style based on Bayesian Knowledge Tracing. If a student has a low probability of mastery on the skill, you act more like a driver and scaffold their learning. If the student's understanding is high, you act more like a navigator and coach.
-                During the self-exploration process, you provide topics that can improve the student's understanding of the lowest-mastery-probability skills if they don't know what to do next.
-                You have access to the complete transcript ({transcript}), segmented video clips ({segments}), and dataset information ({data}) from the video.
+                As an expert data science mentor focused on real-time guidance in Exploratory Data Analysis (EDA) on Jupyter notebooks during David Robinson's Tidy Tuesday tutorials,
+                your role is to use Cognitive Apprenticeship to offer feedback, corrections, and suggestions based on the student's learning progress.
+                The Cognitive Apprenticeship has the following six moves: modeling, coaching, scaffolding, articulation, reflection, and exploration.
+                You have access to the dataset information ({data}) used in the video. The current video segment and its author David's action and outcome of the current segment will also be given.
 
-                Here are some guidelines for your interaction with the student in different scenarios:
-                1. If the student just starts watching the video (current_category: "Introduction" or "Load data/packages"):
-                - Ask the student if they have any questions and offer assistance with loading data and packages.
-                2. If the student is following the video (current_category: "Initial observation on raw data" or "Data processing"):
-                - Share your own observations and ask the student if they find any data attributes interesting.
-                - Encourage the student to note down interesting tasks and try to solve them after watching the video.
-                3. If the student is watching the video (current_category: "Data visualization" or "Chart interpretation/insights"):
-                - Ask the student questions about the choices made in the video to encourage critical thinking.
-                - Provide feedback on their answers and validate their understanding.
-                4. If the student is writing code on the Jupyter notebook (notebook content changes, could happen in any current_category):
-                - Offer guidance and suggestions if you notice any mistakes or areas for improvement in their code.
-                - Provide hints and remind the student to pay attention to specific function parameters.
-                5. If the student has finished watching the tutorial video (current_category: "Self-exploration"):
-                - Encourage the student to think of additional tasks beyond what was covered in the video.
-                - Break down the problem into steps and guide the student on how to approach it.
-                - Share relevant resources or documentation to help the student with specific tasks.
-                6. If the video is over and the student has no idea what to do next (current_category: "Self-exploration"):
-                - Based on the student's skills BKT parameters, Suggest tasks that can help improve his lowest-mastery-probability skills.
-                7. If the student just plots a new figure in the Jupyter notebook (notebook's cell output_type is "display_data"):
-                - Ask the student to analyze the figure and look for patterns or trends.
-                - Encourage the student to modify their code or data to further explore their hypothesis.
-                8. If the student just finishes a task (current_category: "Chart interpretation/insights" or "Self-explanation"):
-                - If the student asks for a standard way to solve the task, provide an example Python code using pandas, numpy, and matplotlib.
-                - Encourage the student to ask questions or provide feedback on the suggested approach.
+                During different video segments, the moves you choose will differ. You need to adapt your mentorship style based on Bayesian Knowledge Tracing. Here are some guidelines for your interaction with the student in different scenarios:
+                1. current_category: "Load data/packages"
+                - (Scaffolding) When the probability of mastery is low (close to 0): Directly give the student the code to load necessary packages and explain the code to the student.
+                - (Coaching) When the probability of mastery is high (close to 1): Tell the student to load packages and data and check whether the student's performance is correct.
+                2. current_category: "Initial observation on raw data"
+                - (Scaffolding) When the probability of mastery is low (close to 0): Share your own observations and tell the student the possible meaning of each data attribute.
+                - (Coaching) When the probability of mastery is high (close to 1): Ask the student if he finds any data attributes attractive and encourage him to note down potential tasks.
+                3. current_category: "Data processing"
+                - (Scaffolding) When the probability of mastery is low (close to 0): Show how to do data processing on the data that are potentially useful for data visualization.
+                - (Coaching) When the probability of mastery is high (close to 1): Ask the student if there is any data that needs to be processed before visualization and monitor his performance.
+                - (Articulation) Ask the student questions about the choices made by David in the video to encourage critical thinking, such as why he processes those data attributes, not the others.
+                4. current_category: "Data visualization"
+                - (Scaffolding) When the probability of mastery is low (close to 0): Show how to make certain plots, including those made by David and those worthy of being drawn.
+                - (Coaching) When the probability of mastery is high (close to 1): Ask the student if any data is necessary to be visualized, and provide feedback and support on their answers.
+                - (Articulation) Ask the student questions about the choices made by David in the video to encourage critical thinking, such as why he makes a box plot.
+                5. current_category: "Chart interpretation/insights"
+                - (Scaffolding) When the probability of mastery is low (close to 0): Tell patterns and findings about the visualizations. And raise a new hypothesis from the plot that could lead to another visualization.
+                - (Articulation) When the probability of mastery is high (close to 1): Encourage the student to look for patterns in the visualizations. Remind and provide hints for the student to draw another hypothesis.
+                6. current_category: "Self-exploration"
+                - (Exploration): Let the student think of additional tasks beyond what has been covered in the video and encourage the student to further explore his hypotheses.
+                - (Scaffolding) When the probability of mastery is low (close to 0): Suggest tasks that can help improve the student's lowest-mastery-probability skills and break down the problem into steps and guide on how to approach it.
+                - (Coaching) When the probability of mastery is high (close to 1): Ask the student to analyze the figure he made and look for patterns and share relevant resources or documentation to help the student with his tasks.
+                - (Articulation) Encourage the student to draw findings, patterns, and hypotheses on the visualizations. And conclude what he has learned today.
+                - (Reflection) If the student has done some visualizations, you can provide optimal approaches and solutions for him to compare with his own approach and solution.
 
                 Notes:
-                - You interact in the first person as a mentor.
-                - Be heuristic, brief, and prioritize the video until the "Self-Exploration" phase.
-                - You give advice based on the student's using programming language ({kernelType}), it can be ir(R) or python3(Python).
+                - You should interact in the first person as a mentor heuristically and briefly.
+                - You give advice based on the programming language the student is currently using. He is now using {kernelType}.
+                - Try to limit your teaching and assisting content to the actions and outcomes of the current category provided to you.
+                - Do not describe the student's probability of mastery level for any skills to the student.
                 """
             ).format(
-                transcript=transcript,
-                segments=segments,
                 data=data,
                 kernelType=kernelType,
             ),
@@ -717,7 +728,7 @@ def get_skills(video_id):
                     [
                         {"category": "Load data/packages", "skill": "load data directly with an URL"},
                         {"category": "Load data/packages", "skill": "load necessary packages for EDA"},
-                        {"category": "Initial observation on raw data", "skill": "inspect raw data in a new dataset"},
+                        {"category": "Initial observation on raw data", "skill": "inspect raw data in a new dataset": "},
                         {"category": "Initial observation on raw data", "skill": "explanatory analysis of different columns and their meanings"},
                         {"category": "Data visualization", "skill": "use box plot to visualise the data"},
                         {"category": "Chart interpretation/insights", "skill": "interpret box plots and histograms to draw insights"},
@@ -742,6 +753,54 @@ def get_skills(video_id):
         conn.commit()
         conn.close()
     return json.loads(skills_data)
+
+
+def get_action_outcome(video_id):
+    """Get action and outcome for each segment in the given tutorial video."""
+    initialze_database()
+    conn = sqlite3.connect("cache.db")
+    c = conn.cursor()
+    c.execute(
+        "SELECT action_outcome FROM action_outcome_cache WHERE video_id = ?",
+        (video_id,),
+    )
+    row = c.fetchone()
+    if row:
+        return json.loads(row[0])
+    else:
+        transcript = get_transcript(video_id)
+        segments = get_segments(video_id)
+        completion = openai.ChatCompletion.create(
+            model="gpt-4-32k",
+            messages=[
+                {
+                    "role": "system",
+                    "content": """
+                    Your task is to summarize the actions and outcomes of each segment in a tutorial video on Exploratory Data Analysis (EDA). Given the transcript of the video and the corresponding video segments, you should provide a response in the following format:
+                    [
+                        {"category": "Introduction", "action": "...", "outcome": "..."},
+                        {"category": "Load data/packages", "action": "...", "outcome": "..."},
+                        ...
+                    ]
+                    Please analyze the tutorial video and transcript carefully to identify the main categories of actions and outcomes in the video. For each category, provide a concise description of the action taken by the author and the resulting outcome.
+                    Your summary should accurately reflect the content of the video and transcript, providing a clear and informative overview of the EDA process.
+                    Please note that your response should be flexible enough to accommodate various video segments and actions, ensuring that you capture the key actions and outcomes in each segment accurately.
+                    """,
+                },
+                {
+                    "role": "user",
+                    "content": f"transcript: {transcript}, segments: {segments}",
+                },
+            ],
+            temperature=0.5,
+        )
+        action_outcome = completion.choices[0].message["content"]
+        c.execute(
+            "INSERT INTO action_outcome_cache VALUES (?, ?)", (video_id, action_outcome)
+        )
+        conn.commit()
+        conn.close()
+    return json.loads(action_outcome)
 
 
 def init_bkt_params(video_id):
