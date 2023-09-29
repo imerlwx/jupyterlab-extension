@@ -7,6 +7,7 @@ import datetime
 import requests
 import openai
 import sqlite3
+import difflib
 import pandas as pd
 from io import StringIO
 from jupyter_server.base.handlers import APIHandler
@@ -26,8 +27,9 @@ from langchain.chains import LLMChain
 from langchain.chat_models import ChatOpenAI
 from langchain.memory import ConversationSummaryMemory
 
-YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
+# YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+YOUTUBE_API_KEY = "AIzaSyA_72GvOE9OdRKdCIk2-lXC_BTUrGwnz2A"
 openai.api_key = OPENAI_API_KEY
 youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
 DATA_URL = "https://api.github.com/repos/rfordatascience/tidytuesday/contents/data/"
@@ -105,12 +107,12 @@ class ChatHandler(APIHandler):
         question = data["question"]
         video_id = data["videoId"]
         category = data["category"]
-        segmentIndex = data["segmentIndex"]
+        segment_index = data["segmentIndex"]
         kernelType = data["kernelType"]
         skills_data = get_skills(video_id)
-        action_outcome = get_action_outcome(video_id)
-        action = action_outcome[segmentIndex]["action"]
-        outcome = action_outcome[segmentIndex]["outcome"]
+        action_outcome = get_action_outcome(video_id, segment_index)
+        action = action_outcome[0]["action"]
+        outcome = action_outcome[0]["outcome"]
         if llm is None or prompt is None or memory is None or conversation is None:
             VIDEO_ID = video_id
             data = get_csv_from_youtube_video(video_id)
@@ -118,7 +120,7 @@ class ChatHandler(APIHandler):
             initialize_chat_server(data, kernelType)
 
         if notebook:
-            bkt_params = update_bkt_params(
+            bkt_params, _ = update_bkt_params(
                 previous_notebook, notebook, skills_data, question
             )
             previous_notebook = notebook
@@ -150,9 +152,8 @@ class GoOnHandler(APIHandler):
         video_id = data["videoId"]
         if video_id != "":
             segment_index = data["segmentIndex"]
-            action_outcome = get_action_outcome(video_id)
-            # action = action_outcome[segment_index]["action"]
-            outcome = action_outcome[segment_index]["outcome"]
+            action_outcome = get_action_outcome(video_id, segment_index)
+            outcome = action_outcome[0]["outcome"]
             input_data = {
                 "outcome": outcome,
                 "notebook": data["notebook"],
@@ -165,10 +166,10 @@ class GoOnHandler(APIHandler):
                     {
                         "role": "system",
                         "content": """
-                                    You are an experienced mentor in Exploratory Data Analysis (EDA). A student is learning EDA by watching an EDA tutorial video in David Robinson's Tidy Tuesday series.
-                                    The video is divided into many segments. The input consists of the outcome that students should learn from this clip.
-                                    Your task is to determine if the student's current performance, including the notebook content and output (important!), and the current answer in the chat, has meet the outcome of this clip.
-                                    When the student completed the tasks required by outcome, although it may not be exactly the same, he can advance to the next video clip.
+                                    You are an expert in Exploratory Data Analysis (EDA) and good at assisting student learn EDA.
+                                    A student is learning EDA by watching an EDA tutorial video segment in David Robinson's Tidy Tuesday series.
+                                    The input consists of the student's performance, including the notebook content and output, current answer in the chat, and the outcome that students should learn from the current video segment.
+                                    Your task is to determine if the student's current performance has meet the outcome of the current video segment.
                                     Only output yes (for good enough) or no (for not ready).
                                     """,
                     },
@@ -179,6 +180,33 @@ class GoOnHandler(APIHandler):
         else:
             result = "Something wrong with the video id."
         self.finish(json.dumps(result))
+
+
+class UpdateBKTHandler(APIHandler):
+    @tornado.web.authenticated
+    def post(self):
+        global previous_notebook, bkt_params
+        data = self.get_json_body()
+        video_id = data["videoId"]
+        if video_id != "":
+            skills_data = get_skills(video_id)
+            _, models = update_bkt_params(
+                previous_notebook, data["notebook"], skills_data, data["question"]
+            )
+            previous_notebook = data["notebook"]
+            # Parse the JSON string
+            notebook_cells = json.loads(data["notebook"])
+            # Check if "error" exists in any "output_type" field
+            contains_error = any(
+                cell.get("output_type") == "error" for cell in notebook_cells
+            )
+            # Check if student does something wrong
+            found = any("false" in model.values() for model in models)
+            # If student does anything wrong or the code has any errors, return True
+            contains_error_or_false = contains_error or found
+            self.finish(json.dumps(contains_error_or_false))
+        else:
+            print("Something wrong in UpdateBKTHandler.")
 
 
 def initialze_database():
@@ -210,10 +238,11 @@ def initialze_database():
     c.execute(
         """
     CREATE TABLE IF NOT EXISTS data_cache (
-        video_id TEXT PRIMARY KEY,
+        video_id TEXT,
         name TEXT NOT NULL,
         download_url TEXT NOT NULL,
-        attributes_info TEXT NOT NULL
+        attributes_info TEXT NOT NULL,
+        PRIMARY KEY (video_id, name)
     );"""
     )
     c.execute(
@@ -226,8 +255,10 @@ def initialze_database():
     c.execute(
         """
     CREATE TABLE IF NOT EXISTS action_outcome_cache (
-        video_id TEXT PRIMARY KEY,
-        action_outcome TEXT NOT NULL
+        video_id TEXT,
+        segment_index NUMBER NOT NULL,
+        action_outcome TEXT NOT NULL,
+        PRIMARY KEY (video_id, segment_index)
     );"""
     )
     video_id = "nx5yhXAQLxw"
@@ -271,17 +302,17 @@ def initialze_database():
     ]
     skills_json = json.dumps(skills_set)
     segments_set = [
-        {"category": "Introduction", "start": 1, "end": 120},
-        {"category": "Load data/packages", "start": 121, "end": 220},
-        {"category": "Initial observation on raw data", "start": 221, "end": 435},
-        {"category": "Data visualization", "start": 436, "end": 463},
-        {"category": "Chart interpretation/insights", "start": 464, "end": 512},
-        {"category": "Data visualization", "start": 513, "end": 600},
-        {"category": "Chart interpretation/insights", "start": 601, "end": 640},
-        {"category": "Data visualization", "start": 641, "end": 695},
-        {"category": "Chart interpretation/insights", "start": 696, "end": 720},
-        {"category": "Data processing", "start": 721, "end": 780},
-        {"category": "Data visualization", "start": 781, "end": 900},
+        {"category": "Introduction", "start": 1, "end": 113},
+        {"category": "Load data/packages", "start": 113, "end": 212},
+        {"category": "Initial observation on raw data", "start": 212, "end": 418},
+        {"category": "Data visualization", "start": 418, "end": 463},
+        {"category": "Chart interpretation/insights", "start": 463, "end": 507},
+        {"category": "Data visualization", "start": 507, "end": 602},
+        {"category": "Chart interpretation/insights", "start": 602, "end": 640},
+        {"category": "Data visualization", "start": 640, "end": 693},
+        {"category": "Chart interpretation/insights", "start": 693, "end": 740},
+        {"category": "Data processing", "start": 740, "end": 839},
+        {"category": "Data visualization", "start": 839, "end": 900},
     ]
     segments_json = json.dumps(segments_set)
     c.execute("SELECT * FROM skills_cache WHERE video_id = ?", (video_id,))
@@ -490,7 +521,7 @@ def get_csv_from_youtube_video(video_id):
     return csv_list
 
 
-def get_transcript(video_id):
+def get_transcript(video_id, end=900):
     """Get the transcript file corresponding to a video from the database."""
     initialze_database()
     conn = sqlite3.connect("cache.db")
@@ -501,7 +532,7 @@ def get_transcript(video_id):
         return json.loads(row[0])
     else:
         data = YouTubeTranscriptApi.get_transcript(video_id)
-        transcript = [i for i in data if i["start"] < 900]
+        transcript = [i for i in data if i["start"] + i["duration"] < end]
         for item in transcript:
             del item["duration"]
         c.execute(
@@ -511,6 +542,22 @@ def get_transcript(video_id):
         conn.commit()
         conn.close()
         return transcript
+
+
+def get_segment_transcript(video_id, start, end, category):
+    """Get the transcript file based on the video start and end time."""
+    data = YouTubeTranscriptApi.get_transcript(video_id)
+    transcript = [
+        i for i in data if i["start"] >= start and i["start"] + i["duration"] < end
+    ]
+    for item in transcript:
+        del item["duration"]
+    # Use list comprehension to extract the 'text' values
+    texts = [item["text"] for item in transcript]
+
+    # Join the list of strings with spaces
+    paragraph = " ".join(texts)
+    return {"category": category, "transcript": paragraph}
 
 
 def get_segments(video_id):
@@ -540,6 +587,7 @@ def get_segments(video_id):
 def get_code_file(video_id):
     """Store the code file wrote by David in the video into database."""
     # Step 1: Check database first
+    initialze_database()
     conn = sqlite3.connect("cache.db")
     c = conn.cursor()
     c.execute("SELECT * FROM code_cache WHERE video_id=?", (video_id,))
@@ -646,6 +694,7 @@ def get_video_segment(video_id):
                             - The output should include all time periods in integer seconds.
                             - Each category can have multiple time periods.
                             - You should not segment time that does not appear in the video.
+                            - Avoid stopping the clip in the middle of a sentence.
 
                             Your response should provide the start and end times in seconds for each segment within each category, ensuring that the segments correspond accurately to the content of the video transcript.
                             """,
@@ -654,35 +703,36 @@ def get_video_segment(video_id):
             {
                 "role": "assistant",
                 "content": """[
-                                {'category': 'Introduction', 'start': 1, 'end': 102}, 
-                                {'category': 'Load data/packages', 'start': 103, 'end': 137}, 
-                                {'category': 'Initial observation on raw data', 'start': 138, 'end': 220}, 
-                                {'category': 'Data processing', 'start': 221, 'end': 568}, 
-                                {'category': 'Data visualization', 'start': 569, 'end': 580}, 
-                                {'category': 'Chart interpretation/insights', 'start': 581, 'end': 596},
-                                {'category': 'Data visualization', 'start': 597, 'end': 655}, 
-                                {'category': 'Chart interpretation/insights', 'start': 656, 'end': 680},
-                                {'category': 'Data processing', 'start': 681, 'end': 715}, 
-                                {'category': 'Chart interpretation/insights', 'start': 716, 'end': 740},
-                                {'category': 'Data visualization', 'start': 741, 'end': 884}, 
-                                {'category': 'Chart interpretation/insights', 'start': 885, 'end': 900}
+                                {'category': 'Introduction', 'start': 1, 'end': 102},
+                                {'category': 'Load data/packages', 'start': 102, 'end': 140},
+                                {'category': 'Initial observation on raw data', 'start': 140, 'end': 218},
+                                {'category': 'Data processing', 'start': 218, 'end': 571},
+                                {'category': 'Data visualization', 'start': 571, 'end': 583},
+                                {'category': 'Chart interpretation/insights', 'start': 583, 'end': 592},
+                                {'category': 'Data processing', 'start': 593, 'end': 612},
+                                {'category': 'Data visualization', 'start': 612, 'end': 653},
+                                {'category': 'Chart interpretation/insights', 'start': 653, 'end': 679},
+                                {'category': 'Data processing', 'start': 679, 'end': 715},
+                                {'category': 'Chart interpretation/insights', 'start': 716, 'end': 743},
+                                {'category': 'Data visualization', 'start': 743, 'end': 884},
+                                {'category': 'Chart interpretation/insights', 'start': 884, 'end': 900}
                             ]""",
             },
             {"role": "user", "content": str(transcript_2)},
             {
                 "role": "assistant",
                 "content": """[
-                                {'category': 'Introduction', 'start': 1, 'end': 120}, 
-                                {'category': 'Load data/packages', 'start': 121, 'end': 220}, 
-                                {'category': 'Initial observation on raw data', 'start': 221, 'end': 435}, 
-                                {'category': 'Data visualization', 'start': 436, 'end': 463}, 
-                                {'category': 'Chart interpretation/insights', 'start': 464, 'end': 512},
-                                {'category': 'Data visualization', 'start': 513, 'end': 600}, 
-                                {'category': 'Chart interpretation/insights', 'start': 601, 'end': 640},
-                                {'category': 'Data visualization', 'start': 641, 'end': 695}, 
-                                {'category': 'Chart interpretation/insights', 'start': 696, 'end': 720},
-                                {'category': 'Data processing', 'start': 721, 'end': 780}, 
-                                {'category': 'Data visualization', 'start': 781, 'end': 900} 
+                                {'category': 'Introduction', 'start': 1, 'end': 113},
+                                {'category': 'Load data/packages', 'start': 113, 'end': 212},
+                                {'category': 'Initial observation on raw data', 'start': 212, 'end': 418},
+                                {'category': 'Data visualization', 'start': 418, 'end': 463},
+                                {'category': 'Chart interpretation/insights', 'start': 463, 'end': 507},
+                                {'category': 'Data visualization', 'start': 507, 'end': 602},
+                                {'category': 'Chart interpretation/insights', 'start': 602, 'end': 640},
+                                {'category': 'Data visualization', 'start': 640, 'end': 693},
+                                {'category': 'Chart interpretation/insights', 'start': 693, 'end': 740},
+                                {'category': 'Data processing', 'start': 740, 'end': 839},
+                                {'category': 'Data visualization', 'start': 839, 'end': 900}
                             ]""",
             },
             {"role": "user", "content": str(transcript_3)},
@@ -728,7 +778,7 @@ def get_skills(video_id):
                     [
                         {"category": "Load data/packages", "skill": "load data directly with an URL"},
                         {"category": "Load data/packages", "skill": "load necessary packages for EDA"},
-                        {"category": "Initial observation on raw data", "skill": "inspect raw data in a new dataset": "},
+                        {"category": "Initial observation on raw data", "skill": "inspect raw data in a new dataset"},
                         {"category": "Initial observation on raw data", "skill": "explanatory analysis of different columns and their meanings"},
                         {"category": "Data visualization", "skill": "use box plot to visualise the data"},
                         {"category": "Chart interpretation/insights", "skill": "interpret box plots and histograms to draw insights"},
@@ -755,48 +805,53 @@ def get_skills(video_id):
     return json.loads(skills_data)
 
 
-def get_action_outcome(video_id):
-    """Get action and outcome for each segment in the given tutorial video."""
+def get_action_outcome(video_id, segment_index):
+    """Get action and outcome for the current segment in the given tutorial video."""
     initialze_database()
     conn = sqlite3.connect("cache.db")
     c = conn.cursor()
     c.execute(
-        "SELECT action_outcome FROM action_outcome_cache WHERE video_id = ?",
-        (video_id,),
+        "SELECT action_outcome FROM action_outcome_cache WHERE video_id = ? AND segment_index = ?",
+        (video_id, segment_index),
     )
     row = c.fetchone()
     if row:
         return json.loads(row[0])
     else:
-        transcript = get_transcript(video_id)
-        segments = get_segments(video_id)
+        segment = get_segments(video_id)[segment_index]
+        transcript = get_segment_transcript(
+            video_id,
+            start=segment["start"],
+            end=segment["end"],
+            category=segment["category"],
+        )
         completion = openai.ChatCompletion.create(
-            model="gpt-4-32k",
+            model="gpt-4",
             messages=[
                 {
                     "role": "system",
                     "content": """
-                    Your task is to summarize the actions and outcomes of each segment in a tutorial video on Exploratory Data Analysis (EDA). Given the transcript of the video and the corresponding video segments, you should provide a response in the following format:
+                    You are an expert in Exploratory Data Analysis (EDA) and good at assisting student learn EDA.
+                    Your task is to summarize the actions and outcomes of a tutorial video clip on EDA.
+                    Provide a concise description of the action taken by the author and the outcome the student should learn by watching the video clip.
+                    Your summary should accurately reflect the content of the current video clip transcript, providing a clear and informative overview of the EDA process.
+                    Given the transcript of the video clip, you should provide a response in the following format:
                     [
-                        {"category": "Introduction", "action": "...", "outcome": "..."},
-                        {"category": "Load data/packages", "action": "...", "outcome": "..."},
-                        ...
+                        {"category": current_video_category, "action": "...", "outcome": "..."}
                     ]
-                    Please analyze the tutorial video and transcript carefully to identify the main categories of actions and outcomes in the video. For each category, provide a concise description of the action taken by the author and the resulting outcome.
-                    Your summary should accurately reflect the content of the video and transcript, providing a clear and informative overview of the EDA process.
-                    Please note that your response should be flexible enough to accommodate various video segments and actions, ensuring that you capture the key actions and outcomes in each segment accurately.
                     """,
                 },
                 {
                     "role": "user",
-                    "content": f"transcript: {transcript}, segments: {segments}",
+                    "content": f"{transcript}",
                 },
             ],
             temperature=0.5,
         )
         action_outcome = completion.choices[0].message["content"]
         c.execute(
-            "INSERT INTO action_outcome_cache VALUES (?, ?)", (video_id, action_outcome)
+            "INSERT INTO action_outcome_cache VALUES (?, ?, ?)",
+            (video_id, segment_index, action_outcome),
         )
         conn.commit()
         conn.close()
@@ -832,9 +887,27 @@ def update_bkt_param(model, is_correct):
     )
 
 
+def get_diff_between_notebooks(previous_notebook, current_notebook):
+    """Returns the difference between the previous and current notebooks."""
+    previous_content = json.loads(previous_notebook)
+    current_content = json.loads(current_notebook)
+    # Extract the source content from the code cells
+    previous_source = [
+        cell["source"] for cell in previous_content if cell["cell_type"] == "code"
+    ]
+    current_source = [
+        cell["source"] for cell in current_content if cell["cell_type"] == "code"
+    ]
+    # Using difflib to get differences
+    d = difflib.Differ()
+    diff = list(d.compare(previous_source, current_source))
+    return diff
+
+
 def update_bkt_params(previous_notebook, current_notebook, skills_data, question):
     """Update the bkt parameters for the practiced skills."""
     global bkt_params
+    diff = get_diff_between_notebooks(previous_notebook, current_notebook)
     completion = openai.ChatCompletion.create(
         model="gpt-4",
         messages=[
@@ -842,8 +915,14 @@ def update_bkt_params(previous_notebook, current_notebook, skills_data, question
                 "role": "system",
                 "content": """You are an expert in Exploratory Data Analysis. The student is practicing EDA in the Jupyter notebook.
                 Now your role is to find out the skills the student practiced during the last training period and whether the student's performance is correct (true) or incorrect (false) on the skills.
-                The last training period is the period between the previous notebook and the current notebook, and the student's message in the chat. You only need to find out the skills in the given skill set {}. 
-                If a skill is not practiced in the last period or has been practiced in the previous notebook, don't include it in the answer. If no skill is being practiced in the last period, then return a empty list.
+                The computational notebook difference and the student's message in the chat during the last training period are input.
+                You only need to find out the skills in the given skill set {}. If no skill is being practiced in the last period, then return a empty list.
+                Output in this format:
+                [
+                    {{skill_name_1: true or false}},
+                    {{skill_name_2: true or false}},
+                    ...
+                ]
                 """.format(
                     skills_data
                 ),
@@ -851,54 +930,25 @@ def update_bkt_params(previous_notebook, current_notebook, skills_data, question
             {
                 "role": "user",
                 "content": """
-                previous_notebook: '[{"cell_type":"code","source":"library(tidyverse)\n recent_grads <- read_csv("https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2018-10-16/recent-grads.csv")","output_type":null}]',
-                current_notebook: '[{"cell_type":"code","source":"library(tidyverse)\n recent_grads <- read_csv("https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2018-10-16/recent-grads.csv")\n majors_processed <- recent_grads %>%\n arrange(desc(Median)) %>%\n mutate(Major = str_to_title(Major),\n Major = fct_reorder(Major, Median))","output_type":null}]',
-                question: '',
-                """,
-            },
-            {
-                "role": "assistant",
-                "content": """
-                [
-                    {"reorder, group and summarize data": "true"}
-                ]
-                """,
-            },
-            {
-                "role": "user",
-                "content": """
-                previous_notebook: '[{"cell_type":"code","source":"","output_type":null}]',
-                current_notebook = '[{"cell_type":"code","source":"load(tidyverse)","output_type":null}]',
-                question: '',
-                """,
-            },
-            {
-                "role": "assistant",
-                "content": """
-                [
-                    {"load data/packages in R": "false"}
-                ]
-                """,
-            },
-            {
-                "role": "user",
-                "content": """
-                previous_notebook: {},
-                current_notebook: {},
+                notebook_diff: {},
                 question: {}
                 """.format(
-                    previous_notebook, current_notebook, question
+                    diff, question
                 ),
             },
         ],
     )
-    models = json.loads(completion.choices[0].message["content"])
-    for model in models:
-        for key, value in model.items():
-            print(key, value)
-            if key in bkt_params.keys():
-                update_bkt_param(bkt_params[key], value)
-    return bkt_params
+    try:
+        models = json.loads(completion.choices[0].message["content"])
+        for model in models:
+            for key, value in model.items():
+                print(key, value)
+                if key in bkt_params.keys():
+                    update_bkt_param(bkt_params[key], value)
+    except json.JSONDecodeError:
+        print("Failed to decode JSON string.")
+        models = []
+    return bkt_params, models
 
 
 def get_prob_mastery_by_category(category, skill_category_list, skill_params_dict):
@@ -950,4 +1000,9 @@ def setup_handlers(web_app):
     # Add route for getting go on or not response
     go_on_pattern = url_path_join(base_url, "jlab_ext_example", "go_on")
     handlers = [(go_on_pattern, GoOnHandler)]
+    web_app.add_handlers(host_pattern, handlers)
+
+    # Add route for getting go on or not response
+    update_bkt_pattern = url_path_join(base_url, "jlab_ext_example", "update_bkt")
+    handlers = [(update_bkt_pattern, UpdateBKTHandler)]
     web_app.add_handlers(host_pattern, handlers)

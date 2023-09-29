@@ -75,7 +75,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     }
   ]);
   const [isTyping, setIsTyping] = useState(false);
-  const [inputValue, setInputValue] = useState('');
+  // const [inputValue, setInputValue] = useState('');
   const [canGoOn, setCanGoOn] = useState(false);
   const [currentSegmentIndex, setCurrentSegmentIndex] = useState(0);
   // const [lastActivityTime, setLastActivityTime] = useState<number>(Date.now());
@@ -130,7 +130,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
 
   const handleSend = useCallback(
     async (question: string) => {
-      setInputValue(''); // Reset inputValue after sending the message
+      // setInputValue(''); // Reset inputValue after sending the message
       setLastSendTime(Date.now()); // Update the last send time
       question = stripHTMLTags(question);
       const newMessage: IMessage = {
@@ -385,8 +385,31 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
 
   function onCellExecuted(): void {
     console.log(canGoOnRef.current);
+    const currentNotebookContent = JSON.stringify(
+      props.getCurrentNotebookContent()
+    );
+    console.log(currentNotebookContent);
+    requestAPI<any>('update_bkt', {
+      body: JSON.stringify({
+        notebook: currentNotebookContent,
+        question: '',
+        videoId: videoIdRef.current
+      }),
+      method: 'POST'
+    })
+      .then(response => {
+        console.log(response);
+        if (response) {
+          handleSend('');
+        }
+      })
+      .catch(reason => {
+        console.error(
+          `Error on POST /jlab_ext_example/update_bkt .\n${reason}`
+        );
+      });
+
     if (canGoOnRef.current === false) {
-      const currentNotebookContent = props.getCurrentNotebookContent();
       requestAPI<any>('go_on', {
         body: JSON.stringify({
           notebook: currentNotebookContent,
@@ -415,41 +438,6 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
       NotebookActions.executed.disconnect(onCellExecuted);
     };
   }, []);
-
-  const checkForInactivity = useCallback(() => {
-    const isVideoPlaying =
-      player && player.getPlayerState && player.getPlayerState() === 1;
-    if (
-      Date.now() - lastSendTime >= 180000 &&
-      inputValue === '' &&
-      !isVideoPlaying
-    ) {
-      // Auto-send every 3 minutes (180000 is in milliseconds)
-      handleSend('');
-      // setLastActivityTime(Date.now()); // Reset the last activity time
-    }
-  }, [inputValue, lastSendTime, handleSend, player]);
-
-  useEffect(() => {
-    const intervalId = setInterval(checkForInactivity, 1000);
-    return () => clearInterval(intervalId);
-  }, [checkForInactivity]);
-
-  // Update lastActivityTime whenever user types something
-  // useEffect(() => {
-  //   if (inputValue !== '') {
-  //     setLastActivityTime(Date.now());
-  //   }
-  // }, [inputValue]);
-
-  // Setup an interval to check for inactivity every second
-
-  // useEffect(() => {
-  //   // If canGoOn is true and no one is typing and videoId is not empty, automatically go on to the next stage
-  //   if (canGoOn && !isTyping && videoId !== '') {
-  //     handleGoOn();
-  //   }
-  // }, [canGoOn, isTyping, videoId]);
 
   return (
     <div style={{ position: 'relative', height: '100%', width: '100%' }}>
@@ -532,11 +520,6 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                               ) {
                                 handleSend('');
                               }
-                              // if (message.category === 'Introduction') {
-                              //   setCanGoOn(true);
-                              // } else {
-                              //   handleSend('');
-                              // }
                             }}
                           />
                         </div>
@@ -551,10 +534,6 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
             attachButton={false}
             onSend={handleSend}
             style={{ maxHeight: '100px', overflowY: 'auto' }}
-            onChange={val => {
-              setInputValue(val);
-            }}
-            // style={{ height: '50px', width: '100%' }}
             disabled={isTyping} // Disable the input when isTyping is true
           />
         </ChatContainer>
