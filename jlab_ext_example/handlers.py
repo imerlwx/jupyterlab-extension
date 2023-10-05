@@ -7,7 +7,6 @@ import datetime
 import requests
 import openai
 import sqlite3
-import difflib
 import pandas as pd
 from io import StringIO
 from jupyter_server.base.handlers import APIHandler
@@ -42,7 +41,9 @@ prompt = None
 memory = None
 conversation = None
 previous_notebook = '[{"cell_type":"code","source":"","output_type":null}]'
+notebook_at_begin_of_segment = '[{"cell_type":"code","source":"","output_type":null}]'
 bkt_params = {}
+user_id = "1"
 
 
 class DataHandler(APIHandler):
@@ -99,7 +100,7 @@ class SegmentHandler(APIHandler):
 class ChatHandler(APIHandler):
     @tornado.web.authenticated
     def post(self):
-        global llm, prompt, memory, conversation, VIDEO_ID, bkt_params, previous_notebook
+        global llm, prompt, memory, conversation, VIDEO_ID, bkt_params
 
         # Existing video_id logic
         data = self.get_json_body()
@@ -111,8 +112,8 @@ class ChatHandler(APIHandler):
         kernelType = data["kernelType"]
         skills_data = get_skills(video_id)
         action_outcome = get_action_outcome(video_id, segment_index)
-        action = action_outcome[0]["action"]
-        outcome = action_outcome[0]["outcome"]
+        action = action_outcome["action"]
+        outcome = action_outcome["outcome"]
         if llm is None or prompt is None or memory is None or conversation is None:
             VIDEO_ID = video_id
             data = get_csv_from_youtube_video(video_id)
@@ -121,11 +122,13 @@ class ChatHandler(APIHandler):
 
         if notebook:
             bkt_params, _ = update_bkt_params(
-                previous_notebook, notebook, skills_data, question
+                video_id, segment_index, "", "", question, kernelType
             )
-            previous_notebook = notebook
             if category == "Self-exploration":
-                category_params = bkt_params
+                # Extract all the probMastery values
+                category_params = {
+                    skill: params["probMastery"] for skill, params in bkt_params.items()
+                }
             else:
                 category_params = get_prob_mastery_by_category(
                     category, skills_data, bkt_params
@@ -148,15 +151,19 @@ class ChatHandler(APIHandler):
 class GoOnHandler(APIHandler):
     @tornado.web.authenticated
     def post(self):
+        global notebook_at_begin_of_segment
         data = self.get_json_body()
         video_id = data["videoId"]
         if video_id != "":
             segment_index = data["segmentIndex"]
             action_outcome = get_action_outcome(video_id, segment_index)
-            outcome = action_outcome[0]["outcome"]
+            outcome = action_outcome["outcome"]
+            notebook_update = get_diff_between_notebooks(
+                notebook_at_begin_of_segment, data["notebook"]
+            )
             input_data = {
                 "outcome": outcome,
-                "notebook": data["notebook"],
+                "notebook": notebook_update,
                 "question": data["question"],
             }
             print(outcome)
@@ -168,7 +175,7 @@ class GoOnHandler(APIHandler):
                         "content": """
                                     You are an expert in Exploratory Data Analysis (EDA) and good at assisting student learn EDA.
                                     A student is learning EDA by watching an EDA tutorial video segment in David Robinson's Tidy Tuesday series.
-                                    The input consists of the student's performance, including the notebook content and output, current answer in the chat, and the outcome that students should learn from the current video segment.
+                                    The input consists of the student's performance, including the notebook content, current answer in the chat, and the outcome that students should learn from the current video segment.
                                     Your task is to determine if the student's current performance has meet the outcome of the current video segment.
                                     Only output yes (for good enough) or no (for not ready).
                                     """,
@@ -177,6 +184,9 @@ class GoOnHandler(APIHandler):
                 ],
             )
             result = response.choices[0].message["content"]
+            # If the student's performance is good enough, update the notebook_at_begin_of_segment
+            if result.lower() == "yes":
+                notebook_at_begin_of_segment = data["notebook"]
         else:
             result = "Something wrong with the video id."
         self.finish(json.dumps(result))
@@ -189,9 +199,13 @@ class UpdateBKTHandler(APIHandler):
         data = self.get_json_body()
         video_id = data["videoId"]
         if video_id != "":
-            skills_data = get_skills(video_id)
             _, models = update_bkt_params(
-                previous_notebook, data["notebook"], skills_data, data["question"]
+                video_id,
+                data["segmentIndex"],
+                previous_notebook,
+                data["notebook"],
+                data["question"],
+                data["kernelType"],
             )
             previous_notebook = data["notebook"]
             # Parse the JSON string
@@ -211,6 +225,7 @@ class UpdateBKTHandler(APIHandler):
 
 def initialze_database():
     """Initialize the database that has the transcript and segments for videos."""
+    global user_id
     conn = sqlite3.connect("cache.db")
     c = conn.cursor()
     c.execute(
@@ -254,6 +269,13 @@ def initialze_database():
     )
     c.execute(
         """
+    CREATE TABLE IF NOT EXISTS bkt_params_cache (
+        user_id TEXT PRIMARY KEY,
+        skills_probMastery TEXT NOT NULL
+    );"""
+    )
+    c.execute(
+        """
     CREATE TABLE IF NOT EXISTS action_outcome_cache (
         video_id TEXT,
         segment_index NUMBER NOT NULL,
@@ -262,44 +284,28 @@ def initialze_database():
     );"""
     )
     video_id = "nx5yhXAQLxw"
-    skills_set = [
-        {"category": "Load data/packages", "skill": "load data directly with an URL"},
-        {"category": "Load data/packages", "skill": "load necessary packages for EDA"},
-        {
-            "category": "Initial observation on raw data",
-            "skill": "inspect raw data in a new dataset",
-        },
-        {
-            "category": "Initial observation on raw data",
-            "skill": "explanatory analysis of different columns and their meanings",
-        },
-        {
-            "category": "Data visualization",
-            "skill": "use box plot to visualise the data",
-        },
-        {
-            "category": "Chart interpretation/insights",
-            "skill": "interpret box plots and histograms to draw insights",
-        },
-        {
-            "category": "Data visualization",
-            "skill": "use histograms to visualise the data",
-        },
-        {
-            "category": "Chart interpretation/insights",
-            "skill": "draw insights from visualizations and generate hypothesis",
-        },
-        {
-            "category": "Data visualization",
-            "skill": "use dot plot to visualise the data",
-        },
-        {
-            "category": "Chart interpretation/insights",
-            "skill": "identify outliers in the data",
-        },
-        {"category": "Data processing", "skill": "reorder, group and summarize data"},
-        {"category": "Data visualization", "skill": "customize plot appearance"},
-    ]
+    skills_set = {
+        "Load data/packages": [
+            "Load data directly with an URL",
+            "Load necessary packages for EDA",
+        ],
+        "Initial observation on raw data": [
+            "Understanding column definitions",
+            "Making assumptions based on data",
+        ],
+        "Data visualization": [
+            "Use box plot to visualise the data",
+            "Use histograms to visualise the data",
+            "Use dot plot to visualise the data",
+            "Customize plot appearance",
+        ],
+        "Chart interpretation/insights": [
+            "Interpret visualizations",
+            "Generate intent for the next visualization",
+            "Identify outliers in the data",
+        ],
+        "Data processing": ["Reorder data", "Group and summarize data"],
+    }
     skills_json = json.dumps(skills_set)
     segments_set = [
         {"category": "Introduction", "start": 1, "end": 113},
@@ -307,14 +313,30 @@ def initialze_database():
         {"category": "Initial observation on raw data", "start": 212, "end": 418},
         {"category": "Data visualization", "start": 418, "end": 463},
         {"category": "Chart interpretation/insights", "start": 463, "end": 507},
-        {"category": "Data visualization", "start": 507, "end": 602},
-        {"category": "Chart interpretation/insights", "start": 602, "end": 640},
-        {"category": "Data visualization", "start": 640, "end": 693},
-        {"category": "Chart interpretation/insights", "start": 693, "end": 740},
+        {"category": "Data visualization", "start": 507, "end": 601},
+        {"category": "Chart interpretation/insights", "start": 601, "end": 640},
+        {"category": "Data visualization", "start": 640, "end": 692},
+        {"category": "Chart interpretation/insights", "start": 692, "end": 740},
         {"category": "Data processing", "start": 740, "end": 839},
         {"category": "Data visualization", "start": 839, "end": 900},
     ]
     segments_json = json.dumps(segments_set)
+    prob_mastery = {
+        "Load data directly with an URL": 0.1,
+        "Load necessary packages for EDA": 0.1,
+        "Inspect raw data in a new dataset": 0.1,
+        "Explanatory analysis of different columns and their meanings": 0.1,
+        "Use box plot to visualise the data": 0.1,
+        "Use histograms to visualise the data": 0.1,
+        "Use dot plot to visualise the data": 0.1,
+        "Customize plot appearance": 0.1,
+        "Interpret visualizations": 0.1,
+        "Generate intent for the next visualization": 0.1,
+        "Identify outliers in the data": 0.1,
+        "Reorder data": 0.1,
+        "Group and summarize data": 0.1,
+    }
+    prob_mastery_json = json.dumps(prob_mastery)
     c.execute("SELECT * FROM skills_cache WHERE video_id = ?", (video_id,))
     if c.fetchone() is None:
         # Insert new data if video_id doesn't exist
@@ -329,6 +351,13 @@ def initialze_database():
             "INSERT INTO segments_cache (video_id, segments) VALUES (?, ?)",
             (video_id, segments_json),
         )
+    c.execute("SELECT * FROM bkt_params_cache WHERE user_id = ?", (user_id,))
+    if c.fetchone() is None:
+        # Insert new data if video_id doesn't exist
+        c.execute(
+            "INSERT INTO bkt_params_cache (user_id, skills_probMastery) VALUES (?, ?)",
+            (user_id, prob_mastery_json),
+        )
     conn.commit()
     conn.close()
 
@@ -338,6 +367,10 @@ def initialize_chat_server(data, kernelType):
     global llm, prompt, memory, conversation
     # LLM initialization
     llm = ChatOpenAI(model="gpt-4-32k", openai_api_key=OPENAI_API_KEY)
+    if kernelType == "ir":
+        kernelType = "R"
+    elif kernelType == "python3":
+        kernelType = "Python"
 
     # Prompt
     prompt = ChatPromptTemplate(
@@ -346,10 +379,11 @@ def initialize_chat_server(data, kernelType):
                 """
                 As an expert data science mentor focused on real-time guidance in Exploratory Data Analysis (EDA) on Jupyter notebooks during David Robinson's Tidy Tuesday tutorials,
                 your role is to use Cognitive Apprenticeship to offer feedback, corrections, and suggestions based on the student's learning progress.
-                The Cognitive Apprenticeship has the following six moves: modeling, coaching, scaffolding, articulation, reflection, and exploration.
-                You have access to the dataset information ({data}) used in the video. The current video segment and its author David's action and outcome of the current segment will also be given.
+                You have access to the dataset information ({data}) used in the video. The current video segment category and its author David's action and what the student should learn (outcome) from the current segment will also be given.
+                The student's performance (notebook and question) and mastery probability of each skill will be given. The mastery probability is a number between 0 and 1, indicating the probability that the student has mastered the skill.
 
-                During different video segments, the moves you choose will differ. You need to adapt your mentorship style based on Bayesian Knowledge Tracing. Here are some guidelines for your interaction with the student in different scenarios:
+                The Cognitive Apprenticeship has the following six moves: modeling, coaching, scaffolding, articulation, reflection, and exploration. During different video segments, the moves you choose will differ.
+                You need to adapt your mentorship style based on Bayesian Knowledge Tracing. Here are some guidelines for your interaction with the student in different scenarios:
                 1. current_category: "Load data/packages"
                 - (Scaffolding) When the probability of mastery is low (close to 0): Directly give the student the code to load necessary packages and explain the code to the student.
                 - (Coaching) When the probability of mastery is high (close to 1): Tell the student to load packages and data and check whether the student's performance is correct.
@@ -377,8 +411,9 @@ def initialize_chat_server(data, kernelType):
                 Notes:
                 - You should interact in the first person as a mentor heuristically and briefly.
                 - You give advice based on the programming language the student is currently using. He is now using {kernelType}.
-                - Try to limit your teaching and assisting content to the actions and outcomes of the current category provided to you.
-                - Do not describe the student's probability of mastery level for any skills to the student.
+                - Limit your teaching and assisting content to the actions and outcomes of the current category provided to you.
+                - If you are gonna provide some code to the student, please include the code in a code block.
+                - Do not describe the student's probability of mastery level for any skills and learning status to the student.
                 """
             ).format(
                 data=data,
@@ -754,46 +789,36 @@ def get_skills(video_id):
         return json.loads(row[0])
     else:
         transcript_1 = get_transcript("nx5yhXAQLxw")
-        segments_1 = get_segments("nx5yhXAQLxw")
         transcript_2 = get_transcript(video_id)
-        segments_2 = get_segments(video_id)
         completion = openai.ChatCompletion.create(
             model="gpt-4-32k",
             messages=[
                 {
                     "role": "system",
                     "content": f"""
-                    You are an expert in Exploratory Data Analysis. Given the transcript of a tutorial video of EDA and the video segments, 
-                    summarize !!all!! the EDA skills used in each category with no duplication. Each category may correspond to more than one skill.
-                    note: Don't be too specific on the skills. If two skills are the same operation but on different tasks, they should be the same skill.
+                    You are an expert in Exploratory Data Analysis. Given the transcript of an EDA tutorial video, summarize all the EDA skills used with no duplication for each category.
+                    Note: If two skills have similar operation or one skill contains another, they should be the same skill. And use the same expression for the same skill as much as possible.
                     """,
                 },
                 {
                     "role": "user",
-                    "content": f"transcript: {transcript_1}, segments: {segments_1}",
+                    "content": f"transcript: {transcript_1}",
                 },
                 {
                     "role": "assistant",
                     "content": """
-                    [
-                        {"category": "Load data/packages", "skill": "load data directly with an URL"},
-                        {"category": "Load data/packages", "skill": "load necessary packages for EDA"},
-                        {"category": "Initial observation on raw data", "skill": "inspect raw data in a new dataset"},
-                        {"category": "Initial observation on raw data", "skill": "explanatory analysis of different columns and their meanings"},
-                        {"category": "Data visualization", "skill": "use box plot to visualise the data"},
-                        {"category": "Chart interpretation/insights", "skill": "interpret box plots and histograms to draw insights"},
-                        {"category": "Data visualization", "skill": "use histograms to visualise the data"},
-                        {"category": "Chart interpretation/insights", "skill": "draw insights from visualizations and generate hypothesis"},
-                        {"category": "Data visualization", "skill": "use dot plot to visualise the data"},
-                        {"category": "Chart interpretation/insights", "skill": "identify outliers in the data"},
-                        {"category": "Data processing", "skill": "reorder, group and summarize data"},
-                        {"category": "Data visualization", "skill": "customize plot appearance"}
-                    ]
+                    {
+                        "Load data/packages": ["Load data directly with an URL", "Load necessary packages for EDA"], 
+                        "Initial observation on raw data": ["Understanding column definitions", "Making assumptions based on data"],
+                        "Data visualization": ["Use box plot to visualise the data", "Use histograms to visualise the data", "Use dot plot to visualise the data", "Customize plot appearance"],
+                        "Chart interpretation/insights": ["Interpret visualizations", "Generate hypotheses for the next visualization", "Identify outliers in the data"],
+                        "Data processing": ["Reorder data", "Group and summarize data"]
+                    }
                     """,
                 },
                 {
                     "role": "user",
-                    "content": f"transcript: {transcript_2}, segments: {segments_2}",
+                    "content": f"transcript: {transcript_2}",
                 },
             ],
             temperature=0.5,
@@ -832,13 +857,9 @@ def get_action_outcome(video_id, segment_index):
                     "role": "system",
                     "content": """
                     You are an expert in Exploratory Data Analysis (EDA) and good at assisting student learn EDA.
-                    Your task is to summarize the actions and outcomes of a tutorial video clip on EDA.
-                    Provide a concise description of the action taken by the author and the outcome the student should learn by watching the video clip.
-                    Your summary should accurately reflect the content of the current video clip transcript, providing a clear and informative overview of the EDA process.
-                    Given the transcript of the video clip, you should provide a response in the following format:
-                    [
-                        {"category": current_video_category, "action": "...", "outcome": "..."}
-                    ]
+                    The student is watching a tutorial video segment of David Robinson's Tidy Tuesday series.
+                    Provide a concise and accurate description of the action taken by David and what the student should learn by watching the video segment (outcome).
+                    Response in the following format: {"action": "David Robinson does...", "outcome": "The student should learn..."}
                     """,
                 },
                 {
@@ -860,16 +881,27 @@ def get_action_outcome(video_id, segment_index):
 
 def init_bkt_params(video_id):
     """Initialize the bkt parameters for the given video."""
-    global bkt_params
+    global bkt_params, user_id
     skills_data = get_skills(video_id)
+    conn = sqlite3.connect("cache.db")
+    c = conn.cursor()
+    c.execute(
+        "SELECT skills_probMastery FROM bkt_params_cache WHERE user_id = ?", (user_id,)
+    )
+    prob_mastery_dict = c.fetchone()
     # Iterating through the original data to populate the new data structure
-    for i, skill_item in enumerate(skills_data):
-        bkt_params[skill_item["skill"]] = {
-            "probMastery": 0.1,
+    bkt_params = {
+        skill: {
+            "probMastery": prob_mastery_dict.get(skill, 0.1),
             "probTransit": 0.1,
             "probSlip": 0.1,
             "probGuess": 0.1,
         }
+        for skills in skills_data.values()
+        for skill in skills
+    }
+    conn.commit()
+    conn.close()
 
 
 def update_bkt_param(model, is_correct):
@@ -891,32 +923,49 @@ def get_diff_between_notebooks(previous_notebook, current_notebook):
     """Returns the difference between the previous and current notebooks."""
     previous_content = json.loads(previous_notebook)
     current_content = json.loads(current_notebook)
+
     # Extract the source content from the code cells
-    previous_source = [
+    previous_source = set(
         cell["source"] for cell in previous_content if cell["cell_type"] == "code"
-    ]
-    current_source = [
+    )
+    current_source = set(
         cell["source"] for cell in current_content if cell["cell_type"] == "code"
-    ]
-    # Using difflib to get differences
-    d = difflib.Differ()
-    diff = list(d.compare(previous_source, current_source))
-    return diff
+    )
+
+    # Find the difference between the two sets
+    diff = current_source - previous_source
+    return list(diff)
 
 
-def update_bkt_params(previous_notebook, current_notebook, skills_data, question):
+def update_bkt_params(
+    video_id, segment_index, previous_notebook, current_notebook, question, kernelType
+):
     """Update the bkt parameters for the practiced skills."""
     global bkt_params
     diff = get_diff_between_notebooks(previous_notebook, current_notebook)
+    # Get skills for the current segment
+    # segment_skill = get_skill_by_segment(video_id, segment_index)
+    category = get_segments(video_id)[segment_index]["category"]
+    segment_skill = get_skills(video_id)[category]
+    if kernelType == "ir":
+        kernelType = "R"
+    elif kernelType == "python3":
+        kernelType = "Python"
+    print(kernelType)
+
     completion = openai.ChatCompletion.create(
         model="gpt-4",
         messages=[
             {
                 "role": "system",
-                "content": """You are an expert in Exploratory Data Analysis. The student is practicing EDA in the Jupyter notebook.
-                Now your role is to find out the skills the student practiced during the last training period and whether the student's performance is correct (true) or incorrect (false) on the skills.
-                The computational notebook difference and the student's message in the chat during the last training period are input.
-                You only need to find out the skills in the given skill set {}. If no skill is being practiced in the last period, then return a empty list.
+                "content": """"You are an expert in Exploratory Data Analysis (EDA) and good at assisting student learn EDA.
+                Now your role is to find out the skills the student practiced during the last training period and whether the student is practicing the skills correctly or not.
+                The computational notebook and the student's message in the chat during the last training period are input.
+                You only need to find out the skills in the given skill set {}. Response with true for correctly practiced, false for incorrectly practiced.
+                Correctly practiced means the student's code or answer demonstrated this skill. Incorrectly practiced means the code does not meet expectations or has errors or the answer is incorrect.
+                Note: 
+                Only include the skills that are being practiced by the student. If the skill is not being practiced, don't include it. If no skill is being practiced in the last period, then return a empty list.
+                The student is using {} in the computational notebook.
                 Output in this format:
                 [
                     {{skill_name_1: true or false}},
@@ -924,7 +973,7 @@ def update_bkt_params(previous_notebook, current_notebook, skills_data, question
                     ...
                 ]
                 """.format(
-                    skills_data
+                    kernelType, segment_skill
                 ),
             },
             {
@@ -951,26 +1000,67 @@ def update_bkt_params(previous_notebook, current_notebook, skills_data, question
     return bkt_params, models
 
 
+def get_skill_by_segment(video_id, segment_index):
+    """Get the skills corresponding to the given segment."""
+    segment = get_segments(video_id)[segment_index]
+    segment_transcript = get_segment_transcript(
+        video_id,
+        start=segment["start"],
+        end=segment["end"],
+        category=segment["category"],
+    )
+    skills_set = get_skills(video_id)
+    response = openai.ChatCompletion.create(
+        model="gpt-4",
+        messages=[
+            {
+                "role": "system",
+                "content": """
+                            You are an experienced mentor in Exploratory Data Analysis (EDA). A student is learning EDA by watching an EDA tutorial video segment in David Robinson's Tidy Tuesday series.
+                            Your task is to determine what EDA skills in the skill set are being used by David in the current video segment. The skill set and the current segment transcript are input.
+                            Response in this format: [skill_1, skill_2, ...]
+                            """,
+            },
+            {
+                "role": "user",
+                "content": f"transcript: {segment_transcript['transcript']}, skill set: {skills_set[segment_transcript['category']]}",
+            },
+        ],
+    )
+    result = response.choices[0].message["content"]
+    return json.loads(result.replace("'", '"'))
+
+
 def get_prob_mastery_by_category(category, skill_category_list, skill_params_dict):
     """Get the probMastery of skills for the given category."""
-    # Initialize an empty dictionary to store the results
-    result_dict = {}
+    skills = skill_category_list.get(category, [])
+    return {
+        skill: skill_params_dict[skill]["probMastery"]
+        for skill in skills
+        if skill in skill_params_dict
+    }
 
-    # Loop through the list of dictionaries in 'skill_category_list'
-    for skill_dict in skill_category_list:
-        # Check if the 'category' field matches the given category
-        if skill_dict["category"] == category:
-            # Extract the 'skill' field from the dictionary
-            skill = skill_dict["skill"]
 
-            # Retrieve the corresponding probMastery from 'skill_params_dict'
-            prob_mastery = skill_params_dict.get(skill, {}).get("probMastery", None)
-
-            # If probMastery exists for the skill, add it to the result dictionary
-            if prob_mastery is not None:
-                result_dict[skill] = prob_mastery
-
-    return result_dict
+def bkt_params_to_database():
+    """Store the updated bkt parameters into database."""
+    global bkt_params, user_id
+    updated_prob_mastery = {
+        key: value["probMastery"] for key, value in bkt_params.items()
+    }
+    conn = sqlite3.connect("cache.db")
+    c = conn.cursor()
+    c.execute(
+        "SELECT skills_probMastery FROM bkt_params_cache WHERE user_id = ?", (user_id,)
+    )
+    row = c.fetchone()
+    existing_prob_mastery = json.loads(row[0])
+    existing_prob_mastery.update(updated_prob_mastery)
+    c.execute(
+        "UPDATE bkt_params_cache SET skills_probMastery = ? WHERE user_id = ?",
+        (json.dumps(existing_prob_mastery), user_id),
+    )
+    conn.commit()
+    conn.close()
 
 
 def setup_handlers(web_app):

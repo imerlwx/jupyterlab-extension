@@ -388,12 +388,15 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     const currentNotebookContent = JSON.stringify(
       props.getCurrentNotebookContent()
     );
+    const kernel = props.getCurrentNotebookKernel();
     console.log(currentNotebookContent);
     requestAPI<any>('update_bkt', {
       body: JSON.stringify({
         notebook: currentNotebookContent,
         question: '',
-        videoId: videoIdRef.current
+        videoId: videoIdRef.current,
+        segmentIndex: currentSegmentIndexRef.current,
+        kernelType: kernel.name
       }),
       method: 'POST'
     })
