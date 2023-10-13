@@ -18,11 +18,16 @@ import {
   MessageSeparator
 } from '@chatscope/chat-ui-kit-react';
 import { MessageDirection } from '@chatscope/chat-ui-kit-react/src/types/unions';
-import { INotebookTracker, NotebookActions } from '@jupyterlab/notebook';
+import {
+  INotebookTracker,
+  NotebookActions,
+  Notebook,
+  KernelError
+} from '@jupyterlab/notebook';
 import YouTube, { YouTubeEvent } from 'react-youtube';
 import { Button } from '@mui/material';
 import { ISignal, Signal } from '@lumino/signaling';
-import { CodeCell } from '@jupyterlab/cells';
+import { Cell, CodeCell, ICellModel } from '@jupyterlab/cells';
 
 export interface ISegment {
   start: number;
@@ -300,7 +305,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
               method: 'POST'
             })
               .then(response => {
-                console.log(response);
+                // console.log(response);
                 setCanGoOn(response.toLowerCase() === 'yes');
               })
               .catch(reason => {
@@ -383,16 +388,30 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     canGoOnRef.current = canGoOn;
   }, [currentSegmentIndex, videoId, canGoOn]);
 
-  function onCellExecuted(): void {
-    console.log(canGoOnRef.current);
+  function onCellExecuted(
+    sender: any,
+    args: {
+      notebook: Notebook;
+      cell: Cell<ICellModel>;
+      success: boolean;
+      error?: KernelError | null | undefined;
+    }
+  ) {
+    const executedCellContent = args.cell.model.toJSON()['source'];
+    const executedCellOutput = args.cell.model.toJSON()['outputs'];
+    console.log(executedCellContent);
+    console.log(executedCellOutput);
+    // console.log(canGoOnRef.current);
     const currentNotebookContent = JSON.stringify(
       props.getCurrentNotebookContent()
     );
     const kernel = props.getCurrentNotebookKernel();
-    console.log(currentNotebookContent);
+    // console.log(currentNotebookContent);
     requestAPI<any>('update_bkt', {
       body: JSON.stringify({
-        notebook: currentNotebookContent,
+        // notebook: currentNotebookContent,
+        cell: executedCellContent,
+        output: executedCellOutput,
         question: '',
         videoId: videoIdRef.current,
         segmentIndex: currentSegmentIndexRef.current,
@@ -401,7 +420,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
       method: 'POST'
     })
       .then(response => {
-        console.log(response);
+        // console.log(response);
         if (response) {
           handleSend('');
         }
@@ -423,9 +442,9 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
         method: 'POST'
       })
         .then(response => {
-          console.log(response);
+          // console.log(response);
           setCanGoOn(response.toLowerCase() === 'yes');
-          console.log(canGoOnRef.current);
+          // console.log(canGoOnRef.current);
         })
         .catch(reason => {
           console.error(`Error on POST /jlab_ext_example/go_on .\n${reason}`);

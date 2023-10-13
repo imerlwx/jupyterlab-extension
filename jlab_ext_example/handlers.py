@@ -40,7 +40,7 @@ llm = None
 prompt = None
 memory = None
 conversation = None
-previous_notebook = '[{"cell_type":"code","source":"","output_type":null}]'
+# previous_notebook = '[{"cell_type":"code","source":"","output_type":null}]'
 notebook_at_begin_of_segment = '[{"cell_type":"code","source":"","output_type":null}]'
 bkt_params = {}
 user_id = "1"
@@ -92,7 +92,7 @@ class SegmentHandler(APIHandler):
     def post(self):
         data = self.get_json_body()
         video_id = data["videoId"]
-        print(video_id)
+        # print(video_id)
         segments = get_segments(video_id)
         self.finish(json.dumps(segments))
 
@@ -110,19 +110,19 @@ class ChatHandler(APIHandler):
         category = data["category"]
         segment_index = data["segmentIndex"]
         kernelType = data["kernelType"]
-        skills_data = get_skills(video_id)
+        skills_data = get_skill_by_segment(video_id, segment_index)
         action_outcome = get_action_outcome(video_id, segment_index)
         action = action_outcome["action"]
         outcome = action_outcome["outcome"]
         if llm is None or prompt is None or memory is None or conversation is None:
             VIDEO_ID = video_id
             data = get_csv_from_youtube_video(video_id)
-            init_bkt_params(video_id)
+            init_bkt_params()
             initialize_chat_server(data, kernelType)
 
         if notebook:
             bkt_params, _ = update_bkt_params(
-                video_id, segment_index, "", "", question, kernelType
+                video_id, segment_index, "", question, kernelType
             )
             if category == "Self-exploration":
                 # Extract all the probMastery values
@@ -130,9 +130,17 @@ class ChatHandler(APIHandler):
                     skill: params["probMastery"] for skill, params in bkt_params.items()
                 }
             else:
-                category_params = get_prob_mastery_by_category(
-                    category, skills_data, bkt_params
-                )
+                skills = list(skills_data.values())[0]
+                category_params = {
+                    {skill: bkt_params[skill]["probMastery"] for skill in skills.keys()}
+                }
+                # Loop through all categories in category_skill
+                # for category, skills in skills_data.items():
+                #     category_params = {
+                #         skill: bkt_params[skill]["probMastery"]
+                #         for skill in skills
+                #         if skill in bkt_params
+                #     }
             input_data = {
                 "notebook": notebook,
                 "question": question,
@@ -166,7 +174,7 @@ class GoOnHandler(APIHandler):
                 "notebook": notebook_update,
                 "question": data["question"],
             }
-            print(outcome)
+            # print(outcome)
             response = openai.ChatCompletion.create(
                 model="gpt-4-32k",
                 messages=[
@@ -195,25 +203,31 @@ class GoOnHandler(APIHandler):
 class UpdateBKTHandler(APIHandler):
     @tornado.web.authenticated
     def post(self):
-        global previous_notebook, bkt_params
+        global bkt_params
         data = self.get_json_body()
         video_id = data["videoId"]
+        cell_content = data["cell"]
+        cell_output = data["output"]
+        print(cell_content)
+        print(cell_output[0]["name"])
+        # print(type(cell_output))
         if video_id != "":
             _, models = update_bkt_params(
                 video_id,
                 data["segmentIndex"],
-                previous_notebook,
-                data["notebook"],
+                cell_content,
                 data["question"],
                 data["kernelType"],
             )
-            previous_notebook = data["notebook"]
+            # previous_notebook = data["notebook"]
             # Parse the JSON string
-            notebook_cells = json.loads(data["notebook"])
+            # notebook_cells = json.loads(data["notebook"])
             # Check if "error" exists in any "output_type" field
-            contains_error = any(
-                cell.get("output_type") == "error" for cell in notebook_cells
-            )
+            if cell_output[0]["name"] == "error":
+                contains_error = True
+            # contains_error = any(
+            #     cell.get("output_type") == "error" for cell in notebook_cells
+            # )
             # Check if student does something wrong
             found = any("false" in model.values() for model in models)
             # If student does anything wrong or the code has any errors, return True
@@ -264,6 +278,7 @@ def initialze_database():
         """
     CREATE TABLE IF NOT EXISTS skills_cache (
         video_id TEXT PRIMARY KEY,
+        segment_index NUMBER NOT NULL,
         skills TEXT NOT NULL
     );"""
     )
@@ -284,29 +299,21 @@ def initialze_database():
     );"""
     )
     video_id = "nx5yhXAQLxw"
-    skills_set = {
-        "Load data/packages": [
-            "Load data directly with an URL",
-            "Load necessary packages for EDA",
-        ],
-        "Initial observation on raw data": [
-            "Understanding column definitions",
-            "Making assumptions based on data",
-        ],
-        "Data visualization": [
-            "Use box plot to visualise the data",
-            "Use histograms to visualise the data",
-            "Use dot plot to visualise the data",
-            "Customize plot appearance",
-        ],
-        "Chart interpretation/insights": [
-            "Interpret visualizations",
-            "Generate intent for the next visualization",
-            "Identify outliers in the data",
-        ],
-        "Data processing": ["Reorder data", "Group and summarize data"],
-    }
-    skills_json = json.dumps(skills_set)
+    all_skills = [
+        "Load data directly with a URL",
+        "Load necessary packages for EDA",
+        "Understanding column definitions",
+        "Making assumptions based on data",
+        "Use box plot to visualize the data",
+        "Use histograms to visualize the data",
+        "Use dot plot to visualize the data",
+        "Customize plot appearance",
+        "Interpret visualizations",
+        "Generate intent for the next visualization",
+        "Identify outliers in the data",
+        "Reorder data",
+        "Group and summarize data",
+    ]
     segments_set = [
         {"category": "Introduction", "start": 1, "end": 113},
         {"category": "Load data/packages", "start": 113, "end": 212},
@@ -321,29 +328,6 @@ def initialze_database():
         {"category": "Data visualization", "start": 839, "end": 900},
     ]
     segments_json = json.dumps(segments_set)
-    prob_mastery = {
-        "Load data directly with an URL": 0.1,
-        "Load necessary packages for EDA": 0.1,
-        "Inspect raw data in a new dataset": 0.1,
-        "Explanatory analysis of different columns and their meanings": 0.1,
-        "Use box plot to visualise the data": 0.1,
-        "Use histograms to visualise the data": 0.1,
-        "Use dot plot to visualise the data": 0.1,
-        "Customize plot appearance": 0.1,
-        "Interpret visualizations": 0.1,
-        "Generate intent for the next visualization": 0.1,
-        "Identify outliers in the data": 0.1,
-        "Reorder data": 0.1,
-        "Group and summarize data": 0.1,
-    }
-    prob_mastery_json = json.dumps(prob_mastery)
-    c.execute("SELECT * FROM skills_cache WHERE video_id = ?", (video_id,))
-    if c.fetchone() is None:
-        # Insert new data if video_id doesn't exist
-        c.execute(
-            "INSERT INTO skills_cache (video_id, skills) VALUES (?, ?)",
-            (video_id, skills_json),
-        )
     c.execute("SELECT * FROM segments_cache WHERE video_id = ?", (video_id,))
     if c.fetchone() is None:
         # Insert new data if video_id doesn't exist
@@ -353,7 +337,8 @@ def initialze_database():
         )
     c.execute("SELECT * FROM bkt_params_cache WHERE user_id = ?", (user_id,))
     if c.fetchone() is None:
-        # Insert new data if video_id doesn't exist
+        prob_mastery = {skill: 0.1 for skill in all_skills}
+        prob_mastery_json = json.dumps(prob_mastery)
         c.execute(
             "INSERT INTO bkt_params_cache (user_id, skills_probMastery) VALUES (?, ?)",
             (user_id, prob_mastery_json),
@@ -385,7 +370,7 @@ def initialize_chat_server(data, kernelType):
                 The Cognitive Apprenticeship has the following six moves: modeling, coaching, scaffolding, articulation, reflection, and exploration. During different video segments, the moves you choose will differ.
                 You need to adapt your mentorship style based on Bayesian Knowledge Tracing. Here are some guidelines for your interaction with the student in different scenarios:
                 1. current_category: "Load data/packages"
-                - (Scaffolding) When the probability of mastery is low (close to 0): Directly give the student the code to load necessary packages and explain the code to the student.
+                - (Scaffolding) When the probability of mastery is low (close to 0): Directly give the student the code to load necessary packages and data and explain the code to the student.
                 - (Coaching) When the probability of mastery is high (close to 1): Tell the student to load packages and data and check whether the student's performance is correct.
                 2. current_category: "Initial observation on raw data"
                 - (Scaffolding) When the probability of mastery is low (close to 0): Share your own observations and tell the student the possible meaning of each data attribute.
@@ -535,6 +520,8 @@ def get_csv_from_youtube_video(video_id):
             csv_list.append(
                 {"name": row[1], "download_url": row[2], "attributes_info": row[3]}
             )
+        conn.commit()
+        conn.close()
         return csv_list
 
     _, video_publish_date = get_youtube_info(video_id)
@@ -564,6 +551,8 @@ def get_transcript(video_id, end=900):
     c.execute("SELECT transcript FROM transcript_cache WHERE video_id = ?", (video_id,))
     row = c.fetchone()
     if row:
+        conn.commit()
+        conn.close()
         return json.loads(row[0])
     else:
         data = YouTubeTranscriptApi.get_transcript(video_id)
@@ -603,6 +592,8 @@ def get_segments(video_id):
     c.execute("SELECT segments FROM segments_cache WHERE video_id = ?", (video_id,))
     row = c.fetchone()
     if row:
+        conn.commit()
+        conn.close()
         return json.loads(row[0])
     else:
         llm_response = get_video_segment(video_id)
@@ -627,7 +618,9 @@ def get_code_file(video_id):
     c = conn.cursor()
     c.execute("SELECT * FROM code_cache WHERE video_id=?", (video_id,))
     row = c.fetchone()
-    if row:  # Data exists in cache
+    if row:
+        conn.commit()
+        conn.close()
         return {"name": row[1], "download_url": row[2]}
 
     code_files = get_data(CODE_URL)
@@ -841,6 +834,8 @@ def get_action_outcome(video_id, segment_index):
     )
     row = c.fetchone()
     if row:
+        conn.commit()
+        conn.close()
         return json.loads(row[0])
     else:
         segment = get_segments(video_id)[segment_index]
@@ -879,16 +874,15 @@ def get_action_outcome(video_id, segment_index):
     return json.loads(action_outcome)
 
 
-def init_bkt_params(video_id):
+def init_bkt_params():
     """Initialize the bkt parameters for the given video."""
     global bkt_params, user_id
-    skills_data = get_skills(video_id)
     conn = sqlite3.connect("cache.db")
     c = conn.cursor()
     c.execute(
         "SELECT skills_probMastery FROM bkt_params_cache WHERE user_id = ?", (user_id,)
     )
-    prob_mastery_dict = c.fetchone()
+    prob_mastery_dict = json.loads(c.fetchone()[0])
     # Iterating through the original data to populate the new data structure
     bkt_params = {
         skill: {
@@ -897,8 +891,7 @@ def init_bkt_params(video_id):
             "probSlip": 0.1,
             "probGuess": 0.1,
         }
-        for skills in skills_data.values()
-        for skill in skills
+        for skill in prob_mastery_dict.keys()
     }
     conn.commit()
     conn.close()
@@ -921,6 +914,8 @@ def update_bkt_param(model, is_correct):
 
 def get_diff_between_notebooks(previous_notebook, current_notebook):
     """Returns the difference between the previous and current notebooks."""
+    if previous_notebook == current_notebook:
+        return []
     previous_content = json.loads(previous_notebook)
     current_content = json.loads(current_notebook)
 
@@ -937,21 +932,21 @@ def get_diff_between_notebooks(previous_notebook, current_notebook):
     return list(diff)
 
 
-def update_bkt_params(
-    video_id, segment_index, previous_notebook, current_notebook, question, kernelType
-):
+def update_bkt_params(video_id, segment_index, cell_content, question, kernelType):
     """Update the bkt parameters for the practiced skills."""
     global bkt_params
-    diff = get_diff_between_notebooks(previous_notebook, current_notebook)
+    # diff = get_diff_between_notebooks(previous_notebook, current_notebook)
     # Get skills for the current segment
-    # segment_skill = get_skill_by_segment(video_id, segment_index)
-    category = get_segments(video_id)[segment_index]["category"]
-    segment_skill = get_skills(video_id)[category]
+    # segment_skill is in this format: {"Load data/packages":
+    # {'Load data directly with a URL': False, 'Load necessary packages for EDA': False}}
+    segment_skill = get_skill_by_segment(video_id, segment_index)
+    category = list(segment_skill.keys())[0]
+    skills = list(list(segment_skill.values())[0].keys())
     if kernelType == "ir":
         kernelType = "R"
     elif kernelType == "python3":
         kernelType = "Python"
-    print(kernelType)
+    # print(kernelType)
 
     completion = openai.ChatCompletion.create(
         model="gpt-4",
@@ -968,21 +963,21 @@ def update_bkt_params(
                 The student is using {} in the computational notebook.
                 Output in this format:
                 [
-                    {{skill_name_1: true or false}},
-                    {{skill_name_2: true or false}},
+                    {{skill_name_1: True or False}},
+                    {{skill_name_2: True or False}},
                     ...
                 ]
                 """.format(
-                    kernelType, segment_skill
+                    kernelType, skills
                 ),
             },
             {
                 "role": "user",
                 "content": """
-                notebook_diff: {},
+                cell_content: {},
                 question: {}
                 """.format(
-                    diff, question
+                    cell_content, question
                 ),
             },
         ],
@@ -992,8 +987,19 @@ def update_bkt_params(
         for model in models:
             for key, value in model.items():
                 print(key, value)
+                if key in segment_skill[category]:
+                    segment_skill[category][key] = value
                 if key in bkt_params.keys():
                     update_bkt_param(bkt_params[key], value)
+        conn = sqlite3.connect("cache.db")
+        c = conn.cursor()
+        category_skill_json = json.dumps(segment_skill)
+        c.execute(
+            "UPDATE skills_cache SET skills = ? WHERE video_id = ? AND segment_index = ?",
+            (category_skill_json, video_id, segment_index),
+        )
+        conn.commit()
+        conn.close()
     except json.JSONDecodeError:
         print("Failed to decode JSON string.")
         models = []
@@ -1002,33 +1008,68 @@ def update_bkt_params(
 
 def get_skill_by_segment(video_id, segment_index):
     """Get the skills corresponding to the given segment."""
-    segment = get_segments(video_id)[segment_index]
+    all_segment = get_segments(video_id)
+    conn = sqlite3.connect("cache.db")
+    c = conn.cursor()
+    c.execute(
+        "SELECT skills_probMastery FROM bkt_params_cache WHERE user_id = ?", (user_id,)
+    )
+    prob_mastery_dict = json.loads(c.fetchone()[0])
+    all_skill = list(prob_mastery_dict.keys())
+    if segment_index >= len(all_segment):
+        conn.commit()
+        conn.close()
+        return {"Self-exploration": all_skill}
+    segment = all_segment[segment_index]
     segment_transcript = get_segment_transcript(
         video_id,
         start=segment["start"],
         end=segment["end"],
         category=segment["category"],
     )
-    skills_set = get_skills(video_id)
+    c.execute(
+        "SELECT skills FROM skills_cache WHERE video_id = ? AND segment_index = ?",
+        (
+            video_id,
+            segment_index,
+        ),
+    )
+    row = c.fetchone()
+    if row:
+        conn.commit()
+        conn.close()
+        return json.loads(row[0])
     response = openai.ChatCompletion.create(
         model="gpt-4",
         messages=[
             {
                 "role": "system",
                 "content": """
-                            You are an experienced mentor in Exploratory Data Analysis (EDA). A student is learning EDA by watching an EDA tutorial video segment in David Robinson's Tidy Tuesday series.
-                            Your task is to determine what EDA skills in the skill set are being used by David in the current video segment. The skill set and the current segment transcript are input.
+                            You are an expert in Exploratory Data Analysis. Given the transcript of an EDA tutorial video segment, summarize all the EDA skills used.
+                            Only choose the most relevant and main skills corresponding to the category. If a skill cannot be determined, do not include it.
+                            If the skill is in the skill set, use the same expression. If the skill is not in the skill set, create a new skill.
                             Response in this format: [skill_1, skill_2, ...]
                             """,
             },
             {
                 "role": "user",
-                "content": f"transcript: {segment_transcript['transcript']}, skill set: {skills_set[segment_transcript['category']]}",
+                "content": f"transcript: {segment_transcript['transcript']}, skill set: {all_skill}",
             },
         ],
     )
     result = response.choices[0].message["content"]
-    return json.loads(result.replace("'", '"'))
+    # Change to this format: {'Load data directly with a URL': False, ...}
+    result = {item: False for item in json.loads(result.replace("'", '"'))}
+    category_skill = {segment_transcript["category"]: result}
+    category_skill_json = json.dumps(category_skill)
+    # Insert new data if video_id doesn't exist
+    c.execute(
+        "INSERT INTO skills_cache (video_id, segment_index, skills) VALUES (?, ?, ?)",
+        (video_id, segment_index, category_skill_json),
+    )
+    conn.commit()
+    conn.close()
+    return category_skill
 
 
 def get_prob_mastery_by_category(category, skill_category_list, skill_params_dict):
