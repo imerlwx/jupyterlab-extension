@@ -297,8 +297,6 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
           if (canGoOn === false) {
             requestAPI<any>('go_on', {
               body: JSON.stringify({
-                notebook: currentNotebookContent,
-                question: question,
                 videoId: videoId,
                 segmentIndex: currentSegmentIndex
               }),
@@ -402,9 +400,6 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     console.log(executedCellContent);
     console.log(executedCellOutput);
     // console.log(canGoOnRef.current);
-    const currentNotebookContent = JSON.stringify(
-      props.getCurrentNotebookContent()
-    );
     const kernel = props.getCurrentNotebookKernel();
     // console.log(currentNotebookContent);
     requestAPI<any>('update_bkt', {
@@ -434,8 +429,6 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     if (canGoOnRef.current === false) {
       requestAPI<any>('go_on', {
         body: JSON.stringify({
-          notebook: currentNotebookContent,
-          question: '',
           videoId: videoIdRef.current,
           segmentIndex: currentSegmentIndexRef.current
         }),

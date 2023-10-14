@@ -40,10 +40,9 @@ llm = None
 prompt = None
 memory = None
 conversation = None
-# previous_notebook = '[{"cell_type":"code","source":"","output_type":null}]'
-notebook_at_begin_of_segment = '[{"cell_type":"code","source":"","output_type":null}]'
 bkt_params = {}
 user_id = "1"
+# previous_notebook = '[{"cell_type":"code","source":"","output_type":null}]'
 
 
 class DataHandler(APIHandler):
@@ -132,7 +131,7 @@ class ChatHandler(APIHandler):
             else:
                 skills = list(skills_data.values())[0]
                 category_params = {
-                    {skill: bkt_params[skill]["probMastery"] for skill in skills.keys()}
+                    skill: bkt_params[skill]["probMastery"] for skill in skills.keys()
                 }
                 # Loop through all categories in category_skill
                 # for category, skills in skills_data.items():
@@ -159,44 +158,20 @@ class ChatHandler(APIHandler):
 class GoOnHandler(APIHandler):
     @tornado.web.authenticated
     def post(self):
-        global notebook_at_begin_of_segment
         data = self.get_json_body()
         video_id = data["videoId"]
-        if video_id != "":
-            segment_index = data["segmentIndex"]
-            action_outcome = get_action_outcome(video_id, segment_index)
-            outcome = action_outcome["outcome"]
-            notebook_update = get_diff_between_notebooks(
-                notebook_at_begin_of_segment, data["notebook"]
-            )
-            input_data = {
-                "outcome": outcome,
-                "notebook": notebook_update,
-                "question": data["question"],
-            }
-            # print(outcome)
-            response = openai.ChatCompletion.create(
-                model="gpt-4-32k",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": """
-                                    You are an expert in Exploratory Data Analysis (EDA) and good at assisting student learn EDA.
-                                    A student is learning EDA by watching an EDA tutorial video segment in David Robinson's Tidy Tuesday series.
-                                    The input consists of the student's performance, including the notebook content, current answer in the chat, and the outcome that students should learn from the current video segment.
-                                    Your task is to determine if the student's current performance has meet the outcome of the current video segment.
-                                    Only output yes (for good enough) or no (for not ready).
-                                    """,
-                    },
-                    {"role": "user", "content": str(input_data)},
-                ],
-            )
-            result = response.choices[0].message["content"]
-            # If the student's performance is good enough, update the notebook_at_begin_of_segment
-            if result.lower() == "yes":
-                notebook_at_begin_of_segment = data["notebook"]
+        segment_index = data["segmentIndex"]
+        segment_skill = get_skill_by_segment(video_id, segment_index)
+        # Check if there is any False in the practicing skills
+        contains_false = any(
+            not value
+            for inner_dict in segment_skill.values()
+            for value in inner_dict.values()
+        )
+        if contains_false:
+            result = "no"  # if there is false, don't go on
         else:
-            result = "Something wrong with the video id."
+            result = "yes"  # if there is no false, go on
         self.finish(json.dumps(result))
 
 
@@ -209,7 +184,8 @@ class UpdateBKTHandler(APIHandler):
         cell_content = data["cell"]
         cell_output = data["output"]
         print(cell_content)
-        print(cell_output[0]["name"])
+        output_type = cell_output[0].get("name", "")
+        print(output_type)
         # print(type(cell_output))
         if video_id != "":
             _, models = update_bkt_params(
@@ -223,8 +199,10 @@ class UpdateBKTHandler(APIHandler):
             # Parse the JSON string
             # notebook_cells = json.loads(data["notebook"])
             # Check if "error" exists in any "output_type" field
-            if cell_output[0]["name"] == "error":
+            if output_type == "error":
                 contains_error = True
+            else:
+                contains_error = False
             # contains_error = any(
             #     cell.get("output_type") == "error" for cell in notebook_cells
             # )
@@ -954,17 +932,16 @@ def update_bkt_params(video_id, segment_index, cell_content, question, kernelTyp
             {
                 "role": "system",
                 "content": """"You are an expert in Exploratory Data Analysis (EDA) and good at assisting student learn EDA.
-                Now your role is to find out the skills the student practiced during the last training period and whether the student is practicing the skills correctly or not.
-                The computational notebook and the student's message in the chat during the last training period are input.
-                You only need to find out the skills in the given skill set {}. Response with true for correctly practiced, false for incorrectly practiced.
-                Correctly practiced means the student's code or answer demonstrated this skill. Incorrectly practiced means the code does not meet expectations or has errors or the answer is incorrect.
-                Note: 
-                Only include the skills that are being practiced by the student. If the skill is not being practiced, don't include it. If no skill is being practiced in the last period, then return a empty list.
-                The student is using {} in the computational notebook.
-                Output in this format:
+                Your role is to find out the skills the student is practicing by coding or sending a message and whether the student practices the skills correctly.
+                Response with true for correctly practiced, false for incorrectly practiced.
+                Correctly practiced means the student's code or message demonstrated this skill. Incorrectly practiced means the code output has errors or the message is incorrect.
+                Note:
+                Only include the skills that are being practiced by the student in the given skill set {}.
+                If the skill is not being practiced, don't include it. If no skill is being practiced, return a empty list.
+                The student is using {} language in the computational notebook. Output in this format:
                 [
-                    {{skill_name_1: True or False}},
-                    {{skill_name_2: True or False}},
+                    {{skill_name_1: true or false}},
+                    {{skill_name_2: true or false}},
                     ...
                 ]
                 """.format(
@@ -975,18 +952,19 @@ def update_bkt_params(video_id, segment_index, cell_content, question, kernelTyp
                 "role": "user",
                 "content": """
                 cell_content: {},
-                question: {}
+                message: {}
                 """.format(
                     cell_content, question
                 ),
             },
         ],
     )
+    print(completion.choices[0].message["content"])
     try:
         models = json.loads(completion.choices[0].message["content"])
         for model in models:
             for key, value in model.items():
-                print(key, value)
+                # print(key, value)
                 if key in segment_skill[category]:
                     segment_skill[category][key] = value
                 if key in bkt_params.keys():
