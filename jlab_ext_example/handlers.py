@@ -2,6 +2,7 @@
 import os
 import re
 import json
+import math
 import isodate
 import datetime
 import requests
@@ -110,9 +111,15 @@ class ChatHandler(APIHandler):
         segment_index = data["segmentIndex"]
         kernelType = data["kernelType"]
         skills_data = get_skill_by_segment(video_id, segment_index)
+        skills_with_false = []
+        for skills in skills_data.values():
+            for skill, value in skills.items():
+                if not value:
+                    skills_with_false.append(skill)
+
         action_outcome = get_action_outcome(video_id, segment_index)
         action = action_outcome["action"]
-        outcome = action_outcome["outcome"]
+        # outcome = action_outcome["outcome"]
         if llm is None or prompt is None or memory is None or conversation is None:
             VIDEO_ID = video_id
             data = get_csv_from_youtube_video(video_id)
@@ -133,20 +140,14 @@ class ChatHandler(APIHandler):
                 category_params = {
                     skill: bkt_params[skill]["probMastery"] for skill in skills.keys()
                 }
-                # Loop through all categories in category_skill
-                # for category, skills in skills_data.items():
-                #     category_params = {
-                #         skill: bkt_params[skill]["probMastery"]
-                #         for skill in skills
-                #         if skill in bkt_params
-                #     }
             input_data = {
                 "notebook": notebook,
                 "question": question,
                 "current_category": category,
                 "category_params": category_params,
-                "action": action,
-                "outcome": outcome,
+                "skills_to_practice": str(skills_with_false),
+                "tutor's action": action,
+                # "outcome": outcome,
             }
             results = conversation({"input": str(input_data)})["text"]
             self.finish(json.dumps(results))
@@ -255,16 +256,18 @@ def initialze_database():
     c.execute(
         """
     CREATE TABLE IF NOT EXISTS skills_cache (
-        video_id TEXT PRIMARY KEY,
+        video_id TEXT,
         segment_index NUMBER NOT NULL,
-        skills TEXT NOT NULL
+        skills TEXT NOT NULL,
+        PRIMARY KEY (video_id, segment_index)
     );"""
     )
     c.execute(
         """
     CREATE TABLE IF NOT EXISTS bkt_params_cache (
         user_id TEXT PRIMARY KEY,
-        skills_probMastery TEXT NOT NULL
+        skills_probMastery TEXT NOT NULL,
+        skills_by_category TEXT NOT NULL
     );"""
     )
     c.execute(
@@ -277,21 +280,50 @@ def initialze_database():
     );"""
     )
     video_id = "nx5yhXAQLxw"
-    all_skills = [
-        "Load data directly with a URL",
-        "Load necessary packages for EDA",
-        "Understanding column definitions",
-        "Making assumptions based on data",
-        "Use box plot to visualize the data",
-        "Use histograms to visualize the data",
-        "Use dot plot to visualize the data",
-        "Customize plot appearance",
-        "Interpret visualizations",
-        "Generate intent for the next visualization",
-        "Identify outliers in the data",
-        "Reorder data",
-        "Group and summarize data",
-    ]
+    # all_skills = [
+    #     "Load data directly with a URL",
+    #     "Load necessary packages for EDA",
+    #     "Making assumptions based on data",
+    #     "Use box plot to visualize the data",
+    #     "Use histograms to visualize the data",
+    #     "Use dot plot to visualize the data",
+    #     "Customize plot appearance",
+    #     "Interpret visualizations",
+    #     "Generate intent for the next visualization",
+    #     "Identify outliers in the data",
+    #     "Reorder data",
+    #     "Group and summarize data",
+    # ]
+    skills_by_category = {
+        "Load data/packages": [
+            "Load data directly with a URL",
+            "Load necessary packages for EDA",
+        ],
+        "Initial observation on raw data": [
+            "View the first few rows of the data set",
+            "Make assumptions based on data",
+            "Generate intent for the next visualization",
+        ],
+        "Data visualization": [
+            "Use box plot to visualize the data",
+            "Use histograms to visualize the data",
+            "Use dot plot to visualize the data",
+            "Customize plot appearance",
+            "Reorder data",
+        ],
+        "Chart interpretation/insights": [
+            "Interpret visualizations",
+            "Generate intent for the next visualization",
+            "Identify outliers in the data",
+        ],
+        "Data processing": ["Reorder data", "Group and summarize data"],
+    }
+    all_skills = []
+    for skills in skills_by_category.values():
+        for skill in skills:
+            if skill not in all_skills:
+                all_skills.append(skill)
+
     segments_set = [
         {"category": "Introduction", "start": 1, "end": 113},
         {"category": "Load data/packages", "start": 113, "end": 212},
@@ -317,9 +349,10 @@ def initialze_database():
     if c.fetchone() is None:
         prob_mastery = {skill: 0.1 for skill in all_skills}
         prob_mastery_json = json.dumps(prob_mastery)
+        skills_by_category = json.dumps(skills_by_category)
         c.execute(
-            "INSERT INTO bkt_params_cache (user_id, skills_probMastery) VALUES (?, ?)",
-            (user_id, prob_mastery_json),
+            "INSERT INTO bkt_params_cache (user_id, skills_probMastery, skills_by_category) VALUES (?, ?, ?)",
+            (user_id, prob_mastery_json, skills_by_category),
         )
     conn.commit()
     conn.close()
@@ -342,7 +375,7 @@ def initialize_chat_server(data, kernelType):
                 """
                 As an expert data science mentor focused on real-time guidance in Exploratory Data Analysis (EDA) on Jupyter notebooks during David Robinson's Tidy Tuesday tutorials,
                 your role is to use Cognitive Apprenticeship to offer feedback, corrections, and suggestions based on the student's learning progress.
-                You have access to the dataset information ({data}) used in the video. The current video segment category and its author David's action and what the student should learn (outcome) from the current segment will also be given.
+                You have access to the dataset information ({data}) used in the video. The current video segment category (current_category) and its author David's action (tutor's action) and the skills that the student needs to practice (skills_to_practice) in the current segment will also be given.
                 The student's performance (notebook and question) and mastery probability of each skill will be given. The mastery probability is a number between 0 and 1, indicating the probability that the student has mastered the skill.
 
                 The Cognitive Apprenticeship has the following six moves: modeling, coaching, scaffolding, articulation, reflection, and exploration. During different video segments, the moves you choose will differ.
@@ -351,8 +384,9 @@ def initialize_chat_server(data, kernelType):
                 - (Scaffolding) When the probability of mastery is low (close to 0): Directly give the student the code to load necessary packages and data and explain the code to the student.
                 - (Coaching) When the probability of mastery is high (close to 1): Tell the student to load packages and data and check whether the student's performance is correct.
                 2. current_category: "Initial observation on raw data"
-                - (Scaffolding) When the probability of mastery is low (close to 0): Share your own observations and tell the student the possible meaning of each data attribute.
+                - (Scaffolding) When the probability of mastery is low (close to 0): Share your own observations and tell the student the possible meaning of each data attribute. Then ask if he finds any interesting relationships and has any visualization intent.
                 - (Coaching) When the probability of mastery is high (close to 1): Ask the student if he finds any data attributes attractive and encourage him to note down potential tasks.
+                - Only let the student do data observation. You can encourage him to note down the ideas and explore them later. Don't let the student to do visualization in this step.
                 3. current_category: "Data processing"
                 - (Scaffolding) When the probability of mastery is low (close to 0): Show how to do data processing on the data that are potentially useful for data visualization.
                 - (Coaching) When the probability of mastery is high (close to 1): Ask the student if there is any data that needs to be processed before visualization and monitor his performance.
@@ -374,9 +408,9 @@ def initialize_chat_server(data, kernelType):
                 Notes:
                 - You should interact in the first person as a mentor heuristically and briefly.
                 - You give advice based on the programming language the student is currently using. He is now using {kernelType}.
-                - Limit your teaching and assisting content to the actions and outcomes of the current category provided to you.
+                - Limit your teaching and assisting content to the actions of the current category. And focus on the student's skills that need to be practiced.
                 - If you are gonna provide some code to the student, please include the code in a code block.
-                - Do not describe the student's probability of mastery level for any skills and learning status to the student.
+                - Do not describe the student's probability of mastery level of skills and don't describe the current learning status to the student.
                 """
             ).format(
                 data=data,
@@ -498,8 +532,6 @@ def get_csv_from_youtube_video(video_id):
             csv_list.append(
                 {"name": row[1], "download_url": row[2], "attributes_info": row[3]}
             )
-        conn.commit()
-        conn.close()
         return csv_list
 
     _, video_publish_date = get_youtube_info(video_id)
@@ -529,8 +561,6 @@ def get_transcript(video_id, end=900):
     c.execute("SELECT transcript FROM transcript_cache WHERE video_id = ?", (video_id,))
     row = c.fetchone()
     if row:
-        conn.commit()
-        conn.close()
         return json.loads(row[0])
     else:
         data = YouTubeTranscriptApi.get_transcript(video_id)
@@ -570,8 +600,6 @@ def get_segments(video_id):
     c.execute("SELECT segments FROM segments_cache WHERE video_id = ?", (video_id,))
     row = c.fetchone()
     if row:
-        conn.commit()
-        conn.close()
         return json.loads(row[0])
     else:
         llm_response = get_video_segment(video_id)
@@ -597,8 +625,6 @@ def get_code_file(video_id):
     c.execute("SELECT * FROM code_cache WHERE video_id=?", (video_id,))
     row = c.fetchone()
     if row:
-        conn.commit()
-        conn.close()
         return {"name": row[1], "download_url": row[2]}
 
     code_files = get_data(CODE_URL)
@@ -669,84 +695,90 @@ def get_notebook_content():
     return all_contents
 
 
-def get_video_segment(video_id):
+def get_video_segment(video_id, length=600):
     """Segment the given tutorial video into six pre-defined categories."""
-    transcript_1 = get_transcript("Kd9BNI6QMmQ")
-    transcript_2 = get_transcript("nx5yhXAQLxw")
-    transcript_3 = get_transcript(video_id)
+    periods = math.ceil(length / 600)
+    segments = []
+    combined_segments = []
+    # Segment the given video every 10-minute periods
+    for i in range(periods):
+        if i == periods - 1:
+            end_time = length
+        else:
+            end_time = (i + 1) * 600
 
-    completion = openai.ChatCompletion.create(
-        model="gpt-4-32k",
-        messages=[
-            {
-                "role": "system",
-                "content": """
-                            You are an expert transcript segment assistant specializing in segmenting video transcripts on the topic of exploratory data analysis. 
+        transcript = get_transcript(video_id, start=i * 600, end=end_time)
+        completion = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[
+                {
+                    "role": "system",
+                    "content": """
+                                I need you to segment the given transcript from an Exploratory Data Analysis (EDA) tutorial video into specific categories based on the context and content of each text snippet. Analyze the provided text closely and sort it according to the following categories:
 
-                            Your task is to segment a given video transcript of David Robinson's data exploratory analysis tutorial video into six categories: 
-                            1. Introduction: David Robinson introduces himself, the Tidy Tuesday project, and the weekly dataset
-                            2. Load data/packages: David Robinson loads the data of this week's Tidy Tuesday project, and imports some useful R package
-                            3. Initial observation of raw data: David Robinson reads the data attributes and their definition, then proposes some hypotheses 
-                            4. Data processing: David Robinson may do some data processing on some data attributes to produce a new data attribute that is better for data visualization
-                            5. Data visualization: David Robinson proposes some data visualization intent, and uses R to make some plots using some exploratory data analysis skills
-                            6. Chart interpretation/insights: David Robinson interprets the plots and produces some insights for the next data visualization
+                                Introduction: Passages where the speaker provides an introductory overview, greets the audience or sets the stage for what's to come.
+                                Load data/packages: Segments where there's explicit mention or inference of loading datasets, files, or importing necessary libraries/packages. Look for indications of data initialization or software setup.
+                                Initial observation on raw data: Look for sections where the speaker gives first impressions, immediate observations, or general descriptions of the initial dataset without going into deeper analysis.
+                                Data visualization: Identify sections where the instructor discusses or showcases the creation of plots, graphs, charts, or any other visual representations of data. This may include setting up visualizations or the mere mention of them.
+                                Chart interpretation/insights: Pinpoint passages where the instructor delves into the interpretation of previously shown visualizations, explaining trends, patterns, anomalies, or drawing conclusions from them.
+                                Data processing: Find instances where the instructor outlines procedures to cleanse, transform, reshape, or otherwise manipulate the raw data. This could be filtering, aggregation, reshaping, etc.
 
-                            Your goal is to accurately identify and categorize segments of the transcript that correspond to each category. 
+                                Note:
+                                - One category can have multiple time periods. And some categories could have no corresponding segments.
+                                - Keep the categories in chronological order based on the "start" time. If there's overlap or ambiguity, prioritize the context and continuity of the topic being discussed.
+                                - If the start time of the current transcript is above 600, there is no segment with the category 'Introduction', 'Load data/packages', or 'Initial observation on raw data' anymore.
+                                - You can get each segment's duration time by comparing the start time of the adjacent two items. Any segment's duration time should not be too short.
 
-                            Please note that:
-                            - You should not assume the example provided is the answer to the input transcript.
-                            - You should not make any assumptions without the input transcript.
-                            - You must not omit any video transcript segment.
-                            - The output should include all time periods in integer seconds.
-                            - Each category can have multiple time periods.
-                            - You should not segment time that does not appear in the video.
-                            - Avoid stopping the clip in the middle of a sentence.
+                                Your output should be in this format:
+                                [
+                                    {"category": CategoryName, "start": StartTime},
+                                    ...
+                                ]
+                                Please begin segmenting the provided transcript.
+                                """,
+                },
+                {"role": "user", "content": str(transcript)},
+            ],
+            temperature=0.1,
+        )
+        llm_response = completion.choices[0].message["content"]
+        segment = json.loads(llm_response.replace("'", '"'))
+        sorted_segment = sorted(segment, key=lambda x: x["start"])
 
-                            Your response should provide the start and end times in seconds for each segment within each category, ensuring that the segments correspond accurately to the content of the video transcript.
-                            """,
-            },
-            {"role": "user", "content": str(transcript_1)},
-            {
-                "role": "assistant",
-                "content": """[
-                                {'category': 'Introduction', 'start': 1, 'end': 102},
-                                {'category': 'Load data/packages', 'start': 102, 'end': 140},
-                                {'category': 'Initial observation on raw data', 'start': 140, 'end': 218},
-                                {'category': 'Data processing', 'start': 218, 'end': 571},
-                                {'category': 'Data visualization', 'start': 571, 'end': 583},
-                                {'category': 'Chart interpretation/insights', 'start': 583, 'end': 592},
-                                {'category': 'Data processing', 'start': 593, 'end': 612},
-                                {'category': 'Data visualization', 'start': 612, 'end': 653},
-                                {'category': 'Chart interpretation/insights', 'start': 653, 'end': 679},
-                                {'category': 'Data processing', 'start': 679, 'end': 715},
-                                {'category': 'Chart interpretation/insights', 'start': 716, 'end': 743},
-                                {'category': 'Data visualization', 'start': 743, 'end': 884},
-                                {'category': 'Chart interpretation/insights', 'start': 884, 'end': 900}
-                            ]""",
-            },
-            {"role": "user", "content": str(transcript_2)},
-            {
-                "role": "assistant",
-                "content": """[
-                                {'category': 'Introduction', 'start': 1, 'end': 113},
-                                {'category': 'Load data/packages', 'start': 113, 'end': 212},
-                                {'category': 'Initial observation on raw data', 'start': 212, 'end': 418},
-                                {'category': 'Data visualization', 'start': 418, 'end': 463},
-                                {'category': 'Chart interpretation/insights', 'start': 463, 'end': 507},
-                                {'category': 'Data visualization', 'start': 507, 'end': 602},
-                                {'category': 'Chart interpretation/insights', 'start': 602, 'end': 640},
-                                {'category': 'Data visualization', 'start': 640, 'end': 693},
-                                {'category': 'Chart interpretation/insights', 'start': 693, 'end': 740},
-                                {'category': 'Data processing', 'start': 740, 'end': 839},
-                                {'category': 'Data visualization', 'start': 839, 'end': 900}
-                            ]""",
-            },
-            {"role": "user", "content": str(transcript_3)},
-        ],
-        temperature=0.5,
-    )
-    llm_response = completion.choices[0].message["content"]
-    return json.loads(llm_response.replace("'", '"'))
+        # Loop through the data except the last item
+        for j in range(len(sorted_segment) - 1):
+            sorted_segment[j]["start"] = round(sorted_segment[j]["start"])
+            sorted_segment[j]["end"] = round(sorted_segment[j + 1]["start"])
+        # Set the 'end' time of the last item
+        sorted_segment[-1]["start"] = round(sorted_segment[-1]["start"])
+        sorted_segment[-1]["end"] = end_time
+
+        segments.extend(sorted_segment)
+
+    # combine two closet segment if they have the same category
+    i = 0
+    while i < len(segments):
+        # If it's the last item or the current category is different from the next one
+        if (
+            i == len(segments) - 1
+            or segments[i]["category"] != segments[i + 1]["category"]
+        ):
+            combined_segments.append(segments[i])
+            i += 1
+        else:
+            # Combine the current item with the next one
+            start_time = segments[i]["start"]
+            end_time = segments[i + 1]["end"]
+            combined_segments.append(
+                {
+                    "category": segments[i]["category"],
+                    "start": start_time,
+                    "end": end_time,
+                }
+            )
+            # Skip the next item since it's combined
+            i += 2
+    return combined_segments
 
 
 def get_skills(video_id):
@@ -779,7 +811,7 @@ def get_skills(video_id):
                     "role": "assistant",
                     "content": """
                     {
-                        "Load data/packages": ["Load data directly with an URL", "Load necessary packages for EDA"], 
+                        "Load data/packages": ["Load data directly with a URL", "Load necessary packages for EDA"], 
                         "Initial observation on raw data": ["Understanding column definitions", "Making assumptions based on data"],
                         "Data visualization": ["Use box plot to visualise the data", "Use histograms to visualise the data", "Use dot plot to visualise the data", "Customize plot appearance"],
                         "Chart interpretation/insights": ["Interpret visualizations", "Generate hypotheses for the next visualization", "Identify outliers in the data"],
@@ -812,8 +844,6 @@ def get_action_outcome(video_id, segment_index):
     )
     row = c.fetchone()
     if row:
-        conn.commit()
-        conn.close()
         return json.loads(row[0])
     else:
         segment = get_segments(video_id)[segment_index]
@@ -829,7 +859,7 @@ def get_action_outcome(video_id, segment_index):
                 {
                     "role": "system",
                     "content": """
-                    You are an expert in Exploratory Data Analysis (EDA) and good at assisting student learn EDA.
+                    You are an expert in Exploratory Data Analysis (EDA) and good at assisting students learn EDA.
                     The student is watching a tutorial video segment of David Robinson's Tidy Tuesday series.
                     Provide a concise and accurate description of the action taken by David and what the student should learn by watching the video segment (outcome).
                     Response in the following format: {"action": "David Robinson does...", "outcome": "The student should learn..."}
@@ -931,29 +961,42 @@ def update_bkt_params(video_id, segment_index, cell_content, question, kernelTyp
         messages=[
             {
                 "role": "system",
-                "content": """"You are an expert in Exploratory Data Analysis (EDA) and good at assisting student learn EDA.
-                Your role is to find out the skills the student is practicing by coding or sending a message and whether the student practices the skills correctly.
-                Response with true for correctly practiced, false for incorrectly practiced.
-                Correctly practiced means the student's code or message demonstrated this skill. Incorrectly practiced means the code output has errors or the message is incorrect.
-                Note:
-                Only include the skills that are being practiced by the student in the given skill set {}.
-                If the skill is not being practiced, don't include it. If no skill is being practiced, return a empty list.
+                "content": """"You are an expert in Exploratory Data Analysis (EDA) and good at assisting students to learn EDA.
+                Your role is to find out the skills in the given skill set {} that the student is practicing by coding or conversation and whether the student practices the skills correctly.
+                Response with true when the student's code or message demonstrated this skill. Response with false when the code output has errors or the answer is incorrect. 
+                Note if the skill is not being practiced, don't include it with 'false'. If no skill is being practiced, return an empty list. 
                 The student is using {} language in the computational notebook. Output in this format:
                 [
                     {{skill_name_1: true or false}},
                     {{skill_name_2: true or false}},
                     ...
                 ]
-                """.format(
+            """.format(
                     kernelType, skills
                 ),
             },
             {
                 "role": "user",
                 "content": """
-                cell_content: {},
-                message: {}
-                """.format(
+            cell_content: url <- "https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2018/2018-10-16/recent-grads.csv"
+                          data <- read_csv(url),
+            message: ''
+            """,
+            },
+            {
+                "role": "assistant",
+                "content": """
+                [
+                    {"Load data directly with a URL": true}
+                ]
+            """,
+            },
+            {
+                "role": "user",
+                "content": """
+            cell_content: {},
+            message: {}
+            """.format(
                     cell_content, question
                 ),
             },
@@ -965,9 +1008,16 @@ def update_bkt_params(video_id, segment_index, cell_content, question, kernelTyp
         for model in models:
             for key, value in model.items():
                 # print(key, value)
-                if key in segment_skill[category]:
-                    segment_skill[category][key] = value
+                segment_skill[category][key] = value
                 if key in bkt_params.keys():
+                    update_bkt_param(bkt_params[key], value)
+                else:
+                    bkt_params[key] = {
+                        "probMastery": 0.1,
+                        "probTransit": 0.1,
+                        "probSlip": 0.1,
+                        "probGuess": 0.1,
+                    }
                     update_bkt_param(bkt_params[key], value)
         conn = sqlite3.connect("cache.db")
         c = conn.cursor()
@@ -989,15 +1039,6 @@ def get_skill_by_segment(video_id, segment_index):
     all_segment = get_segments(video_id)
     conn = sqlite3.connect("cache.db")
     c = conn.cursor()
-    c.execute(
-        "SELECT skills_probMastery FROM bkt_params_cache WHERE user_id = ?", (user_id,)
-    )
-    prob_mastery_dict = json.loads(c.fetchone()[0])
-    all_skill = list(prob_mastery_dict.keys())
-    if segment_index >= len(all_segment):
-        conn.commit()
-        conn.close()
-        return {"Self-exploration": all_skill}
     segment = all_segment[segment_index]
     segment_transcript = get_segment_transcript(
         video_id,
@@ -1014,30 +1055,54 @@ def get_skill_by_segment(video_id, segment_index):
     )
     row = c.fetchone()
     if row:
-        conn.commit()
-        conn.close()
+        print(row[0])
         return json.loads(row[0])
+
+    c.execute(
+        "SELECT skills_by_category FROM bkt_params_cache WHERE user_id = ?", (user_id,)
+    )
+    skills_by_category = json.loads(c.fetchone()[0])
+    all_skills = []
+    for skills in skills_by_category.values():
+        for skill in skills:
+            if skill not in all_skills:
+                all_skills.append(skill)
+    if segment_index >= len(all_segment):
+        return {"Self-exploration": all_skills}
+
     response = openai.ChatCompletion.create(
         model="gpt-4",
         messages=[
             {
                 "role": "system",
                 "content": """
-                            You are an expert in Exploratory Data Analysis. Given the transcript of an EDA tutorial video segment, summarize all the EDA skills used.
-                            Only choose the most relevant and main skills corresponding to the category. If a skill cannot be determined, do not include it.
-                            If the skill is in the skill set, use the same expression. If the skill is not in the skill set, create a new skill.
-                            Response in this format: [skill_1, skill_2, ...]
-                            """,
+                        You are an expert in Exploratory Data Analysis (EDA).
+                        Given the transcript of an EDA tutorial video segment, summarize all the !!EDA!! skills used in the segment.
+                        If the skill is in the skill set, use the same expression. If the skill is not in the skill set, create a new skill.
+                        Only choose the skills corresponding to the category. For example, there should not be "Interpret visualization" or "Make assumptions" in a "Data visualization" segment.
+                        Response in this format: [skill_1, skill_2, ...]
+                        """,
             },
             {
                 "role": "user",
-                "content": f"transcript: {segment_transcript['transcript']}, skill set: {all_skill}",
+                "content": f"transcript: {segment_transcript['transcript']}, category: {segment['category']}, skill set: {skills_by_category[segment['category']]}",
             },
         ],
     )
     result = response.choices[0].message["content"]
+    result = json.loads(result.replace("'", '"'))
+    # Update the skills_by_category in the database
+    for skill in result:
+        if skill not in skills_by_category["Data visualization"]:
+            skills_by_category["Data visualization"].append(skill)
+    skills_by_category_str = json.dumps(skills_by_category)
+    c.execute(
+        "UPDATE bkt_params_cache SET skills_by_category = ? WHERE user_id = ?",
+        (skills_by_category_str, user_id),
+    )
+
     # Change to this format: {'Load data directly with a URL': False, ...}
-    result = {item: False for item in json.loads(result.replace("'", '"'))}
+    result = {item: False for item in result}
     category_skill = {segment_transcript["category"]: result}
     category_skill_json = json.dumps(category_skill)
     # Insert new data if video_id doesn't exist
