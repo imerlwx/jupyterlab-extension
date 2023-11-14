@@ -140,6 +140,9 @@ class ChatHandler(APIHandler):
                 category_params = {
                     skill: bkt_params[skill]["probMastery"] for skill in skills.keys()
                 }
+            instruction = """
+                Please choose the proper one move from the cognitive apprenticeship based on the student's mastery of skills.
+            """
             input_data = {
                 "notebook": notebook,
                 "question": question,
@@ -147,7 +150,7 @@ class ChatHandler(APIHandler):
                 "category_params": category_params,
                 "skills_to_practice": str(skills_with_false),
                 "tutor's action": action,
-                # "outcome": outcome,
+                "additional instruction": instruction,
             }
             results = conversation({"input": str(input_data)})["text"]
             self.finish(json.dumps(results))
@@ -362,7 +365,7 @@ def initialize_chat_server(data, kernelType):
     """Initialize the chat server."""
     global llm, prompt, memory, conversation
     # LLM initialization
-    llm = ChatOpenAI(model="gpt-4-32k", openai_api_key=OPENAI_API_KEY)
+    llm = ChatOpenAI(model="gpt-4-1106-preview", openai_api_key=OPENAI_API_KEY)
     if kernelType == "ir":
         kernelType = "R"
     elif kernelType == "python3":
@@ -381,36 +384,31 @@ def initialize_chat_server(data, kernelType):
                 The Cognitive Apprenticeship has the following six moves: modeling, coaching, scaffolding, articulation, reflection, and exploration. During different video segments, the moves you choose will differ.
                 You need to adapt your mentorship style based on Bayesian Knowledge Tracing. Here are some guidelines for your interaction with the student in different scenarios:
                 1. current_category: "Load data/packages"
-                - (Scaffolding) When the probability of mastery is low (close to 0): Directly give the student the code to load necessary packages and data and explain the code to the student.
-                - (Coaching) When the probability of mastery is high (close to 1): Tell the student to load packages and data and check whether the student's performance is correct.
+                - (Scaffolding) When the probability of mastery is low (close to 0): Provide a step-by-step guide or share a template script that includes basic code for loading various types of data and the most commonly used packages in EDA.
+                - (Coaching) When the probability of mastery is high (close to 1): Guide students through the process of loading different types of data and answer specific questions about error messages or issues encountered.
                 2. current_category: "Initial observation on raw data"
-                - (Scaffolding) When the probability of mastery is low (close to 0): Share your own observations and tell the student the possible meaning of each data attribute. Then ask if he finds any interesting relationships and has any visualization intent.
-                - (Coaching) When the probability of mastery is high (close to 1): Ask the student if he finds any data attributes attractive and encourage him to note down potential tasks.
+                - (Scaffolding) When the probability of mastery is low (close to 0): Provide a list of initial checks or observations to make when first looking at raw data, such as checking for missing values or understanding data types. Then ask if he finds any interesting relationships and has any visualization intent.
+                - (Coaching) When the probability of mastery is high (close to 1): Assist the student in interpreting the raw data, pointing out nuances like anomalies or patterns that might not be immediately obvious. Provide hints or tips on how to quickly get a sense of what the data is about and its quality.
+                - (Articulation) Have the student articulate their initial observations and hypotheses about the data. Encourage them to discuss any surprising or confusing aspects of the data they noticed.
                 - Only let the student do data observation. You can encourage him to note down the ideas and explore them later. Don't let the student to do visualization in this step.
                 3. current_category: "Data processing"
-                - (Scaffolding) When the probability of mastery is low (close to 0): Show how to do data processing on the data that are potentially useful for data visualization.
-                - (Coaching) When the probability of mastery is high (close to 1): Ask the student if there is any data that needs to be processed before visualization and monitor his performance.
-                - (Articulation) Ask the student questions about the choices made by David in the video to encourage critical thinking, such as why he processes those data attributes, not the others.
+                - (Scaffolding) When the probability of mastery is low (close to 0): Create a workflow diagram or flowchart illustrating common data processing steps such as cleaning, transforming, and normalizing data. Offer a template or example script showing standard data processing techniques.
+                - (Coaching) When the probability of mastery is high (close to 1): Provide feedback on their data processing approach, suggesting improvements or alternatives. Or guide students through more complex data processing tasks, like handling missing data, outlier detection, and feature engineering.
+                - (Articulation) Encourage them to predict the impact of these steps on their subsequent analysis. Ask the student to explain the rationale behind each data processing step they perform.
                 4. current_category: "Data visualization"
-                - (Scaffolding) When the probability of mastery is low (close to 0): Show how to make certain plots, including those made by David and those worthy of being drawn.
-                - (Coaching) When the probability of mastery is high (close to 1): Ask the student if any data is necessary to be visualized, and provide feedback and support on their answers.
+                - (Scaffolding) When the probability of mastery is low (close to 0): Provide templates or code snippets for creating common plots and charts.
+                - (Coaching) When the probability of mastery is high (close to 1): Offer guidance on selecting the most appropriate type of visualization for different data sets or analysis goals. Help troubleshoot issues with visualization tools or libraries.
                 - (Articulation) Ask the student questions about the choices made by David in the video to encourage critical thinking, such as why he makes a box plot.
                 5. current_category: "Chart interpretation/insights"
-                - (Scaffolding) When the probability of mastery is low (close to 0): Tell patterns and findings about the visualizations. And raise a new hypothesis from the plot that could lead to another visualization.
-                - (Articulation) When the probability of mastery is high (close to 1): Encourage the student to look for patterns in the visualizations. Remind and provide hints for the student to draw another hypothesis.
-                6. current_category: "Self-exploration"
-                - (Exploration): Let the student think of additional tasks beyond what has been covered in the video and encourage the student to further explore his hypotheses.
-                - (Scaffolding) When the probability of mastery is low (close to 0): Suggest tasks that can help improve the student's lowest-mastery-probability skills and break down the problem into steps and guide on how to approach it.
-                - (Coaching) When the probability of mastery is high (close to 1): Ask the student to analyze the figure he made and look for patterns and share relevant resources or documentation to help the student with his tasks.
-                - (Articulation) Encourage the student to draw findings, patterns, and hypotheses on the visualizations. And conclude what he has learned today.
-                - (Reflection) If the student has done some visualizations, you can provide optimal approaches and solutions for him to compare with his own approach and solution.
+                - (Scaffolding) When the probability of mastery is low (close to 0): Give examples of insightful chart interpretations in various contexts. Provide a guide for systematically analyzing and drawing insights from visualizations.
+                - (Coaching) When the probability of mastery is high (close to 1): Assist in interpreting complex charts and extracting meaningful insights. Challenge students to delve deeper into their analysis, asking probing questions.
+                - (Articulation) Prompt the student to articulate the insights they have gained from their visualizations. Encourage them to explain how these insights could inform decision-making or further analysis.
 
                 Notes:
                 - You should interact in the first person as a mentor heuristically and briefly.
                 - You give advice based on the programming language the student is currently using. He is now using {kernelType}.
                 - Limit your teaching and assisting content to the actions of the current category. And focus on the student's skills that need to be practiced.
                 - If you are gonna provide some code to the student, please include the code in a code block.
-                - Do not describe the student's probability of mastery level of skills and don't describe the current learning status to the student.
                 """
             ).format(
                 data=data,
@@ -553,7 +551,7 @@ def get_csv_from_youtube_video(video_id):
     return csv_list
 
 
-def get_transcript(video_id, end=900):
+def get_transcript(video_id, start=0, end=900):
     """Get the transcript file corresponding to a video from the database."""
     initialze_database()
     conn = sqlite3.connect("cache.db")
@@ -564,7 +562,9 @@ def get_transcript(video_id, end=900):
         return json.loads(row[0])
     else:
         data = YouTubeTranscriptApi.get_transcript(video_id)
-        transcript = [i for i in data if i["start"] + i["duration"] < end]
+        transcript = [
+            i for i in data if i["start"] >= start and i["start"] + i["duration"] < end
+        ]
         for item in transcript:
             del item["duration"]
         c.execute(
@@ -699,7 +699,6 @@ def get_video_segment(video_id, length=600):
     """Segment the given tutorial video into six pre-defined categories."""
     periods = math.ceil(length / 600)
     segments = []
-    combined_segments = []
     # Segment the given video every 10-minute periods
     for i in range(periods):
         if i == periods - 1:
@@ -709,7 +708,7 @@ def get_video_segment(video_id, length=600):
 
         transcript = get_transcript(video_id, start=i * 600, end=end_time)
         completion = openai.ChatCompletion.create(
-            model="gpt-4",
+            model="gpt-4-1106-preview",
             messages=[
                 {
                     "role": "system",
@@ -755,29 +754,20 @@ def get_video_segment(video_id, length=600):
 
         segments.extend(sorted_segment)
 
-    # combine two closet segment if they have the same category
-    i = 0
-    while i < len(segments):
-        # If it's the last item or the current category is different from the next one
+    combined_segments = []
+    # Iterate through each segment in the data
+    for segment in segments:
+        # Check if the current segment can be merged with the last segment in the combined list
         if (
-            i == len(segments) - 1
-            or segments[i]["category"] != segments[i + 1]["category"]
+            combined_segments
+            and combined_segments[-1]["category"] == segment["category"]
+            and combined_segments[-1]["end"] == segment["start"]
         ):
-            combined_segments.append(segments[i])
-            i += 1
+            # If so, extend the end of the last segment in the combined list
+            combined_segments[-1]["end"] = segment["end"]
         else:
-            # Combine the current item with the next one
-            start_time = segments[i]["start"]
-            end_time = segments[i + 1]["end"]
-            combined_segments.append(
-                {
-                    "category": segments[i]["category"],
-                    "start": start_time,
-                    "end": end_time,
-                }
-            )
-            # Skip the next item since it's combined
-            i += 2
+            # Otherwise, add the current segment as a new entry in the combined list
+            combined_segments.append(segment)
     return combined_segments
 
 
@@ -794,7 +784,7 @@ def get_skills(video_id):
         transcript_1 = get_transcript("nx5yhXAQLxw")
         transcript_2 = get_transcript(video_id)
         completion = openai.ChatCompletion.create(
-            model="gpt-4-32k",
+            model="gpt-4-1106-preview",
             messages=[
                 {
                     "role": "system",
@@ -854,7 +844,7 @@ def get_action_outcome(video_id, segment_index):
             category=segment["category"],
         )
         completion = openai.ChatCompletion.create(
-            model="gpt-4",
+            model="gpt-4-1106-preview",
             messages=[
                 {
                     "role": "system",
@@ -957,7 +947,7 @@ def update_bkt_params(video_id, segment_index, cell_content, question, kernelTyp
     # print(kernelType)
 
     completion = openai.ChatCompletion.create(
-        model="gpt-4",
+        model="gpt-4-1106-preview",
         messages=[
             {
                 "role": "system",
@@ -1071,7 +1061,7 @@ def get_skill_by_segment(video_id, segment_index):
         return {"Self-exploration": all_skills}
 
     response = openai.ChatCompletion.create(
-        model="gpt-4",
+        model="gpt-4-1106-preview",
         messages=[
             {
                 "role": "system",
@@ -1080,7 +1070,7 @@ def get_skill_by_segment(video_id, segment_index):
                         Given the transcript of an EDA tutorial video segment, summarize all the !!EDA!! skills used in the segment.
                         If the skill is in the skill set, use the same expression. If the skill is not in the skill set, create a new skill.
                         Only choose the skills corresponding to the category. For example, there should not be "Interpret visualization" or "Make assumptions" in a "Data visualization" segment.
-                        Response in this format: [skill_1, skill_2, ...]
+                        Response in this format: ["skill_1", "skill_2", ...]
                         """,
             },
             {
@@ -1090,29 +1080,33 @@ def get_skill_by_segment(video_id, segment_index):
         ],
     )
     result = response.choices[0].message["content"]
-    result = json.loads(result.replace("'", '"'))
-    # Update the skills_by_category in the database
-    for skill in result:
-        if skill not in skills_by_category["Data visualization"]:
-            skills_by_category["Data visualization"].append(skill)
-    skills_by_category_str = json.dumps(skills_by_category)
-    c.execute(
-        "UPDATE bkt_params_cache SET skills_by_category = ? WHERE user_id = ?",
-        (skills_by_category_str, user_id),
-    )
+    try:
+        result = json.loads(result.replace("'", '"'))
+        # Update the skills_by_category in the database
+        for skill in result:
+            if skill not in skills_by_category["Data visualization"]:
+                skills_by_category["Data visualization"].append(skill)
+        skills_by_category_str = json.dumps(skills_by_category)
+        c.execute(
+            "UPDATE bkt_params_cache SET skills_by_category = ? WHERE user_id = ?",
+            (skills_by_category_str, user_id),
+        )
 
-    # Change to this format: {'Load data directly with a URL': False, ...}
-    result = {item: False for item in result}
-    category_skill = {segment_transcript["category"]: result}
-    category_skill_json = json.dumps(category_skill)
-    # Insert new data if video_id doesn't exist
-    c.execute(
-        "INSERT INTO skills_cache (video_id, segment_index, skills) VALUES (?, ?, ?)",
-        (video_id, segment_index, category_skill_json),
-    )
-    conn.commit()
-    conn.close()
-    return category_skill
+        # Change to this format: {'Load data directly with a URL': False, ...}
+        result = {item: False for item in result}
+        category_skill = {segment_transcript["category"]: result}
+        category_skill_json = json.dumps(category_skill)
+        # Insert new data if video_id doesn't exist
+        c.execute(
+            "INSERT INTO skills_cache (video_id, segment_index, skills) VALUES (?, ?, ?)",
+            (video_id, segment_index, category_skill_json),
+        )
+        conn.commit()
+        conn.close()
+        return category_skill
+    except json.JSONDecodeError as e:
+        print("Error decoding JSON:", e)
+        print("Original result string:", result)
 
 
 def get_prob_mastery_by_category(category, skill_category_list, skill_params_dict):

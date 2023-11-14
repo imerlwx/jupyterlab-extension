@@ -86,7 +86,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
   // const [lastActivityTime, setLastActivityTime] = useState<number>(Date.now());
   const [kernelType, setKernelType] = useState('');
   const [popupStates, setPopupStates] = useState<Record<number, boolean>>({});
-  const [lastSendTime, setLastSendTime] = useState<number>(Date.now());
+  // const [lastSendTime, setLastSendTime] = useState<number>(Date.now());
   const currentSegmentIndexRef = useRef(currentSegmentIndex);
   const videoIdRef = useRef(videoId);
   const canGoOnRef = useRef(canGoOn);
@@ -136,7 +136,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
   const handleSend = useCallback(
     async (question: string) => {
       // setInputValue(''); // Reset inputValue after sending the message
-      setLastSendTime(Date.now()); // Update the last send time
+      // setLastSendTime(Date.now()); // Update the last send time
       question = stripHTMLTags(question);
       const newMessage: IMessage = {
         message: question,
@@ -338,7 +338,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
         {
           message:
             "Nice work on the previous task! Now let's move on to the next part of the video.",
-          videoId: 'nx5yhXAQLxw', // Assuming the videoId remains the same for all segments
+          videoId: videoId, // Assuming the videoId remains the same for all segments
           sentTime: `${nextSegment.start}`, // Segment start time
           direction: 'incoming',
           sender: 'iTutor',
@@ -530,8 +530,8 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                             onReady={handleReady}
                             onEnd={event => {
                               if (
-                                message.category !== 'Introduction' &&
-                                Date.now() - lastSendTime >= 60000
+                                message.category !== 'Introduction'
+                                // && Date.now() - lastSendTime >= 60000
                               ) {
                                 handleSend('');
                               }
