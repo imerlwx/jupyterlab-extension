@@ -1,7 +1,7 @@
 # jlab_ext_example
 
-[![Github Actions Status](https://github.com/imerlwx/jlab-ext-example/workflows/Build/badge.svg)](https://github.com/imerlwx/jlab-ext-example/actions/workflows/build.yml)[![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/imerlwx/jlab-ext-example/main?urlpath=lab)
-A JupyterLab extension with backend and frontend parts.
+[![Github Actions Status](https://github.com/imerlwx/jupyterlab-extension/workflows/Build/badge.svg)](https://github.com/imerlwx/jlab-ext-example/actions/workflows/build.yml)[![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/imerlwx/jlab-ext-example/main?urlpath=lab)
+A JupyterLab extension that can be used to assist learning tutorial videos in programming.
 
 This extension is composed of a Python package named `jlab_ext_example`
 for the server extension and a NPM package named `jlab-ext-example`
@@ -13,19 +13,55 @@ for the frontend extension.
 
 ## Install
 
-To install the extension, execute:
+After git clone this repo, open this directory in any IDE.
 
 ```bash
-pip install jlab_ext_example
+git clone https://github.com/imerlwx/jupyterlab-ext
+cd jupyterlab-ext/
 ```
 
-## Uninstall
+Then set up a new vitual environment using conda and activate it.
+
+```bash
+conda create -n jupyterlab-ext --override-channels --strict-channel-priority -c conda-forge -c nodefaults jupyterlab=4 nodejs=18 git copier=7 jinja2-time
+conda activate jupyterlab-ext
+```
+
+For files in the src/ folder, if you see any Javascript dependencies that are not resolved, run one of the following commands to install them.
+
+```bash
+npm install
+yarn
+```
+
+For files in the jlab_ext_example/ folder, if you see any Python dependencies that are not resolved, run the following command to install them.
+
+```bash
+pip install -r requirements.txt
+```
+
+Then you need to run the following commands one by one to see the extension in JupyterLab.
+
+```bash
+# Install package in development mode
+pip install -e .
+# Link your development version of the extension with JupyterLab
+jupyter labextension develop . --overwrite
+# Server extension must be manually installed in develop mode
+jupyter server extension enable jlab_ext_example
+# Rebuild extension Typescript source after making changes
+jlpm build
+# Run JupyterLab
+jupyter lab
+```
+
+<!-- ## Uninstall
 
 To remove the extension, execute:
 
 ```bash
 pip uninstall jlab_ext_example
-```
+``` -->
 
 ## Troubleshoot
 

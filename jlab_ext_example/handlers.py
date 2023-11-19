@@ -1067,10 +1067,9 @@ def get_skill_by_segment(video_id, segment_index):
                 "role": "system",
                 "content": """
                         You are an expert in Exploratory Data Analysis (EDA).
-                        Given the transcript of an EDA tutorial video segment, summarize all the !!EDA!! skills used in the segment.
-                        If the skill is in the skill set, use the same expression. If the skill is not in the skill set, create a new skill.
+                        Given the transcript of an EDA tutorial video segment, summarize the !!EDA!! skills used in the segment.
                         Only choose the skills corresponding to the category. For example, there should not be "Interpret visualization" or "Make assumptions" in a "Data visualization" segment.
-                        Response in this format: ["skill_1", "skill_2", ...]
+                        Use the same expression in the skill set to answer. Response in this format: ["skill_1", "skill_2", ...]
                         """,
             },
             {
@@ -1086,6 +1085,13 @@ def get_skill_by_segment(video_id, segment_index):
         for skill in result:
             if skill not in skills_by_category["Data visualization"]:
                 skills_by_category["Data visualization"].append(skill)
+            if skill not in bkt_params:
+                bkt_params[skill] = {
+                    "probMastery": 0.1,
+                    "probTransit": 0.1,
+                    "probSlip": 0.1,
+                    "probGuess": 0.1,
+                }
         skills_by_category_str = json.dumps(skills_by_category)
         c.execute(
             "UPDATE bkt_params_cache SET skills_by_category = ? WHERE user_id = ?",

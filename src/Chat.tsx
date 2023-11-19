@@ -6,6 +6,7 @@ import React, {
   useCallback,
   CSSProperties
 } from 'react';
+// import ReactMarkdown from 'react-markdown';
 import { requestAPI } from './handler';
 import '@chatscope/chat-ui-kit-styles/dist/default/styles.min.css';
 import {
@@ -487,6 +488,10 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                       position: 'single'
                     }}
                   />
+                  {/* <Message.CustomContent>
+                      <ReactMarkdown>{message.message}</ReactMarkdown>
+                    </Message.CustomContent>
+                  </Message> */}
                   {message.videoId && (
                     <div
                       style={{

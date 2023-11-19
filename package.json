@@ -71,6 +71,7 @@
         "ag-grid-react": "^30.0.6",
         "axios": "^1.4.0",
         "papaparse": "^5.4.1",
+        "react-markdown": "^9.0.1",
         "react-youtube": "^10.1.0",
         "webpack": "^5.88.2"
     },
