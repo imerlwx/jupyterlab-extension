@@ -91,6 +91,9 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
   const currentSegmentIndexRef = useRef(currentSegmentIndex);
   const videoIdRef = useRef(videoId);
   const canGoOnRef = useRef(canGoOn);
+  const [isReadyToSend, setIsReadyToSend] = useState(false);
+  const [isAlredaySend, setIsAlredaySend] = useState(false);
+  const [needHint, setNeedHint] = useState(false);
 
   const handleReady = (event: YouTubeEvent<number>) => {
     setPlayer(event.target);
@@ -217,7 +220,8 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
             videoId: videoId,
             category: category,
             segmentIndex: currentSegmentIndex,
-            kernelType: kernelType
+            kernelType: kernelType,
+            needHint: needHint
           }),
           method: 'POST'
         })
@@ -300,6 +304,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
               body: JSON.stringify({
                 videoId: videoId,
                 segmentIndex: currentSegmentIndex
+                // notebook: currentNotebookContent
               }),
               method: 'POST'
             })
@@ -330,6 +335,21 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
   const handleGoOn = () => {
     setCanGoOn(false); // Disable the button
     if (currentSegmentIndex < segments.length - 1) {
+      requestAPI<any>('go_on', {
+        body: JSON.stringify({
+          videoId: videoId,
+          segmentIndex: currentSegmentIndex + 1
+          // notebook: currentNotebookContent
+        }),
+        method: 'POST'
+      })
+        .then(response => {
+          // console.log(response);
+          setCanGoOn(response.toLowerCase() === 'yes');
+        })
+        .catch(reason => {
+          console.error(`Error on POST /jlab_ext_example/go_on .\n${reason}`);
+        });
       setCurrentSegmentIndex(currentSegmentIndex + 1);
       const nextSegment = segments[currentSegmentIndex + 1];
 
@@ -387,6 +407,15 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     canGoOnRef.current = canGoOn;
   }, [currentSegmentIndex, videoId, canGoOn]);
 
+  useEffect(() => {
+    // This effect runs when videoId changes
+    if (videoId && isReadyToSend) {
+      handleSend('');
+      setNeedHint(false);
+      setIsReadyToSend(false); // Reset the flag
+    }
+  }, [videoId, isReadyToSend, handleSend]);
+
   function onCellExecuted(
     sender: any,
     args: {
@@ -398,11 +427,14 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
   ) {
     const executedCellContent = args.cell.model.toJSON()['source'];
     const executedCellOutput = args.cell.model.toJSON()['outputs'];
+    const currentNotebookContent = JSON.stringify(
+      props.getCurrentNotebookContent()
+    );
     console.log(executedCellContent);
     console.log(executedCellOutput);
     // console.log(canGoOnRef.current);
     const kernel = props.getCurrentNotebookKernel();
-    // console.log(currentNotebookContent);
+    console.log(currentNotebookContent);
     requestAPI<any>('update_bkt', {
       body: JSON.stringify({
         // notebook: currentNotebookContent,
@@ -418,7 +450,11 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
       .then(response => {
         // console.log(response);
         if (response) {
-          handleSend('');
+          console.log('video id is about:', videoId);
+          // The user has fault or error in their code
+          setNeedHint(true);
+          // Set a flag or state to indicate readiness to send
+          setIsReadyToSend(true);
         }
       })
       .catch(reason => {
@@ -432,12 +468,20 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
         body: JSON.stringify({
           videoId: videoIdRef.current,
           segmentIndex: currentSegmentIndexRef.current
+          // notebook: currentNotebookContent
         }),
         method: 'POST'
       })
         .then(response => {
           // console.log(response);
-          setCanGoOn(response.toLowerCase() === 'yes');
+          if (response.toLowerCase() === 'yes') {
+            setCanGoOn(true);
+          } else {
+            console.log('video id is:', videoId);
+            // Set a flag or state to indicate readiness to send
+            setIsReadyToSend(true);
+          }
+          // setCanGoOn(response.toLowerCase() === 'yes');
           // console.log(canGoOnRef.current);
         })
         .catch(reason => {
@@ -535,9 +579,11 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                             onReady={handleReady}
                             onEnd={event => {
                               if (
-                                message.category !== 'Introduction'
+                                message.category !== 'Introduction' &&
+                                !isAlredaySend
                                 // && Date.now() - lastSendTime >= 60000
                               ) {
+                                setIsAlredaySend(true);
                                 handleSend('');
                               }
                             }}
@@ -560,7 +606,10 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
         <Button
           variant="contained"
           color="primary"
-          onClick={handleGoOn}
+          onClick={() => {
+            setIsAlredaySend(false);
+            handleGoOn();
+          }}
           style={{
             position: 'absolute',
             bottom: 60, // Adjust as needed

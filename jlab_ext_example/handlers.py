@@ -28,8 +28,9 @@ from langchain.chat_models import ChatOpenAI
 from langchain.memory import ConversationSummaryMemory
 
 # YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+# OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 YOUTUBE_API_KEY = "AIzaSyA_72GvOE9OdRKdCIk2-lXC_BTUrGwnz2A"
+OPENAI_API_KEY = "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"
 openai.api_key = OPENAI_API_KEY
 youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
 DATA_URL = "https://api.github.com/repos/rfordatascience/tidytuesday/contents/data/"
@@ -43,7 +44,14 @@ memory = None
 conversation = None
 bkt_params = {}
 user_id = "1"
-# previous_notebook = '[{"cell_type":"code","source":"","output_type":null}]'
+previous_notebook = '[{"cell_type":"code","source":"","output_type":null}]'
+segments_class = {
+    "Load data/packages": "programming",
+    "Initial observation on raw data": "concept",
+    "Data visualization": "programming",
+    "Chat interpretation/insights": "concept",
+    "Data processing": "programming",
+}
 
 
 class DataHandler(APIHandler):
@@ -110,15 +118,34 @@ class ChatHandler(APIHandler):
         category = data["category"]
         segment_index = data["segmentIndex"]
         kernelType = data["kernelType"]
-        skills_data = get_skill_by_segment(video_id, segment_index)
+        need_hint = data["needHint"]
+        skills_data = get_skill_action_by_segment(video_id, segment_index)
         skills_with_false = []
         for skills in skills_data.values():
             for skill, value in skills.items():
                 if not value:
                     skills_with_false.append(skill)
 
-        action_outcome = get_action_outcome(video_id, segment_index)
-        action = action_outcome["action"]
+        conn = sqlite3.connect("cache.db")
+        c = conn.cursor()
+        c.execute(
+            "SELECT actions FROM skills_cache WHERE video_id = ? AND segment_index = ?",
+            (
+                video_id,
+                segment_index,
+            ),
+        )
+        row = c.fetchone()
+        if row:
+            skill_actions = json.loads(row[0])
+        if not skills_with_false:
+            skill_to_practice = ""
+            action = ""
+        skill_to_practice = skills_with_false[0]
+        action = skill_actions[skill_to_practice]
+        segment_class = segments_class.get(category, "programming")
+        # action_outcome = get_action_outcome(video_id, segment_index)
+        # action = action_outcome["action"]
         # outcome = action_outcome["outcome"]
         if llm is None or prompt is None or memory is None or conversation is None:
             VIDEO_ID = video_id
@@ -140,18 +167,42 @@ class ChatHandler(APIHandler):
                 category_params = {
                     skill: bkt_params[skill]["probMastery"] for skill in skills.keys()
                 }
-            instruction = """
-                Please choose the proper one move from the cognitive apprenticeship based on the student's mastery of skills.
-            """
+            # instruction = """
+            #     Please choose the proper one move from the cognitive apprenticeship based on the student's mastery of skills.
+            # """
+            if segment_class == "programming":
+                if need_hint:
+                    move = f"[In 1 sentence, provide feedback to the student's performance]
+                            [In 1~2 sentence, offer advice or hints for improvement or alternative approaches]
+                            "
+                if not need_hint and category_params[skill_to_practice] < 0.5:
+                    move = (
+                        f"[In 1~2 sentence, describe the task that practice the skill {skill_to_practice}]
+                        ```R
+                        code template to fill in or code without comment
+                        ```
+                        [In 1~2 sentence or questions, recommend the student to add comments to the code]
+                        "
+                    )
+                else:
+                    move = (
+                        f"[In 1~2 sentence or questions, prompt the student to do additional tasks to practice the skill {skill_to_practice}]"
+                    )
+            else:
+                if category_params[skill_to_practice] < 0.5:
+                    move = f"[In 1~2 sentence or questions, prompt the student to summarize what they learned or explain in their own words to practice the skill {skill_to_practice}]"
+                else:
+                    move = f"[In 1~2 sentence, offer advice or hints for the student to practice the skill {skill_to_practice}]"
+            # notebook_diff = get_diff_between_notebooks(previous_notebook, notebook)
             input_data = {
                 "notebook": notebook,
                 "question": question,
-                "current_category": category,
-                "category_params": category_params,
-                "skills_to_practice": str(skills_with_false),
                 "tutor's action": action,
-                "additional instruction": instruction,
+                "pedagogy": move,
             }
+            # "current category": category,
+            # "mastery of skill": category_params[skill_to_practice],
+            # "additional instruction": instruction, "skill to practice": skill_to_practice,
             results = conversation({"input": str(input_data)})["text"]
             self.finish(json.dumps(results))
         else:
@@ -165,7 +216,7 @@ class GoOnHandler(APIHandler):
         data = self.get_json_body()
         video_id = data["videoId"]
         segment_index = data["segmentIndex"]
-        segment_skill = get_skill_by_segment(video_id, segment_index)
+        segment_skill = get_skill_action_by_segment(video_id, segment_index)
         # Check if there is any False in the practicing skills
         contains_false = any(
             not value
@@ -175,6 +226,7 @@ class GoOnHandler(APIHandler):
         if contains_false:
             result = "no"  # if there is false, don't go on
         else:
+            # set_prev_notebook(data["notebook"])
             result = "yes"  # if there is no false, go on
         self.finish(json.dumps(result))
 
@@ -188,8 +240,11 @@ class UpdateBKTHandler(APIHandler):
         cell_content = data["cell"]
         cell_output = data["output"]
         print(cell_content)
-        output_type = cell_output[0].get("name", "")
-        print(output_type)
+        if cell_output:
+            output_type = cell_output[0].get("name", "")
+            print(output_type)
+        else:
+            cell_output = ""
         # print(type(cell_output))
         if video_id != "":
             _, models = update_bkt_params(
@@ -262,6 +317,7 @@ def initialze_database():
         video_id TEXT,
         segment_index NUMBER NOT NULL,
         skills TEXT NOT NULL,
+        actions TEXT NOT NULL,
         PRIMARY KEY (video_id, segment_index)
     );"""
     )
@@ -282,7 +338,6 @@ def initialze_database():
         PRIMARY KEY (video_id, segment_index)
     );"""
     )
-    video_id = "nx5yhXAQLxw"
     # all_skills = [
     #     "Load data directly with a URL",
     #     "Load necessary packages for EDA",
@@ -299,8 +354,8 @@ def initialze_database():
     # ]
     skills_by_category = {
         "Load data/packages": [
-            "Load data directly with a URL",
             "Load necessary packages for EDA",
+            "Load data directly with a URL",
         ],
         "Initial observation on raw data": [
             "View the first few rows of the data set",
@@ -327,6 +382,7 @@ def initialze_database():
             if skill not in all_skills:
                 all_skills.append(skill)
 
+    video_id = "nx5yhXAQLxw"
     segments_set = [
         {"category": "Introduction", "start": 1, "end": 113},
         {"category": "Load data/packages", "start": 113, "end": 212},
@@ -339,6 +395,29 @@ def initialze_database():
         {"category": "Chart interpretation/insights", "start": 692, "end": 740},
         {"category": "Data processing", "start": 740, "end": 839},
         {"category": "Data visualization", "start": 839, "end": 900},
+    ]
+    segments_json = json.dumps(segments_set)
+    c.execute("SELECT * FROM segments_cache WHERE video_id = ?", (video_id,))
+    if c.fetchone() is None:
+        # Insert new data if video_id doesn't exist
+        c.execute(
+            "INSERT INTO segments_cache (video_id, segments) VALUES (?, ?)",
+            (video_id, segments_json),
+        )
+
+    video_id = "Kd9BNI6QMmQ"
+    segments_set = [
+        {"category": "Introduction", "start": 1, "end": 102},
+        {"category": "Load data/packages", "start": 102, "end": 137},
+        {"category": "Initial observation on raw data", "start": 137, "end": 220},
+        {"category": "Data processing", "start": 220, "end": 568},
+        {"category": "Data visualization", "start": 568, "end": 580},
+        {"category": "Chart interpretation/insights", "start": 580, "end": 596},
+        {"category": "Data visualization", "start": 596, "end": 655},
+        {"category": "Chart interpretation/insights", "start": 655, "end": 680},
+        {"category": "Data processing", "start": 680, "end": 715},
+        {"category": "Chart interpretation/insights", "start": 715, "end": 740},
+        {"category": "Data visualization", "start": 740, "end": 900},
     ]
     segments_json = json.dumps(segments_set)
     c.execute("SELECT * FROM segments_cache WHERE video_id = ?", (video_id,))
@@ -371,46 +450,28 @@ def initialize_chat_server(data, kernelType):
     elif kernelType == "python3":
         kernelType = "Python"
 
+    video_type = "Exploratory Data Analysis (EDA)"
     # Prompt
     prompt = ChatPromptTemplate(
         messages=[
             SystemMessagePromptTemplate.from_template(
                 """
-                As an expert data science mentor focused on real-time guidance in Exploratory Data Analysis (EDA) on Jupyter notebooks during David Robinson's Tidy Tuesday tutorials,
-                your role is to use Cognitive Apprenticeship to offer feedback, corrections, and suggestions based on the student's learning progress.
-                You have access to the dataset information ({data}) used in the video. The current video segment category (current_category) and its author David's action (tutor's action) and the skills that the student needs to practice (skills_to_practice) in the current segment will also be given.
-                The student's performance (notebook and question) and mastery probability of each skill will be given. The mastery probability is a number between 0 and 1, indicating the probability that the student has mastered the skill.
+                You are an expert in Data Science, specializing in {video_type}.
+                Your task is to assist a student who is learning {video_type} through David Robinson's Tidy Tuesday tutorial series.
+                Utilizing the Cognitive Apprenticeship approach, you will provide feedback, corrections, and suggestions that complement the student's learning from the video.
 
-                The Cognitive Apprenticeship has the following six moves: modeling, coaching, scaffolding, articulation, reflection, and exploration. During different video segments, the moves you choose will differ.
-                You need to adapt your mentorship style based on Bayesian Knowledge Tracing. Here are some guidelines for your interaction with the student in different scenarios:
-                1. current_category: "Load data/packages"
-                - (Scaffolding) When the probability of mastery is low (close to 0): Provide a step-by-step guide or share a template script that includes basic code for loading various types of data and the most commonly used packages in EDA.
-                - (Coaching) When the probability of mastery is high (close to 1): Guide students through the process of loading different types of data and answer specific questions about error messages or issues encountered.
-                2. current_category: "Initial observation on raw data"
-                - (Scaffolding) When the probability of mastery is low (close to 0): Provide a list of initial checks or observations to make when first looking at raw data, such as checking for missing values or understanding data types. Then ask if he finds any interesting relationships and has any visualization intent.
-                - (Coaching) When the probability of mastery is high (close to 1): Assist the student in interpreting the raw data, pointing out nuances like anomalies or patterns that might not be immediately obvious. Provide hints or tips on how to quickly get a sense of what the data is about and its quality.
-                - (Articulation) Have the student articulate their initial observations and hypotheses about the data. Encourage them to discuss any surprising or confusing aspects of the data they noticed.
-                - Only let the student do data observation. You can encourage him to note down the ideas and explore them later. Don't let the student to do visualization in this step.
-                3. current_category: "Data processing"
-                - (Scaffolding) When the probability of mastery is low (close to 0): Create a workflow diagram or flowchart illustrating common data processing steps such as cleaning, transforming, and normalizing data. Offer a template or example script showing standard data processing techniques.
-                - (Coaching) When the probability of mastery is high (close to 1): Provide feedback on their data processing approach, suggesting improvements or alternatives. Or guide students through more complex data processing tasks, like handling missing data, outlier detection, and feature engineering.
-                - (Articulation) Encourage them to predict the impact of these steps on their subsequent analysis. Ask the student to explain the rationale behind each data processing step they perform.
-                4. current_category: "Data visualization"
-                - (Scaffolding) When the probability of mastery is low (close to 0): Provide templates or code snippets for creating common plots and charts.
-                - (Coaching) When the probability of mastery is high (close to 1): Offer guidance on selecting the most appropriate type of visualization for different data sets or analysis goals. Help troubleshoot issues with visualization tools or libraries.
-                - (Articulation) Ask the student questions about the choices made by David in the video to encourage critical thinking, such as why he makes a box plot.
-                5. current_category: "Chart interpretation/insights"
-                - (Scaffolding) When the probability of mastery is low (close to 0): Give examples of insightful chart interpretations in various contexts. Provide a guide for systematically analyzing and drawing insights from visualizations.
-                - (Coaching) When the probability of mastery is high (close to 1): Assist in interpreting complex charts and extracting meaningful insights. Challenge students to delve deeper into their analysis, asking probing questions.
-                - (Articulation) Prompt the student to articulate the insights they have gained from their visualizations. Encourage them to explain how these insights could inform decision-making or further analysis.
+                Inputs for Your Reference:
+                - tutor's action: Actions performed by the video author in the current segment. You should provide counseling based on tutor's action rather than mistaking his action for that of the student.
+                - pedagogy: The specific cognitive apprenticeship move(s) you need to apply at this stage.
+                - notebook and question: The student's current performance, encompassing both the code in the notebook and the query sent to you.
+                - dataset information: You have access to details about the dataset ({data}) used in the video.
+                - programming language: Tailor your advice to the programming language the student is using, currently {kernelType}.
 
-                Notes:
-                - You should interact in the first person as a mentor heuristically and briefly.
-                - You give advice based on the programming language the student is currently using. He is now using {kernelType}.
-                - Limit your teaching and assisting content to the actions of the current category. And focus on the student's skills that need to be practiced.
-                - If you are gonna provide some code to the student, please include the code in a code block.
+                Notes for Response:
+                - Communicate in the first person as a teaching assistant. Your responses should be as brief as possible and contain only the necessary information.
                 """
             ).format(
+                video_type=video_type,
                 data=data,
                 kernelType=kernelType,
             ),
@@ -910,6 +971,12 @@ def update_bkt_param(model, is_correct):
     )
 
 
+def set_prev_notebook(notebook):
+    """Change the previous notebook."""
+    global previous_notebook
+    previous_notebook = notebook
+
+
 def get_diff_between_notebooks(previous_notebook, current_notebook):
     """Returns the difference between the previous and current notebooks."""
     if previous_notebook == current_notebook:
@@ -937,7 +1004,7 @@ def update_bkt_params(video_id, segment_index, cell_content, question, kernelTyp
     # Get skills for the current segment
     # segment_skill is in this format: {"Load data/packages":
     # {'Load data directly with a URL': False, 'Load necessary packages for EDA': False}}
-    segment_skill = get_skill_by_segment(video_id, segment_index)
+    segment_skill = get_skill_action_by_segment(video_id, segment_index)
     category = list(segment_skill.keys())[0]
     skills = list(list(segment_skill.values())[0].keys())
     if kernelType == "ir":
@@ -1113,6 +1180,101 @@ def get_skill_by_segment(video_id, segment_index):
     except json.JSONDecodeError as e:
         print("Error decoding JSON:", e)
         print("Original result string:", result)
+
+
+def get_skill_action_by_segment(video_id, segment_index):
+    """Get the skills corresponding to the given segment."""
+    all_segment = get_segments(video_id)
+    conn = sqlite3.connect("cache.db")
+    c = conn.cursor()
+    segment = all_segment[segment_index]
+    segment_transcript = get_segment_transcript(
+        video_id,
+        start=segment["start"],
+        end=segment["end"],
+        category=segment["category"],
+    )
+    c.execute(
+        "SELECT skills FROM skills_cache WHERE video_id = ? AND segment_index = ?",
+        (
+            video_id,
+            segment_index,
+        ),
+    )
+    row = c.fetchone()
+    if row:
+        print(row[0])
+        return json.loads(row[0])
+
+    c.execute(
+        "SELECT skills_by_category FROM bkt_params_cache WHERE user_id = ?", (user_id,)
+    )
+    skills_by_category = json.loads(c.fetchone()[0])
+    all_skills = []
+    for skills in skills_by_category.values():
+        for skill in skills:
+            if skill not in all_skills:
+                all_skills.append(skill)
+    if segment_index >= len(all_segment):
+        return {"Self-exploration": all_skills}
+
+    response = openai.ChatCompletion.create(
+        model="gpt-4-1106-preview",
+        messages=[
+            {
+                "role": "system",
+                "content": """
+                        You are an expert in Exploratory Data Analysis (EDA).
+                        Given the transcript of an EDA tutorial video segment, summarize the !!EDA!! skills used by the video author in the segment with a detailed and accurate description of the action taken by the video author for each skill.
+                        Only choose the skills corresponding to the category. For example, there should not be "Interpret visualization" or "Make assumptions" in a "Data visualization" segment.
+                        Use the same expression in the skill set to answer. Response in this format: {"skill_1": "action_1", "skill_2": "action_2", ...}
+                        Note: the skills' order in the result should follow the order in which skills appear in the video.
+                        """,
+            },
+            {
+                "role": "user",
+                "content": f"transcript: {segment_transcript['transcript']}, category: {segment['category']}, skill set: {skills_by_category[segment['category']]}",
+            },
+        ],
+    )
+    skill_action = response.choices[0].message["content"]
+    try:
+        skill_action = json.loads(skill_action.replace("'", ""))
+        # Update the skills_by_category in the database
+        # skills = [item["skill"] for item in skill_action]
+        skills = list(skill_action.keys())
+        for skill in skills:
+            if skill not in skills_by_category["Data visualization"]:
+                skills_by_category["Data visualization"].append(skill)
+            if skill not in bkt_params:
+                bkt_params[skill] = {
+                    "probMastery": 0.1,
+                    "probTransit": 0.1,
+                    "probSlip": 0.1,
+                    "probGuess": 0.1,
+                }
+        skills_by_category_str = json.dumps(skills_by_category)
+        c.execute(
+            "UPDATE bkt_params_cache SET skills_by_category = ? WHERE user_id = ?",
+            (skills_by_category_str, user_id),
+        )
+
+        # Change to this format: {'Load data directly with a URL': False, ...}
+        result = {item: False for item in skills}
+        category_skill = {segment_transcript["category"]: result}
+        category_skill_json = json.dumps(category_skill)
+        skill_action_json = json.dumps(skill_action)
+        # Insert new data if video_id doesn't exist
+        c.execute(
+            "INSERT INTO skills_cache (video_id, segment_index, skills, actions) VALUES (?, ?, ?, ?)",
+            (video_id, segment_index, category_skill_json, skill_action_json),
+        )
+        conn.commit()
+        conn.close()
+        return category_skill
+    except json.JSONDecodeError as e:
+        print("Error decoding JSON:", e)
+        print("Original result string:", skill_action)
 
 
 def get_prob_mastery_by_category(category, skill_category_list, skill_params_dict):
