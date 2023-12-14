@@ -209,6 +209,56 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
           category = 'Conclusion';
         }
 
+        // Update bkt when student has typed something in the chatbox
+        if (question !== '') {
+          requestAPI<any>('update_bkt', {
+            body: JSON.stringify({
+              // notebook: currentNotebookContent,
+              cell: '',
+              output: '',
+              question: question,
+              videoId: videoId,
+              segmentIndex: currentSegmentIndex,
+              kernelType: kernelType
+            }),
+            method: 'POST'
+          })
+            .then(response => {
+              console.log('Question bkt updated');
+            })
+            .catch(reason => {
+              console.error(
+                `Error on POST /jlab_ext_example/update_bkt .\n${reason}`
+              );
+            });
+        }
+
+        if (category === 'Self-exploration') {
+          setCanGoOn(false);
+        } else if (category === 'Introduction') {
+          setCanGoOn(true);
+        } else {
+          if (canGoOn === false) {
+            requestAPI<any>('go_on', {
+              body: JSON.stringify({
+                videoId: videoId,
+                segmentIndex: currentSegmentIndex
+                // notebook: currentNotebookContent
+              }),
+              method: 'POST'
+            })
+              .then(response => {
+                // console.log(response);
+                setCanGoOn(response.toLowerCase() === 'yes');
+              })
+              .catch(reason => {
+                console.error(
+                  `Error on POST /jlab_ext_example/go_on .\n${reason}`
+                );
+              });
+          }
+        }
+
         // Define a regex to extract code blocks enclosed in triple backticks
         // This will also capture the language type if present
         const codeRegex = /```(\w+)?\s*([\s\S]*?)```/gs;
@@ -293,32 +343,6 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
           .catch(reason => {
             console.error(`Error on POST /jlab_ext_example/chats .\n${reason}`);
           });
-
-        if (category === 'Self-exploration') {
-          setCanGoOn(false);
-        } else if (category === 'Introduction') {
-          setCanGoOn(true);
-        } else {
-          if (canGoOn === false) {
-            requestAPI<any>('go_on', {
-              body: JSON.stringify({
-                videoId: videoId,
-                segmentIndex: currentSegmentIndex
-                // notebook: currentNotebookContent
-              }),
-              method: 'POST'
-            })
-              .then(response => {
-                // console.log(response);
-                setCanGoOn(response.toLowerCase() === 'yes');
-              })
-              .catch(reason => {
-                console.error(
-                  `Error on POST /jlab_ext_example/go_on .\n${reason}`
-                );
-              });
-          }
-        }
       }
     },
     [

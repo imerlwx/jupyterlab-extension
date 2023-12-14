@@ -126,6 +126,11 @@ class ChatHandler(APIHandler):
                 if not value:
                     skills_with_false.append(skill)
 
+        if kernelType == "ir":
+            kernelType = "R"
+        elif kernelType == "python3":
+            kernelType = "Python"
+
         conn = sqlite3.connect("cache.db")
         c = conn.cursor()
         c.execute(
@@ -138,12 +143,9 @@ class ChatHandler(APIHandler):
         row = c.fetchone()
         if row:
             skill_actions = json.loads(row[0])
-        if not skills_with_false:
-            skill_to_practice = ""
-            action = ""
-        skill_to_practice = skills_with_false[0]
-        action = skill_actions[skill_to_practice]
-        segment_class = segments_class.get(category, "programming")
+        segment_class = segments_class.get(
+            category, "programming"
+        )  # get the segment class, default is programming
         # action_outcome = get_action_outcome(video_id, segment_index)
         # action = action_outcome["action"]
         # outcome = action_outcome["outcome"]
@@ -154,9 +156,9 @@ class ChatHandler(APIHandler):
             initialize_chat_server(data, kernelType)
 
         if notebook:
-            bkt_params, _ = update_bkt_params(
-                video_id, segment_index, "", question, kernelType
-            )
+            # bkt_params, _ = update_bkt_params(
+            #     video_id, segment_index, "", question, kernelType
+            # )
             if category == "Self-exploration":
                 # Extract all the probMastery values
                 category_params = {
@@ -167,32 +169,40 @@ class ChatHandler(APIHandler):
                 category_params = {
                     skill: bkt_params[skill]["probMastery"] for skill in skills.keys()
                 }
-            # instruction = """
-            #     Please choose the proper one move from the cognitive apprenticeship based on the student's mastery of skills.
-            # """
-            if segment_class == "programming":
-                if need_hint:
-                    move = f"[In 1 sentence, provide feedback to the student's performance]
-                            [In 1~2 sentence, offer advice or hints for improvement or alternative approaches]
-                            "
-                if not need_hint and category_params[skill_to_practice] < 0.5:
-                    move = (
-                        f"[In 1~2 sentence, describe the task that practice the skill {skill_to_practice}]
-                        ```R
-                        code template to fill in or code without comment
-                        ```
-                        [In 1~2 sentence or questions, recommend the student to add comments to the code]
-                        "
-                    )
+            if skills_with_false:
+                skill_to_practice = skills_with_false[0]
+                action = skill_actions[skill_to_practice]
+                if segment_class == "programming":
+                    if need_hint:
+                        move = """[In one sentence, provide feedback to the student's performance]
+                                [In one sentence, offer advice or hints for improvement or alternative approaches]
+                                """
+                    if not need_hint and category_params[skill_to_practice] < 0.5:
+                        move = f"""[Use a natural conversational style to describe the task that practice the skill "{skill_to_practice}" in one sentence]
+                                ```{kernelType}
+                                code
+                                ```
+                                [Use a heuristic, in-depth question to help the student understand the code]
+                                """
+                    else:
+                        move = f"""[Use a natural conversational style to describe the task that practice the skill "{skill_to_practice}" in one sentence]
+                                [Use a heuristic, in-depth question to prompt the student to do additional tasks that is not taught in the video to practice the skill '{skill_to_practice}']
+                                """
                 else:
-                    move = (
-                        f"[In 1~2 sentence or questions, prompt the student to do additional tasks to practice the skill {skill_to_practice}]"
-                    )
-            else:
-                if category_params[skill_to_practice] < 0.5:
-                    move = f"[In 1~2 sentence or questions, prompt the student to summarize what they learned or explain in their own words to practice the skill {skill_to_practice}]"
-                else:
-                    move = f"[In 1~2 sentence, offer advice or hints for the student to practice the skill {skill_to_practice}]"
+                    if category_params[skill_to_practice] < 0.5:
+                        move = f"""[Use only one sentence to demonstrate how to practice the skill '{skill_to_practice}' in a natural conversational style]
+                                [Use a heuristic, in-depth question to practice the skill '{skill_to_practice}']
+                                """
+                    else:
+                        move = f"""[Use a natural conversational style to describe the task that practice the skill "{skill_to_practice}" in 1 sentence]
+                                [Offer advice or hints for the student to practice the skill '{skill_to_practice}' in 1 sentence]
+                                """
+            else:  # The student has practiced all the skills in the current video segment
+                action = ""
+                move = """
+                    [In one sentence, provide feedback to the student's performance or answer the student's question]
+                    [In one sentence, encourage the student to proceed to the next video segment]
+                    """
             # notebook_diff = get_diff_between_notebooks(previous_notebook, notebook)
             input_data = {
                 "notebook": notebook,
@@ -239,12 +249,17 @@ class UpdateBKTHandler(APIHandler):
         video_id = data["videoId"]
         cell_content = data["cell"]
         cell_output = data["output"]
-        print(cell_content)
-        if cell_output:
+        # print(cell_content)
+        if cell_output:  # the student executed the cell and the cell has output
             output_type = cell_output[0].get("name", "")
-            print(output_type)
-        else:
-            cell_output = ""
+            # print(output_type)
+            # Check if "error" exists in any "output_type" field
+            if output_type == "error":
+                contains_error = True
+            else:
+                contains_error = False
+        else:  # the cell does not have output or the student sends a message
+            contains_error = False
         # print(type(cell_output))
         if video_id != "":
             _, models = update_bkt_params(
@@ -257,11 +272,6 @@ class UpdateBKTHandler(APIHandler):
             # previous_notebook = data["notebook"]
             # Parse the JSON string
             # notebook_cells = json.loads(data["notebook"])
-            # Check if "error" exists in any "output_type" field
-            if output_type == "error":
-                contains_error = True
-            else:
-                contains_error = False
             # contains_error = any(
             #     cell.get("output_type") == "error" for cell in notebook_cells
             # )
@@ -359,7 +369,7 @@ def initialze_database():
         ],
         "Initial observation on raw data": [
             "View the first few rows of the data set",
-            "Make assumptions based on data",
+            "Make assumptions about the data",
             "Generate intent for the next visualization",
         ],
         "Data visualization": [
@@ -457,18 +467,17 @@ def initialize_chat_server(data, kernelType):
             SystemMessagePromptTemplate.from_template(
                 """
                 You are an expert in Data Science, specializing in {video_type}.
-                Your task is to assist a student who is learning {video_type} through David Robinson's Tidy Tuesday tutorial series.
-                Utilizing the Cognitive Apprenticeship approach, you will provide feedback, corrections, and suggestions that complement the student's learning from the video.
+                Your task is to use the Cognitive Apprenticeship approach assist a student who is learning {video_type} through David Robinson's Tidy Tuesday tutorial series.
 
                 Inputs for Your Reference:
-                - tutor's action: Actions performed by the video author in the current segment. You should provide counseling based on tutor's action rather than mistaking his action for that of the student.
-                - pedagogy: The specific cognitive apprenticeship move(s) you need to apply at this stage.
+                - tutor's action: Actions performed by the video author in the current segment.
+                - pedagogy: You must strictly follow this specific cognitive apprenticeship move to guide students.
                 - notebook and question: The student's current performance, encompassing both the code in the notebook and the query sent to you.
-                - dataset information: You have access to details about the dataset ({data}) used in the video.
                 - programming language: Tailor your advice to the programming language the student is using, currently {kernelType}.
+                - dataset information: You have access to details about the dataset used in the video: {data}.
 
                 Notes for Response:
-                - Communicate in the first person as a teaching assistant. Your responses should be as brief as possible and contain only the necessary information.
+                - Communicate in the first person as a teaching assistant.
                 """
             ).format(
                 video_type=video_type,
@@ -1005,6 +1014,13 @@ def update_bkt_params(video_id, segment_index, cell_content, question, kernelTyp
     # segment_skill is in this format: {"Load data/packages":
     # {'Load data directly with a URL': False, 'Load necessary packages for EDA': False}}
     segment_skill = get_skill_action_by_segment(video_id, segment_index)
+    skills_with_false = []
+    for skills in segment_skill.values():
+        for skill, value in skills.items():
+            if not value:
+                skills_with_false.append(skill)
+    if not skills_with_false:
+        return bkt_params, []
     category = list(segment_skill.keys())[0]
     skills = list(list(segment_skill.values())[0].keys())
     if kernelType == "ir":
@@ -1013,51 +1029,35 @@ def update_bkt_params(video_id, segment_index, cell_content, question, kernelTyp
         kernelType = "Python"
     # print(kernelType)
 
+    if question == "":
+        performance = cell_content
+        # print(performance)
+    else:
+        performance = question
+        # print(performance)
+
     completion = openai.ChatCompletion.create(
         model="gpt-4-1106-preview",
         messages=[
             {
                 "role": "system",
-                "content": """"You are an expert in Exploratory Data Analysis (EDA) and good at assisting students to learn EDA.
-                Your role is to find out the skills in the given skill set {} that the student is practicing by coding or conversation and whether the student practices the skills correctly.
-                Response with true when the student's code or message demonstrated this skill. Response with false when the code output has errors or the answer is incorrect. 
-                Note if the skill is not being practiced, don't include it with 'false'. If no skill is being practiced, return an empty list. 
-                The student is using {} language in the computational notebook. Output in this format:
-                [
-                    {{skill_name_1: true or false}},
-                    {{skill_name_2: true or false}},
-                    ...
-                ]
-            """.format(
-                    kernelType, skills
-                ),
+                "content": f"""You are an expert in Exploratory Data Analysis (EDA) and good at assisting students to learn EDA.
+                            Your role is to evaluate whether the student has practiced the skill '{skills_with_false}' based on his performance in code or message.
+                            Response with true when the student's code or message demonstrated this skill. Response with false when the code output has errors or the answer is incorrect. 
+                            The student is using {kernelType} language in the computational notebook. Output in this format:
+                            [
+                                {{"{skills_with_false[0]}": true or false}}
+                            ]
+                        """,
             },
             {
                 "role": "user",
-                "content": """
-            cell_content: url <- "https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2018/2018-10-16/recent-grads.csv"
-                          data <- read_csv(url),
-            message: ''
-            """,
-            },
-            {
-                "role": "assistant",
-                "content": """
-                [
-                    {"Load data directly with a URL": true}
-                ]
-            """,
-            },
-            {
-                "role": "user",
-                "content": """
-            cell_content: {},
-            message: {}
-            """.format(
-                    cell_content, question
-                ),
+                "content": f"""
+                            performance: {performance}
+                        """,
             },
         ],
+        temperature=0.3,
     )
     print(completion.choices[0].message["content"])
     try:
@@ -1244,8 +1244,8 @@ def get_skill_action_by_segment(video_id, segment_index):
         # skills = [item["skill"] for item in skill_action]
         skills = list(skill_action.keys())
         for skill in skills:
-            if skill not in skills_by_category["Data visualization"]:
-                skills_by_category["Data visualization"].append(skill)
+            if skill not in skills_by_category[segment["category"]]:
+                skills_by_category[segment["category"]].append(skill)
             if skill not in bkt_params:
                 bkt_params[skill] = {
                     "probMastery": 0.1,
