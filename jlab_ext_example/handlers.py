@@ -49,9 +49,10 @@ segments_class = {
     "Load data/packages": "programming",
     "Initial observation on raw data": "concept",
     "Data visualization": "programming",
-    "Chat interpretation/insights": "concept",
+    "Chart interpretation/insights": "concept",
     "Data processing": "programming",
 }
+last_practicing_skill = None
 
 
 class DataHandler(APIHandler):
@@ -100,7 +101,6 @@ class SegmentHandler(APIHandler):
     def post(self):
         data = self.get_json_body()
         video_id = data["videoId"]
-        # print(video_id)
         segments = get_segments(video_id)
         self.finish(json.dumps(segments))
 
@@ -108,7 +108,7 @@ class SegmentHandler(APIHandler):
 class ChatHandler(APIHandler):
     @tornado.web.authenticated
     def post(self):
-        global llm, prompt, memory, conversation, VIDEO_ID, bkt_params
+        global llm, prompt, memory, conversation, VIDEO_ID, bkt_params, last_practicing_skill
 
         # Existing video_id logic
         data = self.get_json_body()
@@ -119,9 +119,9 @@ class ChatHandler(APIHandler):
         segment_index = data["segmentIndex"]
         kernelType = data["kernelType"]
         need_hint = data["needHint"]
-        skills_data = get_skill_action_by_segment(video_id, segment_index)
+        segment_skill = get_skill_action_by_segment(video_id, segment_index)
         skills_with_false = []
-        for skills in skills_data.values():
+        for skills in segment_skill.values():
             for skill, value in skills.items():
                 if not value:
                     skills_with_false.append(skill)
@@ -165,43 +165,66 @@ class ChatHandler(APIHandler):
                     skill: params["probMastery"] for skill, params in bkt_params.items()
                 }
             else:
-                skills = list(skills_data.values())[0]
+                skills = list(segment_skill.values())[0]
                 category_params = {
                     skill: bkt_params[skill]["probMastery"] for skill in skills.keys()
                 }
             if skills_with_false:
                 skill_to_practice = skills_with_false[0]
                 action = skill_actions[skill_to_practice]
-                if segment_class == "programming":
-                    if need_hint:
-                        move = """[In one sentence, provide feedback to the student's performance]
-                                [In one sentence, offer advice or hints for improvement or alternative approaches]
-                                """
-                    if not need_hint and category_params[skill_to_practice] < 0.5:
-                        move = f"""[Use a natural conversational style to describe the task that practice the skill "{skill_to_practice}" in one sentence]
-                                ```{kernelType}
-                                code
-                                ```
-                                [Use a heuristic, in-depth question to help the student understand the code]
-                                """
-                    else:
-                        move = f"""[Use a natural conversational style to describe the task that practice the skill "{skill_to_practice}" in one sentence]
-                                [Use a heuristic, in-depth question to prompt the student to do additional tasks that is not taught in the video to practice the skill '{skill_to_practice}']
-                                """
+                # If the student is still practicing the last skill (failure or irrelevant pracetice), then he needs hint or answer
+                if skill_to_practice != last_practicing_skill:
+                    last_practicing_skill = skill_to_practice
+                    practice_time = 0
                 else:
-                    if category_params[skill_to_practice] < 0.5:
-                        move = f"""[Use only one sentence to demonstrate how to practice the skill '{skill_to_practice}' in a natural conversational style]
-                                [Use a heuristic, in-depth question to practice the skill '{skill_to_practice}']
-                                """
+                    need_hint = True
+                    # If the student has tried this practice for three times, then jump to the next skill
+                    practice_time += 1
+                    if practice_time >= 2:
+                        model = [{skills_with_false: True}]
+                        for key, value in model.items():
+                            segment_skill[category][key] = value
+                        conn = sqlite3.connect("cache.db")
+                        c = conn.cursor()
+                        category_skill_json = json.dumps(segment_skill)
+                        c.execute(
+                            "UPDATE skills_cache SET skills = ? WHERE video_id = ? AND segment_index = ?",
+                            (category_skill_json, video_id, segment_index),
+                        )
+                        conn.commit()
+                        conn.close()
+                print(need_hint)
+                if need_hint:
+                    move = f"""[Use only one sentence in a natural conversational style to provide feedback to the student's performance or answer the student's question if the student has a question]
+                            [Use one heuristic and in-depth question to provide advice or hints based on context to help the student successfully practice the skill '{skill_to_practice}' as soon as possible]
+                            """
+                else:
+                    if segment_class == "programming":
+                        if category_params[skill_to_practice] < 0.5:
+                            move = f"""[Use only one sentence in a natural conversational style to describe the task that practice the skill "{skill_to_practice}"]
+                                    ```{kernelType}
+                                    code
+                                    ```
+                                    [Use one heuristic and in-depth question to help the student understand the code]
+                                    """
+                        else:
+                            move = f"""[Use only one sentence in a natural conversational style to describe the task that practice the skill "{skill_to_practice}"]
+                                    [Use one heuristic and in-depth question to prompt the student to do additional tasks that is not taught in the video to practice the skill '{skill_to_practice}']
+                                    """
                     else:
-                        move = f"""[Use a natural conversational style to describe the task that practice the skill "{skill_to_practice}" in 1 sentence]
-                                [Offer advice or hints for the student to practice the skill '{skill_to_practice}' in 1 sentence]
-                                """
+                        if category_params[skill_to_practice] < 0.5:
+                            move = f"""[Use only one sentence to demonstrate how to practice the skill '{skill_to_practice}' in a natural conversational style]
+                                    [Use one heuristic and in-depth question to practice the skill '{skill_to_practice}']
+                                    """
+                        else:
+                            move = f"""[Use only one sentence in a natural conversational style to describe the task that practice the skill "{skill_to_practice}"]
+                                    [Use only one sentence to offer advice or hints for the student to practice the skill '{skill_to_practice}']
+                                    """
             else:  # The student has practiced all the skills in the current video segment
                 action = ""
                 move = """
-                    [In one sentence, provide feedback to the student's performance or answer the student's question]
-                    [In one sentence, encourage the student to proceed to the next video segment]
+                    [Use only one sentence to provide feedback to the student's performance or answer the student's question]
+                    [Use only one sentence to encourage the student to proceed to the next video segment]
                     """
             # notebook_diff = get_diff_between_notebooks(previous_notebook, notebook)
             input_data = {
@@ -260,7 +283,6 @@ class UpdateBKTHandler(APIHandler):
                 contains_error = False
         else:  # the cell does not have output or the student sends a message
             contains_error = False
-        # print(type(cell_output))
         if video_id != "":
             _, models = update_bkt_params(
                 video_id,
@@ -368,7 +390,7 @@ def initialze_database():
             "Load data directly with a URL",
         ],
         "Initial observation on raw data": [
-            "View the first few rows of the data set",
+            "View the data set",
             "Make assumptions about the data",
             "Generate intent for the next visualization",
         ],
@@ -380,9 +402,9 @@ def initialze_database():
             "Reorder data",
         ],
         "Chart interpretation/insights": [
-            "Interpret visualizations",
+            "Find outliers in the plot",
+            "Interpret the visualization",
             "Generate intent for the next visualization",
-            "Identify outliers in the data",
         ],
         "Data processing": ["Reorder data", "Group and summarize data"],
     }
@@ -471,13 +493,15 @@ def initialize_chat_server(data, kernelType):
 
                 Inputs for Your Reference:
                 - tutor's action: Actions performed by the video author in the current segment.
-                - pedagogy: You must strictly follow this specific cognitive apprenticeship move to guide students.
+                - pedagogy: The specific cognitive apprenticeship move that you need to follow to guide students.
                 - notebook and question: The student's current performance, encompassing both the code in the notebook and the query sent to you.
                 - programming language: Tailor your advice to the programming language the student is using, currently {kernelType}.
                 - dataset information: You have access to details about the dataset used in the video: {data}.
 
                 Notes for Response:
                 - Communicate in the first person as a teaching assistant.
+                - You must strictly follow the pedagogy to provide guidance.
+                - The actions of the video author should not be considered as the actions of the student.
                 """
             ).format(
                 video_type=video_type,
@@ -1027,14 +1051,9 @@ def update_bkt_params(video_id, segment_index, cell_content, question, kernelTyp
         kernelType = "R"
     elif kernelType == "python3":
         kernelType = "Python"
-    # print(kernelType)
 
-    if question == "":
-        performance = cell_content
-        # print(performance)
-    else:
-        performance = question
-        # print(performance)
+    # Check if the student types anything in the chat
+    performance = cell_content if question == "" else question
 
     completion = openai.ChatCompletion.create(
         model="gpt-4-1106-preview",
@@ -1042,9 +1061,11 @@ def update_bkt_params(video_id, segment_index, cell_content, question, kernelTyp
             {
                 "role": "system",
                 "content": f"""You are an expert in Exploratory Data Analysis (EDA) and good at assisting students to learn EDA.
-                            Your role is to evaluate whether the student has practiced the skill '{skills_with_false}' based on his performance in code or message.
-                            Response with true when the student's code or message demonstrated this skill. Response with false when the code output has errors or the answer is incorrect. 
-                            The student is using {kernelType} language in the computational notebook. Output in this format:
+                            Your role is to evaluate whether the student has practiced the skill '{skills_with_false}'.
+                            Response with true when the student's performance has practiced this skill.
+                            Response with false when there is an error in the code or the answer is incorrect.
+                            The student is using {kernelType} language in the computational notebook.
+                            Only output in this format:
                             [
                                 {{"{skills_with_false[0]}": true or false}}
                             ]
@@ -1064,7 +1085,6 @@ def update_bkt_params(video_id, segment_index, cell_content, question, kernelTyp
         models = json.loads(completion.choices[0].message["content"])
         for model in models:
             for key, value in model.items():
-                # print(key, value)
                 segment_skill[category][key] = value
                 if key in bkt_params.keys():
                     update_bkt_param(bkt_params[key], value)
@@ -1092,7 +1112,7 @@ def update_bkt_params(video_id, segment_index, cell_content, question, kernelTyp
 
 
 def get_skill_by_segment(video_id, segment_index):
-    """Get the skills corresponding to the given segment."""
+    """Deprecated function: Get the skills corresponding to the given segment."""
     all_segment = get_segments(video_id)
     conn = sqlite3.connect("cache.db")
     c = conn.cursor()
