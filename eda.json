@@ -1,0 +1,270 @@
+{
+    "Introduction": {
+        "Sequence": {
+            "lower": [
+                "Modeling"
+            ],
+            "upper": [
+                "Modeling"
+            ]
+        },
+        "Modeling": {
+            "action": "Play the video",
+            "knowledge": "factual",
+            "interaction": "",
+            "parameters": {
+                "transcript": false,
+                "data": false,
+                "code": false
+            },
+            "need-response": true
+        }
+    },
+    "Load packages/data": {
+        "Sequence": {
+            "lower": [
+                "Modeling"
+            ],
+            "upper": [
+                "Modeling"
+            ]
+        },
+        "Modeling": {
+            "action": "[Use one sentence to prompt the student to execute the code cell][tutor's code (requirements: code should be placed in a code block)][Use some bullet points to briefly explain the functions or syntax used in the code, each bullet point should only contain one sentence]",
+            "knowledge": "procedural",
+            "interaction": "plain text",
+            "parameters": {
+                "transcript": false,
+                "data": false,
+                "code": true
+            },
+            "need-response": true
+        }
+    },
+    "Understand the dataset": {
+        "Sequence": {
+            "lower": [
+                "Coaching"
+            ],
+            "upper": [
+                "Coaching"
+            ]
+        },
+        "Modeling": {
+            "action": "[Use one sentence to summarize the facts in the dataset taught in the video]",
+            "knowledge": "factual",
+            "interaction": "plain text",
+            "parameters": {
+                "transcript": true,
+                "data": false,
+                "code": false
+            },
+            "need-response": false
+        },
+        "Coaching": {
+            "action": "[Use one sentence to summarize the facts in the dataset taught in the video][Use one sentence to ask the student to browse the dataset and record any observations in the chatbox]",
+            "knowledge": "procedural",
+            "interaction": "plain text",
+            "parameters": {
+                "transcript": true,
+                "data": false,
+                "code": false
+            },
+            "need-response": true
+        }
+    },
+    "Data visualization": {
+        "Sequence": {
+            "lower": [
+                "Modeling",
+                "Scaffolding",
+                "Reflection"
+            ],
+            "upper": [
+                "Articulation",
+                "Coaching",
+                "Reflection"
+            ]
+        },
+        "Modeling": {
+            "action": "[Use one sentence to describe briefly: what attributes and what kind of plot will be used to do visualization and reason]",
+            "knowledge": "declarative",
+            "interaction": "plain text",
+            "parameters": {
+                "transcript": true,
+                "data": false,
+                "code": false
+            },
+            "need-response": false
+        },
+        "Scaffolding": {
+            "action": "[tutor's code (requirements: code should be placed in a code block)][Use some bullet points to briefly explain the functions or syntax used in the code, each bullet point should only contain one sentence][Use one sentence to prompt the student to execute the code cell]",
+            "knowledge": "procedural",
+            "interaction": "plain text",
+            "parameters": {
+                "transcript": false,
+                "data": false,
+                "code": true
+            },
+            "need-response": true
+        },
+        "Articulation": {
+            "action": "Propose a multiple-choice question for possible reasons that the video author chose the specific kind of plot to do the specific task in the video. Please respond with the following json structure without the ```json``` title: {\"question\": \"question\", \"choices\": [\"choice\", \"choice\", \"choice\"]}",
+            "knowledge": "declarative",
+            "interaction": "multiple-choice",
+            "parameters": {
+                "transcript": true,
+                "data": false,
+                "code": false
+            },
+            "need-response": true
+        },
+        "Coaching": {
+            "action": "[Use one sentence to give feedback to the student's choice briefly][tutor's code with blanks and choice (requirements: provide a starter code template in a code block for how to do the data visualization taught in the video segment; the code should contain at least one blank for the student to fill in and give them choices to fill in. The blank should be about the attributes or the plot functions or the parameters that the student should learn from the video)][Use one sentence to let the student finish the code and execute the code cell]",
+            "knowledge": "procedural",
+            "interaction": "fill-in-blank",
+            "parameters": {
+                "transcript": false,
+                "data": false,
+                "code": true
+            },
+            "need-response": true
+        },
+        "Reflection": {
+            "action": "[Use less than three sentences to give an example to tell students which parameters in the visualization can be adjusted to improve readability]",
+            "knowledge": "procedural",
+            "interaction": "plain text",
+            "parameters": {
+                "transcript": true,
+                "data": false,
+                "code": true
+            },
+            "need-response": true
+        },
+        "Exploration": {
+            "action": "[Compare various plots that could also be used to achieve the visualization intent][Use one sentence to prompt the student to try different visualization functions]",
+            "knowledge": "procedural",
+            "interaction": "plain text",
+            "parameters": {
+                "transcript": true,
+                "data": false,
+                "code": false
+            },
+            "need-response": true
+        }
+    },
+    "Chart interpretation": {
+        "Sequence": {
+            "lower": [
+                "Modeling",
+                "Exploration",
+                "Scaffolding"
+            ],
+            "upper": [
+                "Articulation",
+                "Exploration",
+                "Coaching"
+            ]
+        },
+        "Modeling": {
+            "action": "[Use one sentence to tell the student here are some key points while doing chart interpretation][Based on the transcript, use three bullet points to briefly teach the student how to do chart interpretation. Requirement: each bullet point should contain only one sentence]",
+            "knowledge": "declarative",
+            "interaction": "plain text",
+            "parameters": {
+                "transcript": true,
+                "data": false,
+                "code": false
+            },
+            "need-response": false
+        },
+        "Articulation": {
+            "action": "Propose a multiple-choice question for possible patterns in the visualization for the student to select the pattern they found. Please respond with the following json structure without the ```json``` title: {\"question\": \"question\", \"choices\": [\"choice\", \"choice\", \"choice\"]}",
+            "knowledge": "declarative",
+            "interaction": "multiple-choice",
+            "parameters": {
+                "transcript": true,
+                "data": false,
+                "code": false
+            },
+            "need-response": true
+        },
+        "Exploration": {
+            "action": "Propose a multiple-choice question for possible reasons behind the pattern for the student to answer. The question should lead the student to generate new visualization intent. Please respond with the following json structure without the ```json``` title: {\"question\": \"question\", \"choices\": [\"choice\", \"choice\", \"choice\"]}",
+            "knowledge": "declarative",
+            "interaction": "multiple-choice",
+            "parameters": {
+                "transcript": true,
+                "data": false,
+                "code": false
+            },
+            "need-response": true
+        },
+        "Scaffolding": {
+            "action": "[Use one sentence to give feedback on the student's choice][Use one sentence to tell the student if any additional steps could confirm their choice][Have students watch the next video and keep the choice in mind to see if it is justified]",
+            "knowledge": "procedural",
+            "interaction": "plain text",
+            "parameters": {
+                "transcript": false,
+                "data": false,
+                "code": false
+            },
+            "need-response": true
+        },
+        "Coaching": {
+            "action": "[Use one sentence to tell the student if any additional steps could confirm their choice]{if the student's choice could be achieved by using the dataset to make another plot: [Code with blanks and choice] (requirements: provide a starter code template for how to use code to do the example you provide; the code should contain at least one blank for the student to fill in and give them choices to fill in. The blank should be about the attributes or the plot functions or the parameters that the student should learn from the video)[Use one sentence to let the student finish the code and execute the code cell]}{else if the student's choice could be proved by using some facts on the internet: [Use less than three sentence to summarize some facts on the internet]}",
+            "knowledge": "procedural",
+            "interaction": "fill-in-blank",
+            "parameters": {
+                "transcript": false,
+                "data": true,
+                "code": false
+            },
+            "need-response": true
+        }
+    },
+    "Data processing": {
+        "Sequence": {
+            "lower": [
+                "Modeling",
+                "Scaffolding"
+            ],
+            "upper": [
+                "Modeling",
+                "Coaching"
+            ]
+        },
+        "Modeling": {
+            "action": "[Use one sentence to demonstrate which attributes are necessary to perform data processing]",
+            "knowledge": "factual",
+            "interaction": "plain text",
+            "parameters": {
+                "transcript": true,
+                "data": true,
+                "code": false
+            },
+            "need-response": false
+        },
+        "Scaffolding": {
+            "action": "[tutor's code with comment (requirements: Code should be placed in a code block)][Use one sentence to prompt the student execute the code cell]",
+            "knowledge": "procedural",
+            "interaction": "plain text",
+            "parameters": {
+                "transcript": false,
+                "data": false,
+                "code": true
+            },
+            "need-response": true
+        },
+        "Coaching": {
+            "action": "[tutor's code with blanks and choice (requirements: provide a starter code template in a code block for how to do the data processing taught in the video segment; the code should contain at least one blank for the student to fill in and give them choices to fill in. The blank should be about the attributes or the plot functions or the parameters that the student should learn from the video)]",
+            "knowledge": "procedural",
+            "interaction": "fill-in-blank",
+            "parameters": {
+                "transcript": false,
+                "data": false,
+                "code": true
+            },
+            "need-response": true
+        }
+    }
+}

@@ -29,6 +29,15 @@ import YouTube, { YouTubeEvent } from 'react-youtube';
 import { Button } from '@mui/material';
 import { ISignal, Signal } from '@lumino/signaling';
 import { Cell, CodeCell, ICellModel } from '@jupyterlab/cells';
+import Radio from '@mui/material/Radio';
+import RadioGroup from '@mui/material/RadioGroup';
+import FormControlLabel from '@mui/material/FormControlLabel';
+import FormControl from '@mui/material/FormControl';
+import FormLabel from '@mui/material/FormLabel';
+import Box from '@mui/material/Box';
+// import AceEditor from 'react-ace';
+// import 'ace-builds/src-noconflict/mode-r'; // import the mode for the language you need
+// import 'ace-builds/src-noconflict/theme-monokai'; // import the theme of your choice
 
 export interface ISegment {
   start: number;
@@ -45,6 +54,7 @@ interface IMessage {
   start: number | null;
   end: number | null;
   category: string | null;
+  interaction: string | null;
 }
 
 interface ICellOutput {
@@ -77,7 +87,8 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
       sender: 'iTutor',
       start: null,
       end: null,
-      category: null
+      category: null,
+      interaction: 'plain text'
     }
   ]);
   const [isTyping, setIsTyping] = useState(false);
@@ -94,6 +105,8 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
   const [isReadyToSend, setIsReadyToSend] = useState(false);
   const [isAlredaySend, setIsAlredaySend] = useState(false);
   const [needHint, setNeedHint] = useState(false);
+  const [selectedChoice, setSelectedChoice] = React.useState('');
+  // const [code, setCode] = React.useState<string>('');
 
   const handleReady = (event: YouTubeEvent<number>) => {
     setPlayer(event.target);
@@ -105,6 +118,10 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
 
   const closePopup = (index: number) => {
     setPopupStates(prevStates => ({ ...prevStates, [index]: false }));
+  };
+
+  const handleRadioChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    setSelectedChoice((event.target as HTMLInputElement).value);
   };
 
   const backdropStyle: CSSProperties = {
@@ -150,11 +167,11 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
         videoId: null,
         start: null,
         end: null,
-        category: null
+        category: null,
+        interaction: 'plain text'
       };
 
-      const newMessages = [...messages, newMessage];
-      setMessages(newMessages);
+      setMessages(prevMessages => [...prevMessages, newMessage]);
 
       if (videoId === '') {
         // console.log(question);
@@ -170,11 +187,11 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
           method: 'POST'
         })
           .then(response => {
-            // console.log(response);
+            // console.log('initial response:', response);
             // const parsed = JSON.parse(response.replace(/'/g, '"'));
             setSegments(response);
-            setMessages([
-              ...newMessages,
+            setMessages(prevMessages => [
+              ...prevMessages,
               {
                 message:
                   "The video is segmented into several video clips. While you can navigate through the parts you like, I recommend following the video progress to learn and imitate his Exploratory Data Analysis process and do the task on your own.\n\nWhile watching the video, keep asking yourself these three questions: what is he doing, why is he doing it, and how will success in what he is doing help him find a solution to the problem ? Now let's get started!",
@@ -184,7 +201,8 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                 videoId: question,
                 start: response[0].start,
                 end: response[0].end,
-                category: response[0].category
+                category: response[0].category,
+                interaction: 'plain text'
               }
             ]);
             setIsTyping(false);
@@ -271,31 +289,35 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
             category: category,
             segmentIndex: currentSegmentIndex,
             kernelType: kernelType,
-            needHint: needHint
+            needHint: needHint,
+            selectedChoice: selectedChoice
           }),
           method: 'POST'
         })
           .then(response => {
             // console.log(response);
-            setMessages([
-              ...newMessages,
+            setSelectedChoice('');
+            setMessages(prevMessages => [
+              ...prevMessages,
               {
-                message: response,
+                message: response.message,
                 sentTime: `${currentTime} seconds`,
                 direction: 'incoming',
                 sender: 'iTutor',
                 videoId: null,
                 start: null,
                 end: null,
-                category: null
+                category: null,
+                interaction: response.interaction
               }
             ]);
             // Extract code blocks from the response
             let match;
-            while ((match = codeRegex.exec(response)) !== null) {
+            while ((match = codeRegex.exec(response.message)) !== null) {
               const code = match[2].trim();
               // console.log(code);
               if (code) {
+                // setCode(code);
                 const activatedNotebook = props.getCurrentNotebook();
                 if (activatedNotebook) {
                   try {
@@ -339,6 +361,12 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
               }
             }
             setIsTyping(false);
+            // New logic to check for 'need_response'
+            if (!response.need_response) {
+              setTimeout(() => {
+                handleSend('');
+              }, 0);
+            }
           })
           .catch(reason => {
             console.error(`Error on POST /jlab_ext_example/chats .\n${reason}`);
@@ -376,26 +404,45 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
         });
       setCurrentSegmentIndex(currentSegmentIndex + 1);
       const nextSegment = segments[currentSegmentIndex + 1];
+      // console.log('nextSegment:', nextSegment);
+
+      // After student click the "Go On" button, update the current sequence
+      requestAPI<any>('update_seq', {
+        body: JSON.stringify({
+          videoId: videoId,
+          segmentIndex: currentSegmentIndex + 1,
+          category: nextSegment.category
+        }),
+        method: 'POST'
+      })
+        .then(() => {
+          console.log('Update sequence successful.');
+        })
+        .catch(reason => {
+          console.error(
+            `Error on POST /jlab_ext_example/update_seq .\n${reason}`
+          );
+        });
 
       // Append the new message to the existing messages array
-      setMessages([
-        ...messages,
+      setMessages(prevMessages => [
+        ...prevMessages,
         {
-          message:
-            "Nice work on the previous task! Now let's move on to the next part of the video.",
+          message: 'Now let us watch the next video segment!',
           videoId: videoId, // Assuming the videoId remains the same for all segments
           sentTime: `${nextSegment.start}`, // Segment start time
           direction: 'incoming',
           sender: 'iTutor',
           start: nextSegment.start, // Store the start and end times in the message
           end: nextSegment.end,
-          category: nextSegment.category
+          category: nextSegment.category,
+          interaction: null
         }
       ]);
     } else if (currentSegmentIndex < segments.length + 2) {
       setCurrentSegmentIndex(currentSegmentIndex + 1);
-      setMessages([
-        ...messages,
+      setMessages(prevMessages => [
+        ...prevMessages,
         {
           message:
             'Can you think of more tasks that are not in the video to do?',
@@ -405,12 +452,13 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
           sender: 'iTutor',
           start: null, // Store the start and end times in the message
           end: null,
-          category: 'Self-exploration'
+          category: 'Self-exploration',
+          interaction: 'plain text'
         }
       ]);
     } else {
-      setMessages([
-        ...messages,
+      setMessages(prevMessages => [
+        ...prevMessages,
         {
           message: 'Could you conclude what you have learned today?',
           videoId: null,
@@ -419,7 +467,8 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
           sender: 'iTutor',
           start: null, // Store the start and end times in the message
           end: null,
-          category: 'Conclusion'
+          category: 'Conclusion',
+          interaction: 'plain text'
         }
       ]);
     }
@@ -500,10 +549,6 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
           // console.log(response);
           if (response.toLowerCase() === 'yes') {
             setCanGoOn(true);
-          } else {
-            console.log('video id is:', videoId);
-            // Set a flag or state to indicate readiness to send
-            setIsReadyToSend(true);
           }
           // setCanGoOn(response.toLowerCase() === 'yes');
           // console.log(canGoOnRef.current);
@@ -512,6 +557,10 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
           console.error(`Error on POST /jlab_ext_example/go_on .\n${reason}`);
         });
     }
+    // Whatever it is ready to go on, send a new request for message
+    console.log('video id is:', videoId);
+    // Set a flag or state to indicate readiness to send
+    setIsReadyToSend(true);
   }
 
   useEffect(() => {
@@ -541,83 +590,144 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
               .filter(
                 message => message.message && message.message.trim() !== ''
               )
-              .map((message, i) => (
-                <>
-                  {message.category && (
-                    <MessageSeparator>{message.category}</MessageSeparator>
-                  )}
-                  <Message
-                    key={i}
-                    model={{
-                      message: message.message,
-                      direction: message.direction,
-                      sender: message.sender,
-                      sentTime: message.sentTime,
-                      position: 'single'
-                    }}
-                  />
-                  {/* <Message.CustomContent>
-                      <ReactMarkdown>{message.message}</ReactMarkdown>
-                    </Message.CustomContent>
-                  </Message> */}
-                  {message.videoId && (
-                    <div
-                      style={{
-                        marginTop: '8px',
-                        paddingBottom: isTyping ? '40px' : '20px'
-                      }}
-                    >
-                      {popupStates[i] ? (
-                        <div
-                          style={backdropStyle}
-                          onClick={() => closePopup(i)}
-                        ></div>
-                      ) : null}
-                      <div
-                        style={
-                          popupStates[i] ? openerAboveStyle : openerBelowStyle
-                        }
-                        onClick={() => openPopup(i)}
+              .map((message, i) => {
+                // Parse the message if it's a multiple-choice question
+                const isMultipleChoice =
+                  message.interaction === 'multiple-choice';
+                const parsedMessage = isMultipleChoice
+                  ? JSON.parse(message.message)
+                  : null;
+
+                return (
+                  <>
+                    {message.category && (
+                      <MessageSeparator>{message.category}</MessageSeparator>
+                    )}
+                    {isMultipleChoice && parsedMessage ? (
+                      // Render the multiple-choice question
+                      <Box
+                        sx={{
+                          width: '85%',
+                          padding: 2,
+                          marginBottom: '20px',
+                          boxSizing: 'border-box'
+                        }}
                       >
-                        <img
-                          src={`https://img.youtube.com/vi/${message.videoId}/0.jpg`}
-                          alt="YouTube Thumbnail"
-                          style={{ width: '430px', height: '240px' }}
-                        />
-                      </div>
-                      {popupStates[i] && (
-                        <div style={popupStyle}>
-                          <YouTube
-                            key={i}
-                            videoId={message.videoId}
-                            opts={{
-                              height: '540',
-                              width: '960',
-                              playerVars: {
-                                start: message.start || undefined,
-                                end: message.end || undefined,
-                                controls: 0,
-                                rel: 0
-                              }
+                        <FormControl component="fieldset" variant="standard">
+                          <FormLabel component="legend">
+                            {parsedMessage.question}
+                          </FormLabel>
+                          <RadioGroup
+                            aria-label="multiple-choice-question"
+                            name={`multiple-choice-${i}`}
+                            value={selectedChoice}
+                            onChange={handleRadioChange}
+                          >
+                            {parsedMessage.choices.map(
+                              (choice: string, index: number) => (
+                                <FormControlLabel
+                                  key={index}
+                                  value={choice}
+                                  control={<Radio />}
+                                  label={choice}
+                                />
+                              )
+                            )}
+                          </RadioGroup>
+                          <Button
+                            variant="contained"
+                            color="primary"
+                            onClick={() => handleSend('')}
+                            disabled={!selectedChoice}
+                            sx={{
+                              padding: '4px 10px', // Reduces padding
+                              fontSize: '0.75rem' // Reduces font size
                             }}
-                            onReady={handleReady}
-                            onEnd={event => {
-                              if (
-                                message.category !== 'Introduction' &&
-                                !isAlredaySend
-                                // && Date.now() - lastSendTime >= 60000
-                              ) {
-                                setIsAlredaySend(true);
-                                handleSend('');
-                              }
-                            }}
+                          >
+                            Submit
+                          </Button>
+                        </FormControl>
+                      </Box>
+                    ) : (
+                      <Message
+                        key={message.sentTime}
+                        model={{
+                          message: message.message,
+                          direction: message.direction,
+                          sender: message.sender,
+                          sentTime: message.sentTime,
+                          position: 'single'
+                        }}
+                      />
+                    )}
+                    {/* {code && (
+                      <AceEditor
+                        mode="r" // change this to match the language of your code
+                        theme="monokai"
+                        value={code}
+                        name="codeEditor"
+                        style={{ width: '100%', height: '200px' }}
+                      />
+                    )} */}
+                    {message.videoId && (
+                      <div
+                        style={{
+                          marginTop: '8px',
+                          paddingBottom: isTyping ? '20px' : '10px'
+                        }}
+                      >
+                        {popupStates[i] ? (
+                          <div
+                            style={backdropStyle}
+                            onClick={() => closePopup(i)}
+                          ></div>
+                        ) : null}
+                        <div
+                          style={
+                            popupStates[i] ? openerAboveStyle : openerBelowStyle
+                          }
+                          onClick={() => openPopup(i)}
+                        >
+                          <img
+                            src={`https://img.youtube.com/vi/${message.videoId}/0.jpg`}
+                            alt="YouTube Thumbnail"
+                            style={{ width: '430px', height: '240px' }}
                           />
                         </div>
-                      )}
-                    </div>
-                  )}
-                </>
-              ))}
+                        {popupStates[i] && (
+                          <div style={popupStyle}>
+                            <YouTube
+                              key={i}
+                              videoId={message.videoId}
+                              opts={{
+                                height: '540',
+                                width: '960',
+                                playerVars: {
+                                  start: message.start || undefined,
+                                  end: message.end || undefined,
+                                  controls: 0,
+                                  rel: 0
+                                }
+                              }}
+                              onReady={handleReady}
+                              onEnd={event => {
+                                if (
+                                  message.category !== 'Introduction' &&
+                                  !isAlredaySend
+                                  // && Date.now() - lastSendTime >= 60000
+                                ) {
+                                  setIsAlredaySend(true);
+                                  handleSend('');
+                                }
+                              }}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </>
+                );
+              })}
           </MessageList>
           <MessageInput
             placeholder="Type message here"

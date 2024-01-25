@@ -45,14 +45,14 @@ conversation = None
 bkt_params = {}
 user_id = "1"
 previous_notebook = '[{"cell_type":"code","source":"","output_type":null}]'
-segments_class = {
-    "Load data/packages": "programming",
-    "Initial observation on raw data": "concept",
-    "Data visualization": "programming",
-    "Chart interpretation/insights": "concept",
-    "Data processing": "programming",
-}
 last_practicing_skill = None
+CUR_SEQ = []  # The current sequence of moves
+with open("eda.json", "r") as file:
+    # Parse the file and convert JSON data into a Python dictionary
+    eda_video = json.load(file)
+with open("code.json", "r") as file:
+    # Parse the file and convert JSON data into a Python dictionary
+    all_code = json.load(file)
 
 
 class DataHandler(APIHandler):
@@ -108,7 +108,7 @@ class SegmentHandler(APIHandler):
 class ChatHandler(APIHandler):
     @tornado.web.authenticated
     def post(self):
-        global llm, prompt, memory, conversation, VIDEO_ID, bkt_params, last_practicing_skill
+        global llm, prompt, memory, conversation, VIDEO_ID, eda_video, CUR_SEQ, all_code
 
         # Existing video_id logic
         data = self.get_json_body()
@@ -118,13 +118,9 @@ class ChatHandler(APIHandler):
         category = data["category"]
         segment_index = data["segmentIndex"]
         kernelType = data["kernelType"]
-        need_hint = data["needHint"]
-        segment_skill = get_skill_action_by_segment(video_id, segment_index)
-        skills_with_false = []
-        for skills in segment_skill.values():
-            for skill, value in skills.items():
-                if not value:
-                    skills_with_false.append(skill)
+        selected_choice = data["selectedChoice"]
+        segment = get_segments(video_id)[segment_index]
+        dataset = get_csv_from_youtube_video(video_id)
 
         if kernelType == "ir":
             kernelType = "R"
@@ -133,111 +129,56 @@ class ChatHandler(APIHandler):
 
         conn = sqlite3.connect("cache.db")
         c = conn.cursor()
-        c.execute(
-            "SELECT actions FROM skills_cache WHERE video_id = ? AND segment_index = ?",
-            (
-                video_id,
-                segment_index,
-            ),
-        )
-        row = c.fetchone()
-        if row:
-            skill_actions = json.loads(row[0])
-        segment_class = segments_class.get(
-            category, "programming"
-        )  # get the segment class, default is programming
-        # action_outcome = get_action_outcome(video_id, segment_index)
-        # action = action_outcome["action"]
-        # outcome = action_outcome["outcome"]
         if llm is None or prompt is None or memory is None or conversation is None:
             VIDEO_ID = video_id
-            data = get_csv_from_youtube_video(video_id)
             init_bkt_params()
-            initialize_chat_server(data, kernelType)
+            initialize_chat_server(kernelType)
 
         if notebook:
-            # bkt_params, _ = update_bkt_params(
-            #     video_id, segment_index, "", question, kernelType
-            # )
-            if category == "Self-exploration":
-                # Extract all the probMastery values
-                category_params = {
-                    skill: params["probMastery"] for skill, params in bkt_params.items()
+            if question == "" and CUR_SEQ != []:
+                # If the student does not ask a question, get the pedagogy, parameters, etc
+                current_move = CUR_SEQ[0]
+                move_detail = eda_video[category][current_move]
+                input_data = {}
+                if move_detail["parameters"]["transcript"]:
+                    input_data["transcript"] = get_segment_transcript(
+                        video_id, segment["start"], segment["end"], category
+                    )["transcript"]
+                if move_detail["parameters"]["data"]:
+                    input_data["data"] = dataset
+                if move_detail["parameters"]["code"]:
+                    input_data["tutor's code"] = all_code[str(segment_index)]
+                pedagogy = move_detail["action"]
+                input_data["pedagogy"] = (
+                    "Use the following structure to respond: " + pedagogy
+                )
+                CUR_SEQ.pop(0)  # After using this move, remove it from the sequence
+                need_response = move_detail.get("need-response", True)
+                interaction = move_detail["interaction"]
+                if selected_choice != "":
+                    # If the student selects a choice, the response is the choice
+                    input_data["student's choice"] = selected_choice
+            elif question != "":
+                input_data = {
+                    "student's question": question,
+                    "pedagogy": "Use less than three sentences briefly answer student's query.",
                 }
+                need_response = True
+                interaction = "plain text"
             else:
-                skills = list(segment_skill.values())[0]
-                category_params = {
-                    skill: bkt_params[skill]["probMastery"] for skill in skills.keys()
+                input_data = {
+                    "student's code": notebook,
+                    "pedagogy": "Use one sentence to let the student watch the next video segment.",
                 }
-            if skills_with_false:
-                skill_to_practice = skills_with_false[0]
-                action = skill_actions[skill_to_practice]
-                # If the student is still practicing the last skill (failure or irrelevant pracetice), then he needs hint or answer
-                if skill_to_practice != last_practicing_skill:
-                    last_practicing_skill = skill_to_practice
-                    practice_time = 0
-                else:
-                    need_hint = True
-                    # If the student has tried this practice for three times, then jump to the next skill
-                    practice_time += 1
-                    if practice_time >= 2:
-                        model = [{skills_with_false: True}]
-                        for key, value in model.items():
-                            segment_skill[category][key] = value
-                        conn = sqlite3.connect("cache.db")
-                        c = conn.cursor()
-                        category_skill_json = json.dumps(segment_skill)
-                        c.execute(
-                            "UPDATE skills_cache SET skills = ? WHERE video_id = ? AND segment_index = ?",
-                            (category_skill_json, video_id, segment_index),
-                        )
-                        conn.commit()
-                        conn.close()
-                print(need_hint)
-                if need_hint:
-                    move = f"""[Use only one sentence in a natural conversational style to provide feedback to the student's performance or answer the student's question if the student has a question]
-                            [Use one heuristic and in-depth question to provide advice or hints based on context to help the student successfully practice the skill '{skill_to_practice}' as soon as possible]
-                            """
-                else:
-                    if segment_class == "programming":
-                        if category_params[skill_to_practice] < 0.5:
-                            move = f"""[Use only one sentence in a natural conversational style to describe the task that practice the skill "{skill_to_practice}"]
-                                    ```{kernelType}
-                                    code
-                                    ```
-                                    [Use one heuristic and in-depth question to help the student understand the code]
-                                    """
-                        else:
-                            move = f"""[Use only one sentence in a natural conversational style to describe the task that practice the skill "{skill_to_practice}"]
-                                    [Use one heuristic and in-depth question to prompt the student to do additional tasks that is not taught in the video to practice the skill '{skill_to_practice}']
-                                    """
-                    else:
-                        if category_params[skill_to_practice] < 0.5:
-                            move = f"""[Use only one sentence to demonstrate how to practice the skill '{skill_to_practice}' in a natural conversational style]
-                                    [Use one heuristic and in-depth question to practice the skill '{skill_to_practice}']
-                                    """
-                        else:
-                            move = f"""[Use only one sentence in a natural conversational style to describe the task that practice the skill "{skill_to_practice}"]
-                                    [Use only one sentence to offer advice or hints for the student to practice the skill '{skill_to_practice}']
-                                    """
-            else:  # The student has practiced all the skills in the current video segment
-                action = ""
-                move = """
-                    [Use only one sentence to provide feedback to the student's performance or answer the student's question]
-                    [Use only one sentence to encourage the student to proceed to the next video segment]
-                    """
-            # notebook_diff = get_diff_between_notebooks(previous_notebook, notebook)
-            input_data = {
-                "notebook": notebook,
-                "question": question,
-                "tutor's action": action,
-                "pedagogy": move,
-            }
-            # "current category": category,
-            # "mastery of skill": category_params[skill_to_practice],
-            # "additional instruction": instruction, "skill to practice": skill_to_practice,
+                need_response = True
+                interaction = "plain text"
             results = conversation({"input": str(input_data)})["text"]
-            self.finish(json.dumps(results))
+            response_data = {
+                "message": results,
+                "need_response": need_response,
+                "interaction": interaction,
+            }
+            self.finish(json.dumps(response_data))
         else:
             self.set_status(400)
             self.finish(json.dumps({"error": "No notebook file active"}))
@@ -249,7 +190,7 @@ class GoOnHandler(APIHandler):
         data = self.get_json_body()
         video_id = data["videoId"]
         segment_index = data["segmentIndex"]
-        segment_skill = get_skill_action_by_segment(video_id, segment_index)
+        segment_skill = get_skill_by_segment(video_id, segment_index)
         # Check if there is any False in the practicing skills
         contains_false = any(
             not value
@@ -257,11 +198,42 @@ class GoOnHandler(APIHandler):
             for value in inner_dict.values()
         )
         if contains_false:
-            result = "no"  # if there is false, don't go on
+            result = "yes"  # if there is false, don't go on
         else:
             # set_prev_notebook(data["notebook"])
             result = "yes"  # if there is no false, go on
         self.finish(json.dumps(result))
+
+
+class UpdateSeqHandler(APIHandler):
+    @tornado.web.authenticated
+    def post(self):
+        global CUR_SEQ, bkt_params
+        data = self.get_json_body()
+        video_id = data["videoId"]
+        segment_index = data["segmentIndex"]
+        category = data["category"]
+        init_bkt_params()
+        segment_skill = get_skill_by_segment(video_id, segment_index)
+        skills_with_false = []
+        for skills in segment_skill.values():
+            for skill, value in skills.items():
+                if not value:
+                    skills_with_false.append(skill)
+        if skills_with_false != []:
+            skill_to_practice = skills_with_false[0]
+            skills = list(segment_skill.values())[0]
+            category_params = {
+                skill: bkt_params[skill]["probMastery"] for skill in skills.keys()
+            }
+            # Update the sequence of moves depending on the mastery of the skill
+            if category_params[skill_to_practice] < 0.5:
+                CUR_SEQ = eda_video[category]["Sequence"]["lower"].copy()
+                print("lower:" + str(CUR_SEQ))
+            else:
+                CUR_SEQ = eda_video[category]["Sequence"]["upper"].copy()
+                print("upper:" + str(CUR_SEQ))
+            print("CUR_SEQ updated successfully: " + str(CUR_SEQ))
 
 
 class UpdateBKTHandler(APIHandler):
@@ -349,7 +321,6 @@ def initialze_database():
         video_id TEXT,
         segment_index NUMBER NOT NULL,
         skills TEXT NOT NULL,
-        actions TEXT NOT NULL,
         PRIMARY KEY (video_id, segment_index)
     );"""
     )
@@ -370,43 +341,20 @@ def initialze_database():
         PRIMARY KEY (video_id, segment_index)
     );"""
     )
-    # all_skills = [
-    #     "Load data directly with a URL",
-    #     "Load necessary packages for EDA",
-    #     "Making assumptions based on data",
-    #     "Use box plot to visualize the data",
-    #     "Use histograms to visualize the data",
-    #     "Use dot plot to visualize the data",
-    #     "Customize plot appearance",
-    #     "Interpret visualizations",
-    #     "Generate intent for the next visualization",
-    #     "Identify outliers in the data",
-    #     "Reorder data",
-    #     "Group and summarize data",
-    # ]
     skills_by_category = {
-        "Load data/packages": [
-            "Load necessary packages for EDA",
-            "Load data directly with a URL",
+        "Load packages/data": [
+            "Load package and data successfully",
         ],
-        "Initial observation on raw data": [
-            "View the data set",
-            "Make assumptions about the data",
-            "Generate intent for the next visualization",
+        "Understand the dataset": [
+            "Observe and understand the dataset",
         ],
         "Data visualization": [
-            "Use box plot to visualize the data",
-            "Use histograms to visualize the data",
-            "Use dot plot to visualize the data",
-            "Customize plot appearance",
-            "Reorder data",
+            "Use plot to visualize the data",
         ],
-        "Chart interpretation/insights": [
-            "Find outliers in the plot",
-            "Interpret the visualization",
-            "Generate intent for the next visualization",
+        "Chart interpretation": [
+            "Propose reason behind the pattern",
         ],
-        "Data processing": ["Reorder data", "Group and summarize data"],
+        "Data processing": ["Reorder, group or summarize data"],
     }
     all_skills = []
     for skills in skills_by_category.values():
@@ -417,15 +365,14 @@ def initialze_database():
     video_id = "nx5yhXAQLxw"
     segments_set = [
         {"category": "Introduction", "start": 1, "end": 113},
-        {"category": "Load data/packages", "start": 113, "end": 212},
-        {"category": "Initial observation on raw data", "start": 212, "end": 418},
+        {"category": "Load packages/data", "start": 113, "end": 212},
+        {"category": "Understand the dataset", "start": 212, "end": 418},
         {"category": "Data visualization", "start": 418, "end": 463},
-        {"category": "Chart interpretation/insights", "start": 463, "end": 507},
+        {"category": "Chart interpretation", "start": 463, "end": 507},
         {"category": "Data visualization", "start": 507, "end": 601},
-        {"category": "Chart interpretation/insights", "start": 601, "end": 640},
-        {"category": "Data visualization", "start": 640, "end": 692},
-        {"category": "Chart interpretation/insights", "start": 692, "end": 740},
-        {"category": "Data processing", "start": 740, "end": 839},
+        {"category": "Chart interpretation", "start": 601, "end": 640},
+        {"category": "Data visualization", "start": 640, "end": 720},
+        {"category": "Chart interpretation", "start": 720, "end": 839},
         {"category": "Data visualization", "start": 839, "end": 900},
     ]
     segments_json = json.dumps(segments_set)
@@ -440,15 +387,15 @@ def initialze_database():
     video_id = "Kd9BNI6QMmQ"
     segments_set = [
         {"category": "Introduction", "start": 1, "end": 102},
-        {"category": "Load data/packages", "start": 102, "end": 137},
-        {"category": "Initial observation on raw data", "start": 137, "end": 220},
+        {"category": "Load packages/data", "start": 102, "end": 137},
+        {"category": "Understand the dataset", "start": 137, "end": 220},
         {"category": "Data processing", "start": 220, "end": 568},
         {"category": "Data visualization", "start": 568, "end": 580},
-        {"category": "Chart interpretation/insights", "start": 580, "end": 596},
+        {"category": "Chart interpretation", "start": 580, "end": 596},
         {"category": "Data visualization", "start": 596, "end": 655},
-        {"category": "Chart interpretation/insights", "start": 655, "end": 680},
+        {"category": "Chart interpretation", "start": 655, "end": 680},
         {"category": "Data processing", "start": 680, "end": 715},
-        {"category": "Chart interpretation/insights", "start": 715, "end": 740},
+        {"category": "Chart interpretation", "start": 715, "end": 740},
         {"category": "Data visualization", "start": 740, "end": 900},
     ]
     segments_json = json.dumps(segments_set)
@@ -472,7 +419,7 @@ def initialze_database():
     conn.close()
 
 
-def initialize_chat_server(data, kernelType):
+def initialize_chat_server(kernelType):
     """Initialize the chat server."""
     global llm, prompt, memory, conversation
     # LLM initialization
@@ -489,23 +436,23 @@ def initialize_chat_server(data, kernelType):
             SystemMessagePromptTemplate.from_template(
                 """
                 You are an expert in Data Science, specializing in {video_type}.
-                Your task is to use the Cognitive Apprenticeship approach assist a student who is learning {video_type} through David Robinson's Tidy Tuesday tutorial series.
+                Your task is to use the Cognitive Apprenticeship approach to assist a student in learning {video_type} through David Robinson's Tidy Tuesday tutorial series.
 
-                Inputs for Your Reference:
-                - tutor's action: Actions performed by the video author in the current segment.
-                - pedagogy: The specific cognitive apprenticeship move that you need to follow to guide students.
-                - notebook and question: The student's current performance, encompassing both the code in the notebook and the query sent to you.
-                - programming language: Tailor your advice to the programming language the student is using, currently {kernelType}.
-                - dataset information: You have access to details about the dataset used in the video: {data}.
+                You will be provided with one or more of the following inputs:
+                - transcript: the transcript of the current video segment.
+                - tutor's code: the code the tutor wrote in the current video segment.
+                - pedagogy: the specific cognitive apprenticeship move that you need to follow to guide students.
+                - student's code or question or choice: the student's current performance, encompassing either the code in the student's notebook or the student's query sent to you or student's choice in the multiple-choice question.
+                - dataset information: the dataset to explore in the video.
 
                 Notes for Response:
-                - Communicate in the first person as a teaching assistant.
+                - Use natural language to communicate in the first person as a teaching assistant.
                 - You must strictly follow the pedagogy to provide guidance.
-                - The actions of the video author should not be considered as the actions of the student.
+                - Tailor your advice to the programming language the student uses: {kernelType}.
+                - Don't tell the student that your response is based on the transcript or code.
                 """
             ).format(
                 video_type=video_type,
-                data=data,
                 kernelType=kernelType,
             ),
             MessagesPlaceholder(variable_name="chat_history"),
@@ -1037,7 +984,7 @@ def update_bkt_params(video_id, segment_index, cell_content, question, kernelTyp
     # Get skills for the current segment
     # segment_skill is in this format: {"Load data/packages":
     # {'Load data directly with a URL': False, 'Load necessary packages for EDA': False}}
-    segment_skill = get_skill_action_by_segment(video_id, segment_index)
+    segment_skill = get_skill_by_segment(video_id, segment_index)
     skills_with_false = []
     for skills in segment_skill.values():
         for skill, value in skills.items():
@@ -1112,17 +1059,11 @@ def update_bkt_params(video_id, segment_index, cell_content, question, kernelTyp
 
 
 def get_skill_by_segment(video_id, segment_index):
-    """Deprecated function: Get the skills corresponding to the given segment."""
+    """Get the skills corresponding to the given segment."""
     all_segment = get_segments(video_id)
     conn = sqlite3.connect("cache.db")
     c = conn.cursor()
     segment = all_segment[segment_index]
-    segment_transcript = get_segment_transcript(
-        video_id,
-        start=segment["start"],
-        end=segment["end"],
-        category=segment["category"],
-    )
     c.execute(
         "SELECT skills FROM skills_cache WHERE video_id = ? AND segment_index = ?",
         (
@@ -1139,71 +1080,24 @@ def get_skill_by_segment(video_id, segment_index):
         "SELECT skills_by_category FROM bkt_params_cache WHERE user_id = ?", (user_id,)
     )
     skills_by_category = json.loads(c.fetchone()[0])
-    all_skills = []
-    for skills in skills_by_category.values():
-        for skill in skills:
-            if skill not in all_skills:
-                all_skills.append(skill)
-    if segment_index >= len(all_segment):
-        return {"Self-exploration": all_skills}
 
-    response = openai.ChatCompletion.create(
-        model="gpt-4-1106-preview",
-        messages=[
-            {
-                "role": "system",
-                "content": """
-                        You are an expert in Exploratory Data Analysis (EDA).
-                        Given the transcript of an EDA tutorial video segment, summarize the !!EDA!! skills used in the segment.
-                        Only choose the skills corresponding to the category. For example, there should not be "Interpret visualization" or "Make assumptions" in a "Data visualization" segment.
-                        Use the same expression in the skill set to answer. Response in this format: ["skill_1", "skill_2", ...]
-                        """,
-            },
-            {
-                "role": "user",
-                "content": f"transcript: {segment_transcript['transcript']}, category: {segment['category']}, skill set: {skills_by_category[segment['category']]}",
-            },
-        ],
+    # Change to this format: {'Load data directly with a URL': False, ...}
+    skills = skills_by_category[segment["category"]]
+    result = {item: False for item in skills}
+    category_skill = {segment["category"]: result}
+    category_skill_json = json.dumps(category_skill)
+    # Insert new data if video_id doesn't exist
+    c.execute(
+        "INSERT INTO skills_cache (video_id, segment_index, skills) VALUES (?, ?, ?)",
+        (video_id, segment_index, category_skill_json),
     )
-    result = response.choices[0].message["content"]
-    try:
-        result = json.loads(result.replace("'", '"'))
-        # Update the skills_by_category in the database
-        for skill in result:
-            if skill not in skills_by_category["Data visualization"]:
-                skills_by_category["Data visualization"].append(skill)
-            if skill not in bkt_params:
-                bkt_params[skill] = {
-                    "probMastery": 0.1,
-                    "probTransit": 0.1,
-                    "probSlip": 0.1,
-                    "probGuess": 0.1,
-                }
-        skills_by_category_str = json.dumps(skills_by_category)
-        c.execute(
-            "UPDATE bkt_params_cache SET skills_by_category = ? WHERE user_id = ?",
-            (skills_by_category_str, user_id),
-        )
-
-        # Change to this format: {'Load data directly with a URL': False, ...}
-        result = {item: False for item in result}
-        category_skill = {segment_transcript["category"]: result}
-        category_skill_json = json.dumps(category_skill)
-        # Insert new data if video_id doesn't exist
-        c.execute(
-            "INSERT INTO skills_cache (video_id, segment_index, skills) VALUES (?, ?, ?)",
-            (video_id, segment_index, category_skill_json),
-        )
-        conn.commit()
-        conn.close()
-        return category_skill
-    except json.JSONDecodeError as e:
-        print("Error decoding JSON:", e)
-        print("Original result string:", result)
+    conn.commit()
+    conn.close()
+    return category_skill
 
 
 def get_skill_action_by_segment(video_id, segment_index):
-    """Get the skills corresponding to the given segment."""
+    """Get the skills and actions corresponding to the given segment."""
     all_segment = get_segments(video_id)
     conn = sqlite3.connect("cache.db")
     c = conn.cursor()
@@ -1336,6 +1230,11 @@ def setup_handlers(web_app):
     # Add route for getting csv data
     data_pattern = url_path_join(base_url, "jlab_ext_example", "data")
     handlers = [(data_pattern, DataHandler)]
+    web_app.add_handlers(host_pattern, handlers)
+
+    # Add route for getting csv data
+    update_seq_pattern = url_path_join(base_url, "jlab_ext_example", "update_seq")
+    handlers = [(update_seq_pattern, UpdateSeqHandler)]
     web_app.add_handlers(host_pattern, handlers)
 
     # Add route for getting video segments

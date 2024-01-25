@@ -1,0 +1,7 @@
+{
+    "1": "```R\\nlibrary(tidyverse)\\nrecent_grads <- read_csv(\"https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2018/2018-10-16/recent-grads.csv\")\\n```",
+    "3": "```R\\nrecent_grads %>%\\n  ggplot(aes(Median)) +\\n  geom_histogram()\\n```",
+    "5": "```R\\nrecent_grads %>%\\n  mutate(Major_category = fct_reorder(Major_category, Median)) %>%\\n  ggplot(aes(Major_category, Median, fill = Major_category)) +\\n  geom_boxplot() +\\n scale_y_continuous(labels = dollar_format()) +\\n coord_flip()\\n```",
+    "7": "```R\\nrecent_grads %>%\\n  group_by(Major_category) %>%\\n  summarize(Median = median(Median)) %>%\\n  mutate(Major_category = fct_reorder(Major_category, Median)) %>%\\n  ggplot(aes(Major_category, Median)) +\\n  geom_col() +\\n  scale_y_continuous(labels = dollar_format()) +\\n  coord_flip()\\n```",
+    "9": "```R\\nrecent_grads %>%\\n  arrange(desc(Median)) %>%\\n  select(Major, Major_category, Median, P25th, P75th)\\n  head(20) %>%\\n  mutate(Major = fct_reorder(Major, Median)) %>%\\n  ggplot(aes(Major, Median) +\\n  geom_point() +\\n  coord_flip()\\n```"
+}

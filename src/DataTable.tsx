@@ -24,6 +24,13 @@ interface ICsvData {
   columns: IColumnDefs[];
 }
 
+const defaultColDef = {
+  sortable: true,
+  filter: true,
+  resizable: true,
+  editable: true
+};
+
 function parseCsv(csvData: string) {
   let parsedData: any[] = [];
 
@@ -99,8 +106,16 @@ const DataTableComponent = (props: IDataTableProps): JSX.Element => {
               <AgGridReact
                 columnDefs={data.columns}
                 rowData={data.data}
+                defaultColDef={defaultColDef}
+                animateRows={true}
+                rowSelection="multiple"
+                onGridReady={params => params.api.sizeColumnsToFit()}
+                onCellValueChanged={event =>
+                  console.log('Cell Value Changed', event)
+                }
+                onSelectionChanged={event => console.log('Row Selected', event)}
                 key={index}
-              ></AgGridReact>
+              />
             )
         )}
       </div>
