@@ -1,6 +1,7 @@
 # handler.py
 import os
 import re
+import ast
 import json
 import math
 import isodate
@@ -26,6 +27,10 @@ from langchain.prompts import (
 from langchain.chains import LLMChain
 from langchain.chat_models import ChatOpenAI
 from langchain.memory import ConversationSummaryMemory
+from BCEmbedding import RerankerModel
+
+# init reranker model
+model = RerankerModel(model_name_or_path="maidalun1020/bce-reranker-base_v1")
 
 # YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 # OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -46,6 +51,7 @@ bkt_params = {}
 user_id = "1"
 previous_notebook = '[{"cell_type":"code","source":"","output_type":null}]'
 last_practicing_skill = None
+learned_functions = []
 CUR_SEQ = []  # The current sequence of moves
 with open("eda.json", "r") as file:
     # Parse the file and convert JSON data into a Python dictionary
@@ -140,14 +146,39 @@ class ChatHandler(APIHandler):
                 current_move = CUR_SEQ[0]
                 move_detail = eda_video[category][current_move]
                 input_data = {}
-                if move_detail["parameters"]["transcript"]:
+                # Get whatever parameters when current segment needs
+                if "transcript" in move_detail["parameters"]:
                     input_data["transcript"] = get_segment_transcript(
                         video_id, segment["start"], segment["end"], category
                     )["transcript"]
-                if move_detail["parameters"]["data"]:
+                if "data" in move_detail["parameters"]:
                     input_data["data"] = dataset
-                if move_detail["parameters"]["code"]:
+                if "code" in move_detail["parameters"]:
                     input_data["tutor's code"] = all_code[str(segment_index)]
+                if "func-attri-to-learn" in move_detail["parameters"]:
+                    _, functions_to_learn, attributes_to_learn = get_function_attribute(
+                        video_id, segment_index, all_code
+                    )
+                    input_data["functions_to_learn"] = str(functions_to_learn)
+                    input_data["attributes_to_learn"] = str(attributes_to_learn)
+                    if "step-index" in move_detail["parameters"]:
+                        step_index = get_step_index(video_id, segment_index)
+                        input_data["step_index"] = step_index
+                        input_data["functions_to_learn"] = str(
+                            functions_to_learn[step_index]
+                        )
+                        input_data["attributes_to_learn"] = str(
+                            attributes_to_learn[step_index]
+                        )
+                if "key-points" in move_detail["parameters"]:
+                    key_points, _, _ = get_function_attribute(
+                        video_id, segment_index, all_code
+                    )
+                    input_data["key_points"] = str(key_points)
+                    if "step-index" in move_detail["parameters"]:
+                        step_index = get_step_index(video_id, segment_index)
+                        input_data["key_points"] = str(key_points[step_index])
+                        input_data["step_index"] = step_index
                 pedagogy = move_detail["action"]
                 input_data["pedagogy"] = (
                     "Use the following structure to respond: " + pedagogy
@@ -166,13 +197,45 @@ class ChatHandler(APIHandler):
                 need_response = True
                 interaction = "plain text"
             else:
-                input_data = {
-                    "student's code": notebook,
-                    "pedagogy": "Use one sentence to let the student watch the next video segment.",
-                }
+                interaction = "auto-reply"
+                pedagogy = "Feel free to go ahead to the next video clip!"
+
+            if interaction == "auto-reply":
+                results = pedagogy
                 need_response = True
-                interaction = "plain text"
-            results = conversation({"input": str(input_data)})["text"]
+            elif interaction == "show-code":
+                results = pedagogy + "\n" + all_code[str(segment_index)]
+                need_response = True
+            else:
+                results = conversation({"input": str(input_data)})["text"]
+                if "code-with-blanks" in move_detail["parameters"]:
+                    code_with_blanks = get_code_with_blank(
+                        video_id, segment_index, all_code
+                    )
+                    results = (
+                        results
+                        + " Let's learn how to create that visualization. Here is the structure of the code:"
+                        + "\n"
+                        + code_with_blanks
+                    )
+                if "code-line" in move_detail["parameters"]:
+                    code_line, _ = get_code_with_blank_by_step(
+                        video_id, segment_index, all_code, step_index
+                    )
+                    results = results + "\n" + "```R" + code_line + "```"
+                if "code-line-with-blanks" in move_detail["parameters"]:
+                    _, code_line_with_blanks = get_code_with_blank_by_step(
+                        video_id, segment_index, all_code, step_index
+                    )
+                    results = (
+                        results
+                        + " Please fill in the blanks in the code below"
+                        + "\n"
+                        + "```R"
+                        + code_line_with_blanks
+                        + "```"
+                    )
+
             response_data = {
                 "message": results,
                 "need_response": need_response,
@@ -208,7 +271,8 @@ class GoOnHandler(APIHandler):
 class UpdateSeqHandler(APIHandler):
     @tornado.web.authenticated
     def post(self):
-        global CUR_SEQ, bkt_params
+        """Update the sequence of moves depending on the mastery of the skill and category."""
+        global CUR_SEQ, bkt_params, learned_functions
         data = self.get_json_body()
         video_id = data["videoId"]
         segment_index = data["segmentIndex"]
@@ -233,6 +297,47 @@ class UpdateSeqHandler(APIHandler):
             else:
                 CUR_SEQ = eda_video[category]["Sequence"]["upper"].copy()
                 print("upper:" + str(CUR_SEQ))
+            if category == "Visualizing the data":
+                # Find out the proper pedagogy for Visualizing the data segment
+                _, functions_to_learn, _ = get_function_attribute(
+                    video_id, segment_index, all_code
+                )
+                # filter out functions that are not learned before
+                filtered_functions_to_learn = [
+                    [
+                        function
+                        for function in sublist
+                        if function not in learned_functions
+                    ]
+                    for sublist in functions_to_learn
+                ]
+                CUR_SEQ = ["Modeling"]
+                for function_to_learn in filtered_functions_to_learn:
+                    if function_to_learn == []:
+                        CUR_SEQ.append("Scaffolding")
+                    else:
+                        CUR_SEQ.append("Coaching")
+                CUR_SEQ.append("Reflection")
+                initialze_database()
+                conn = sqlite3.connect("cache.db")
+                c = conn.cursor()
+                c.execute(
+                    "SELECT * FROM learning_progress_cache WHERE user_id = ? AND video_id = ? AND segment_index = ?",
+                    (user_id, video_id, segment_index),
+                )
+                row = c.fetchone()
+                if not row:
+                    c.execute(
+                        "INSERT INTO learning_progress_cache VALUES (?, ?, ?, ?)",
+                        (
+                            user_id,
+                            video_id,
+                            segment_index,
+                            0,
+                        ),
+                    )
+                conn.commit()
+                conn.close()
             print("CUR_SEQ updated successfully: " + str(CUR_SEQ))
 
 
@@ -341,6 +446,28 @@ def initialze_database():
         PRIMARY KEY (video_id, segment_index)
     );"""
     )
+    c.execute(
+        """
+    CREATE TABLE IF NOT EXISTS function_attribute_cache (
+        video_id TEXT,
+        segment_index NUMBER NOT NULL,
+        key_points TEXT NOT NULL,
+        functions_to_learn TEXT NOT NULL,
+        attributes_to_learn TEXT NOT NULL,
+        code_with_blanks TEXT,
+        PRIMARY KEY (video_id, segment_index)
+    );"""
+    )
+    c.execute(
+        """
+    CREATE TABLE IF NOT EXISTS learning_progress_cache (
+        user_id TEXT,
+        video_id TEXT NOT NULL,
+        segment_index NUMBER NOT NULL,
+        step_index NUMBER NOT NULL,
+        PRIMARY KEY (user_id, video_id, segment_index)
+    );"""
+    )
     skills_by_category = {
         "Load packages/data": [
             "Load package and data successfully",
@@ -348,10 +475,10 @@ def initialze_database():
         "Understand the dataset": [
             "Observe and understand the dataset",
         ],
-        "Data visualization": [
+        "Visualizing the data": [
             "Use plot to visualize the data",
         ],
-        "Chart interpretation": [
+        "Interpret the chart": [
             "Propose reason behind the pattern",
         ],
         "Data processing": ["Reorder, group or summarize data"],
@@ -364,16 +491,20 @@ def initialze_database():
 
     video_id = "nx5yhXAQLxw"
     segments_set = [
-        {"category": "Introduction", "start": 1, "end": 113},
-        {"category": "Load packages/data", "start": 113, "end": 212},
-        {"category": "Understand the dataset", "start": 212, "end": 418},
-        {"category": "Data visualization", "start": 418, "end": 463},
-        {"category": "Chart interpretation", "start": 463, "end": 507},
-        {"category": "Data visualization", "start": 507, "end": 601},
-        {"category": "Chart interpretation", "start": 601, "end": 640},
-        {"category": "Data visualization", "start": 640, "end": 720},
-        {"category": "Chart interpretation", "start": 720, "end": 839},
-        {"category": "Data visualization", "start": 839, "end": 900},
+        {"category": "Introduction", "start": 1, "end": 113},  # 0
+        {"category": "Load packages/data", "start": 113, "end": 212},  # 1
+        {"category": "Understand the dataset", "start": 212, "end": 418},  # 2
+        {"category": "Visualizing the data", "start": 418, "end": 463},  # 3
+        {"category": "Interpret the chart", "start": 463, "end": 507},  # 4
+        {"category": "Visualizing the data", "start": 507, "end": 601},  # 5
+        {"category": "Interpret the chart", "start": 601, "end": 640},  # 6
+        {"category": "Visualizing the data", "start": 640, "end": 720},  # 7
+        {"category": "Interpret the chart", "start": 720, "end": 848},  # 8
+        {"category": "Visualizing the data", "start": 848, "end": 971},  # 9
+        {"category": "Interpret the chart", "start": 971, "end": 1101},  # 10
+        {"category": "Data processing", "start": 1101, "end": 1145},  # 11
+        {"category": "Interpret the chart", "start": 1145, "end": 1177},  # 12
+        {"category": "Visualizing the data", "start": 1177, "end": 1371},  # 13
     ]
     segments_json = json.dumps(segments_set)
     c.execute("SELECT * FROM segments_cache WHERE video_id = ?", (video_id,))
@@ -390,13 +521,13 @@ def initialze_database():
         {"category": "Load packages/data", "start": 102, "end": 137},
         {"category": "Understand the dataset", "start": 137, "end": 220},
         {"category": "Data processing", "start": 220, "end": 568},
-        {"category": "Data visualization", "start": 568, "end": 580},
-        {"category": "Chart interpretation", "start": 580, "end": 596},
-        {"category": "Data visualization", "start": 596, "end": 655},
-        {"category": "Chart interpretation", "start": 655, "end": 680},
+        {"category": "Visualizing the data", "start": 568, "end": 580},
+        {"category": "Interpret the chart", "start": 580, "end": 596},
+        {"category": "Visualizing the data", "start": 596, "end": 655},
+        {"category": "Interpret the chart", "start": 655, "end": 680},
         {"category": "Data processing", "start": 680, "end": 715},
-        {"category": "Chart interpretation", "start": 715, "end": 740},
-        {"category": "Data visualization", "start": 740, "end": 900},
+        {"category": "Interpret the chart", "start": 715, "end": 740},
+        {"category": "Visualizing the data", "start": 740, "end": 900},
     ]
     segments_json = json.dumps(segments_set)
     c.execute("SELECT * FROM segments_cache WHERE video_id = ?", (video_id,))
@@ -759,8 +890,8 @@ def get_video_segment(video_id, length=600):
                                 Introduction: Passages where the speaker provides an introductory overview, greets the audience or sets the stage for what's to come.
                                 Load data/packages: Segments where there's explicit mention or inference of loading datasets, files, or importing necessary libraries/packages. Look for indications of data initialization or software setup.
                                 Initial observation on raw data: Look for sections where the speaker gives first impressions, immediate observations, or general descriptions of the initial dataset without going into deeper analysis.
-                                Data visualization: Identify sections where the instructor discusses or showcases the creation of plots, graphs, charts, or any other visual representations of data. This may include setting up visualizations or the mere mention of them.
-                                Chart interpretation/insights: Pinpoint passages where the instructor delves into the interpretation of previously shown visualizations, explaining trends, patterns, anomalies, or drawing conclusions from them.
+                                Visualizing the data: Identify sections where the instructor discusses or showcases the creation of plots, graphs, charts, or any other visual representations of data. This may include setting up visualizations or the mere mention of them.
+                                Interpret the chart: Pinpoint passages where the instructor delves into the interpretation of previously shown visualizations, explaining trends, patterns, anomalies, or drawing conclusions from them.
                                 Data processing: Find instances where the instructor outlines procedures to cleanse, transform, reshape, or otherwise manipulate the raw data. This could be filtering, aggregation, reshaping, etc.
 
                                 Note:
@@ -844,8 +975,8 @@ def get_skills(video_id):
                     {
                         "Load data/packages": ["Load data directly with a URL", "Load necessary packages for EDA"], 
                         "Initial observation on raw data": ["Understanding column definitions", "Making assumptions based on data"],
-                        "Data visualization": ["Use box plot to visualise the data", "Use histograms to visualise the data", "Use dot plot to visualise the data", "Customize plot appearance"],
-                        "Chart interpretation/insights": ["Interpret visualizations", "Generate hypotheses for the next visualization", "Identify outliers in the data"],
+                        "Visualizing the data": ["Use box plot to visualise the data", "Use histograms to visualise the data", "Use dot plot to visualise the data", "Customize plot appearance"],
+                        "Interpret the chart": ["Interpret visualizations", "Generate hypotheses for the next visualization", "Identify outliers in the data"],
                         "Data processing": ["Reorder data", "Group and summarize data"]
                     }
                     """,
@@ -1140,7 +1271,7 @@ def get_skill_action_by_segment(video_id, segment_index):
                 "content": """
                         You are an expert in Exploratory Data Analysis (EDA).
                         Given the transcript of an EDA tutorial video segment, summarize the !!EDA!! skills used by the video author in the segment with a detailed and accurate description of the action taken by the video author for each skill.
-                        Only choose the skills corresponding to the category. For example, there should not be "Interpret visualization" or "Make assumptions" in a "Data visualization" segment.
+                        Only choose the skills corresponding to the category. For example, there should not be "Interpret visualization" or "Make assumptions" in a "Visualizing the data" segment.
                         Use the same expression in the skill set to answer. Response in this format: {"skill_1": "action_1", "skill_2": "action_2", ...}
                         Note: the skills' order in the result should follow the order in which skills appear in the video.
                         """,
@@ -1221,6 +1352,218 @@ def bkt_params_to_database():
     )
     conn.commit()
     conn.close()
+
+
+def parse_function_in_code(code_block):
+    """Parse and extract all the functions in a R code block."""
+    # Updated regex pattern to include function names with periods
+    pattern = re.compile(r"\b([a-z_][\w.]*)\s*(?=\()", re.IGNORECASE)
+
+    # Find all matches in the code block
+    functions = pattern.findall(code_block)
+
+    # Removing duplicates and sorting the list
+    unique_functions = sorted(set(functions))
+    return unique_functions
+
+
+def get_function_attribute(video_id, segment_index, code_json):
+    """Get the functions and attributes to learn in a video segment."""
+    conn = sqlite3.connect("cache.db")
+    c = conn.cursor()
+    c.execute(
+        "SELECT key_points, functions_to_learn, attributes_to_learn FROM function_attribute_cache WHERE video_id = ? AND segment_index = ?",
+        (video_id, segment_index),
+    )
+    row = c.fetchone()
+    if row:
+        # Convert each string in the tuple to a Python object using ast.literal_eval
+        key_points = ast.literal_eval(row[0])
+        functions_to_learn = ast.literal_eval(row[1])
+        attributes_to_learn = ast.literal_eval(row[2])
+        return key_points, functions_to_learn, attributes_to_learn
+    all_segment = get_segments(video_id)
+    start_time = all_segment[segment_index]["start"]
+    end_time = all_segment[segment_index]["end"]
+    segment_transcript = get_segment_transcript(video_id, start_time, end_time, "")[
+        "transcript"
+    ]
+    if end_time - start_time > 100:
+        num = "four"
+    elif end_time - start_time < 50:
+        num = "two"
+    else:
+        num = "three"
+    code_block = code_json[str(segment_index)]
+    # get the key points list
+    response = openai.ChatCompletion.create(
+        model="gpt-4-1106-preview",
+        messages=[
+            {
+                "role": "system",
+                "content": f"""You are an expert teaching assistant who can summarize key points to learn in a tutorial video. A student is watching a tutorial video segment to learn exploratory data analysis. 
+                            He needs to learn the procedural knowledge which represents the ability to organize rules and apply algorithms in such a way that specific goals can be achieved.
+                            Your task is to follow the rules below to summarize no more than {num} key procedural knowledge to learn in the video. The video transcript and the code block corresponds to the video are given.
+                            Rules you must follow:
+                            - Don't include anything that is demonstrated to be not useful in the video transcript.
+                            - Don't include anything as key points if it is just mentioned in the transcript in only one sentence rather than describe in detail.
+                            - Don't include anything that are not in the code block as key points. Don't include customizing the plot as key points.
+                            - The student is learning exploratory data analysis rather than the R language syntax, so you must focus on the procedural knowledge.
+                            - Each key point should be as brief and clear as possible and should follow this format: 'Use ${{function}} on ${{data attribute}} to achieve ${{effect}} because ${{reason}}'
+                            Respond in the following format: ['key point 1', 'key point 2', ...]
+                            """,
+            },
+            {
+                "role": "user",
+                "content": f"transcript: {segment_transcript}, code block: {code_block}",
+            },
+        ],
+        temperature=0.2,
+    )
+    key_points = ast.literal_eval(response.choices[0].message.content)
+    # get all functions in the current code block
+    all_functions = parse_function_in_code(code_block)
+    # get all attributes in the dataset
+    df = pd.read_csv("recent-grads.csv")
+    all_attributes = df.columns.tolist()
+    # map the key points to functions and attributes to learn
+    functions_to_learn = []
+    attributes_to_learn = []
+    # avoid duplicate funcitons
+    seen_functions = set()
+    # seen_attributes = set()
+    thres_func = 0.51
+    thres_attri = 0.50
+    for key_point in key_points:
+        rerank_results_functions = model.rerank(key_point, all_functions)
+        rerank_results_attributes = model.rerank(key_point, all_attributes)
+        # print(rerank_results_functions, rerank_results_attributes)
+        functions_over_05 = [
+            passage
+            for passage, score in zip(
+                rerank_results_functions["rerank_passages"],
+                rerank_results_functions["rerank_scores"],
+            )
+            if score > thres_func and passage not in seen_functions
+        ]
+        attributes_over_05 = [
+            passage
+            for passage, score in zip(
+                rerank_results_attributes["rerank_passages"],
+                rerank_results_attributes["rerank_scores"],
+            )
+            if score > thres_attri
+        ]
+        functions_to_learn.append(functions_over_05)
+        attributes_to_learn.append(attributes_over_05)
+        # Update the sets of seen functions and attributes
+        seen_functions.update(functions_over_05)
+        # seen_attributes.update(attributes_over_05)
+    c.execute(
+        "INSERT INTO function_attribute_cache VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            video_id,
+            segment_index,
+            str(key_points),
+            str(functions_to_learn),
+            str(attributes_to_learn),
+            "",
+        ),
+    )
+    conn.commit()
+    conn.close()
+    return key_points, functions_to_learn, attributes_to_learn
+
+
+def get_code_with_blank(video_id, segment_index, code_json):
+    """Get the code block with blanks for the given video segment."""
+    initialze_database()
+    conn = sqlite3.connect("cache.db")
+    c = conn.cursor()
+    c.execute(
+        "SELECT code_with_blanks FROM function_attribute_cache WHERE video_id = ? AND segment_index = ?",
+        (video_id, segment_index),
+    )
+    row = c.fetchone()
+    if row[0] != "":
+        return row[0]
+    # get the code block
+    _, functions_to_learn, attributes_to_learn = get_function_attribute(
+        video_id, segment_index, code_json
+    )
+    code_block = code_json[str(segment_index)]
+    # get the code with blank
+    response = openai.ChatCompletion.create(
+        model="gpt-4-1106-preview",
+        messages=[
+            {
+                "role": "system",
+                "content": """You are an expert teaching assistant who can understand and write R code.
+                                Your task is to use the given code block and functions/attributes to learn, make the functions and attributes to learn in the code as blanks for students to fill out.
+                                You should not respond with any comments or explanations. Each blank should be an underline.
+                                Respond in the following format: ```{{r code with blanks}}```
+                            """,
+            },
+            {
+                "role": "user",
+                "content": f"functions to learn: {str(functions_to_learn)}, attributes to learn: {str(attributes_to_learn)}, code block: {str(code_block)}",
+            },
+        ],
+        temperature=0.2,
+    )
+    code_with_blanks = response.choices[0].message.content
+    c.execute(
+        "UPDATE function_attribute_cache SET code_with_blanks = ? WHERE video_id = ? AND segment_index = ?",
+        (code_with_blanks, video_id, segment_index),
+    )
+    conn.commit()
+    conn.close()
+    return code_with_blanks
+
+
+def get_step_index(video_id, segment_index):
+    """Get the step index for a video segment."""
+    initialze_database()
+    conn = sqlite3.connect("cache.db")
+    c = conn.cursor()
+    c.execute(
+        "SELECT step_index FROM learning_progress_cache WHERE user_id = ? AND video_id = ? AND segment_index = ?",
+        (user_id, video_id, segment_index),
+    )
+    row = c.fetchone()
+    return row[0]
+
+
+def get_code_with_blank_by_step(video_id, segment_index, code_json, step_index):
+    """Get the code with blank by step index for a video segment."""
+    key_points, _, _ = get_function_attribute(video_id, segment_index, code_json)
+    code_with_blanks = get_code_with_blank(video_id, segment_index, code_json)
+    code_block = code_json[str(segment_index)]
+    # Split the code block into a list by newline character
+    code_lines = code_block.split("\\n")[1:-1]
+    code_lines_with_blanks = code_with_blanks.split("\n")[1:-1]
+    # your query and corresponding passages
+    query = key_points[step_index]
+    # rerank passages
+    rerank_results = model.rerank(query, code_lines)
+    functions_over_05 = [
+        passage
+        for passage, score in zip(
+            rerank_results["rerank_passages"], rerank_results["rerank_scores"]
+        )
+        if score > 0.6
+    ]
+    line_index = []
+    for item in functions_over_05:
+        line_index.append(code_lines.index(item))
+    line_index.sort()
+    # Extract the lines corresponding to the given indices
+    selected_lines = [code_lines[i] for i in line_index]
+    selected_lines_with_blank = [code_lines_with_blanks[i] for i in line_index]
+    # Combine the selected lines into a new string, separated by new lines
+    combined_code = "\n".join(selected_lines)
+    combined_code_with_blank = "\n".join(selected_lines_with_blank)
+    return combined_code, combined_code_with_blank
 
 
 def setup_handlers(web_app):

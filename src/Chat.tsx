@@ -35,9 +35,8 @@ import FormControlLabel from '@mui/material/FormControlLabel';
 import FormControl from '@mui/material/FormControl';
 import FormLabel from '@mui/material/FormLabel';
 import Box from '@mui/material/Box';
-// import AceEditor from 'react-ace';
-// import 'ace-builds/src-noconflict/mode-r'; // import the mode for the language you need
-// import 'ace-builds/src-noconflict/theme-monokai'; // import the theme of your choice
+import SyntaxHighlighter from 'react-syntax-highlighter';
+import { docco } from 'react-syntax-highlighter/dist/esm/styles/hljs';
 
 export interface ISegment {
   start: number;
@@ -55,6 +54,7 @@ interface IMessage {
   end: number | null;
   category: string | null;
   interaction: string | null;
+  code: string | null;
 }
 
 interface ICellOutput {
@@ -88,7 +88,8 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
       start: null,
       end: null,
       category: null,
-      interaction: 'plain text'
+      interaction: 'plain text',
+      code: null
     }
   ]);
   const [isTyping, setIsTyping] = useState(false);
@@ -168,7 +169,8 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
         start: null,
         end: null,
         category: null,
-        interaction: 'plain text'
+        interaction: 'plain text',
+        code: null
       };
 
       setMessages(prevMessages => [...prevMessages, newMessage]);
@@ -202,7 +204,8 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                 start: response[0].start,
                 end: response[0].end,
                 category: response[0].category,
-                interaction: 'plain text'
+                interaction: 'plain text',
+                code: null
               }
             ]);
             setIsTyping(false);
@@ -297,44 +300,36 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
           .then(response => {
             // console.log(response);
             setSelectedChoice('');
-            setMessages(prevMessages => [
-              ...prevMessages,
-              {
-                message: response.message,
-                sentTime: `${currentTime} seconds`,
-                direction: 'incoming',
-                sender: 'iTutor',
-                videoId: null,
-                start: null,
-                end: null,
-                category: null,
-                interaction: response.interaction
-              }
-            ]);
+            // Remove code blocks from the message before setting it
+            const messageWithoutCode = response.message.replace(codeRegex, '');
             // Extract code blocks from the response
             let match;
+            let codeBlock: string;
             while ((match = codeRegex.exec(response.message)) !== null) {
-              const code = match[2].trim();
+              codeBlock = match[2].trim().replace(/\\n/g, '\n');
+              // Remove the first newline character if it exists at the beginning of the string
+              codeBlock = codeBlock.replace(/^\n/, '');
               // console.log(code);
-              if (code) {
+              if (codeBlock) {
                 // setCode(code);
-                const activatedNotebook = props.getCurrentNotebook();
-                if (activatedNotebook) {
-                  try {
-                    NotebookActions.insertBelow(activatedNotebook);
-                    const newCellIndex = activatedNotebook.activeCellIndex;
-                    const newCell = activatedNotebook.widgets[
-                      newCellIndex
-                    ] as CodeCell;
-                    if (newCell) {
-                      newCell.model.sharedModel.setSource(code);
-                      // Add unique identifier to the new cell's node
-                      const uniqueID = `flash-${Date.now()}`;
-                      newCell.node.id = uniqueID;
+                if (response.interaction === 'show-code') {
+                  const activatedNotebook = props.getCurrentNotebook();
+                  if (activatedNotebook) {
+                    try {
+                      NotebookActions.insertBelow(activatedNotebook);
+                      const newCellIndex = activatedNotebook.activeCellIndex;
+                      const newCell = activatedNotebook.widgets[
+                        newCellIndex
+                      ] as CodeCell;
+                      if (newCell) {
+                        newCell.model.sharedModel.setSource(codeBlock);
+                        // Add unique identifier to the new cell's node
+                        const uniqueID = `flash-${Date.now()}`;
+                        newCell.node.id = uniqueID;
 
-                      // Create dynamic CSS rules
-                      const styleEl = document.createElement('style');
-                      styleEl.innerHTML = `
+                        // Create dynamic CSS rules
+                        const styleEl = document.createElement('style');
+                        styleEl.innerHTML = `
                         @keyframes flashAnimation {
                           0% { background-color: yellow; }
                           100% { background-color: initial; }
@@ -343,23 +338,41 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                           animation: flashAnimation 1s ease;
                         }
                       `;
-                      // Inject dynamic CSS into the DOM
-                      document.head.appendChild(styleEl);
+                        // Inject dynamic CSS into the DOM
+                        document.head.appendChild(styleEl);
 
-                      // Remove dynamic CSS and ID after 1 second
-                      setTimeout(() => {
-                        styleEl.remove();
-                        newCell.node.id = '';
-                      }, 2000);
+                        // Remove dynamic CSS and ID after 1 second
+                        setTimeout(() => {
+                          styleEl.remove();
+                          newCell.node.id = '';
+                        }, 2000);
+                      }
+                    } catch (error) {
+                      console.error(error);
                     }
-                  } catch (error) {
-                    console.error(error);
+                  } else {
+                    console.error('No active notebook');
                   }
                 } else {
-                  console.error('No active notebook');
+                  // Function to show code in a pad with highlighted syntax
                 }
               }
             }
+            setMessages(prevMessages => [
+              ...prevMessages,
+              {
+                message: messageWithoutCode,
+                sentTime: `${currentTime} seconds`,
+                direction: 'incoming',
+                sender: 'iTutor',
+                videoId: null,
+                start: null,
+                end: null,
+                category: null,
+                interaction: response.interaction,
+                code: codeBlock
+              }
+            ]);
             setIsTyping(false);
             // New logic to check for 'need_response'
             if (!response.need_response) {
@@ -367,6 +380,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                 handleSend('');
               }, 0);
             }
+            // setCode('');
           })
           .catch(reason => {
             console.error(`Error on POST /jlab_ext_example/chats .\n${reason}`);
@@ -436,7 +450,8 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
           start: nextSegment.start, // Store the start and end times in the message
           end: nextSegment.end,
           category: nextSegment.category,
-          interaction: null
+          interaction: null,
+          code: null
         }
       ]);
     } else if (currentSegmentIndex < segments.length + 2) {
@@ -453,7 +468,8 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
           start: null, // Store the start and end times in the message
           end: null,
           category: 'Self-exploration',
-          interaction: 'plain text'
+          interaction: 'plain text',
+          code: null
         }
       ]);
     } else {
@@ -468,7 +484,8 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
           start: null, // Store the start and end times in the message
           end: null,
           category: 'Conclusion',
-          interaction: 'plain text'
+          interaction: 'plain text',
+          code: null
         }
       ]);
     }
@@ -660,15 +677,23 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                         }}
                       />
                     )}
-                    {/* {code && (
-                      <AceEditor
-                        mode="r" // change this to match the language of your code
-                        theme="monokai"
-                        value={code}
-                        name="codeEditor"
-                        style={{ width: '100%', height: '200px' }}
-                      />
-                    )} */}
+                    {message.code && (
+                      <div style={{ width: '61.8%', marginBottom: '20px' }}>
+                        <SyntaxHighlighter
+                          language="r"
+                          style={docco}
+                          wrapLines={true}
+                          lineProps={{
+                            style: {
+                              wordWrap: 'break-word',
+                              whiteSpace: 'pre-wrap'
+                            }
+                          }}
+                        >
+                          {message.code}
+                        </SyntaxHighlighter>
+                      </div>
+                    )}
                     {message.videoId && (
                       <div
                         style={{
