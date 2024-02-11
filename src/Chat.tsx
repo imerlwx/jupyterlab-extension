@@ -26,7 +26,7 @@ import {
   KernelError
 } from '@jupyterlab/notebook';
 import YouTube, { YouTubeEvent } from 'react-youtube';
-import { Button } from '@mui/material';
+import { Button, Box, Typography } from '@mui/material';
 import { ISignal, Signal } from '@lumino/signaling';
 import { Cell, CodeCell, ICellModel } from '@jupyterlab/cells';
 import Radio from '@mui/material/Radio';
@@ -34,9 +34,14 @@ import RadioGroup from '@mui/material/RadioGroup';
 import FormControlLabel from '@mui/material/FormControlLabel';
 import FormControl from '@mui/material/FormControl';
 import FormLabel from '@mui/material/FormLabel';
-import Box from '@mui/material/Box';
 import SyntaxHighlighter from 'react-syntax-highlighter';
 import { docco } from 'react-syntax-highlighter/dist/esm/styles/hljs';
+import axios from 'axios';
+import InputLabel from '@mui/material/InputLabel';
+import MenuItem from '@mui/material/MenuItem';
+import Select, { SelectChangeEvent } from '@mui/material/Select';
+import Papa from 'papaparse';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
 
 export interface ISegment {
   start: number;
@@ -64,6 +69,14 @@ interface ICellOutput {
 export interface IVideoId {
   videoId: string;
 }
+
+interface IStatistics {
+  mean: number;
+  median: number;
+  std: number;
+}
+
+type DataRow = Record<string, any>;
 
 type ChatComponentProps = {
   onVideoIdChange: (videoId: IVideoId) => void;
@@ -107,7 +120,45 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
   const [isAlredaySend, setIsAlredaySend] = useState(false);
   const [needHint, setNeedHint] = useState(false);
   const [selectedChoice, setSelectedChoice] = React.useState('');
+  const [data, setData] = useState<DataRow[]>([]);
+  const [selectedColumn, setSelectedColumn] = useState<string>('');
+  const [statistics, setStatistics] = useState<IStatistics | null>(null);
+  const [columnNames, setColumnNames] = useState<string[]>([]);
+  const [histogramData, setHistogramData] = useState<any[]>([]);
   // const [code, setCode] = React.useState<string>('');
+
+  // dataset url and data attributes descriptions
+  const datasetUrl =
+    'https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2018/2018-10-16/recent-grads.csv';
+  const columnDescriptions: { [key: string]: string } = {
+    Rank: 'Rank by median earnings',
+    Major_code: 'Major code, FO1DP in ACS PUMS',
+    Major: 'Major description',
+    Major_category: 'Category of major from Carnevale et al',
+    Total: 'Total number of people with major',
+    Sample_size:
+      'Sample size (unweighted) of full-time, year-round ONLY (used for earnings)',
+    Men: 'Male graduates',
+    Women: 'Female graduates',
+    ShareWomen: 'Women as share of total',
+    Employed: 'Number employed (ESR == 1 or 2)',
+    Full_time: 'Employed 35 hours or more',
+    Part_time: 'Employed less than 35 hours',
+    Full_time_year_round:
+      'Employed at least 50 weeks (WKW == 1) and at least 35 hours (WKHP >= 35)',
+    Unemployed: 'Number unemployed (ESR == 3)',
+    Unemployment_rate: 'Unemployed / (Unemployed + Employed)',
+    Median: 'Median earnings of full-time, year-round workers',
+    P25th: '25th percentile of earnings',
+    P75th: '75th percentile of earnings',
+    College_jobs: 'Number with job requiring a college degree',
+    Non_college_jobs: 'Number with job not requiring a college degree',
+    Low_wage_jobs: 'Number in low-wage service jobs'
+  };
+  const description =
+    selectedColumn in columnDescriptions
+      ? columnDescriptions[selectedColumn]
+      : 'Description not found';
 
   const handleReady = (event: YouTubeEvent<number>) => {
     setPlayer(event.target);
@@ -589,6 +640,95 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     };
   }, []);
 
+  useEffect(() => {
+    axios.get(datasetUrl).then(response => {
+      parseCSV(response.data, parsedData => {
+        if (parsedData.length > 0) {
+          const columns = Object.keys(parsedData[0]);
+          console.log('Columns:', columns);
+          setColumnNames(columns);
+          setData(parsedData);
+        }
+      });
+    });
+  }, [datasetUrl]);
+
+  function parseCSV(
+    csvData: string,
+    callback: (data: DataRow[]) => void
+  ): void {
+    Papa.parse(csvData, {
+      header: true,
+      complete: results => {
+        console.log('Parsed Data:', results.data);
+        callback(results.data as DataRow[]);
+      },
+      skipEmptyLines: true
+    });
+  }
+
+  useEffect(() => {
+    if (selectedColumn && data.length > 0) {
+      const columnData: number[] = data
+        .map(row => parseFloat(row[selectedColumn]))
+        .filter(value => !isNaN(value));
+      const mean =
+        columnData.reduce((acc, val) => acc + val, 0) / columnData.length;
+      const sortedColumnData = [...columnData].sort((a, b) => a - b);
+      const mid = Math.floor(sortedColumnData.length / 2);
+      const median =
+        sortedColumnData.length % 2 !== 0
+          ? sortedColumnData[mid]
+          : (sortedColumnData[mid - 1] + sortedColumnData[mid]) / 2;
+      const std = Math.sqrt(
+        columnData
+          .map(val => (val - mean) ** 2)
+          .reduce((acc, val) => acc + val, 0) / columnData.length
+      );
+
+      setStatistics({ mean, median, std });
+      console.log({ mean, median, std });
+      const newHistogramData = calculateHistogramData(data, selectedColumn);
+      setHistogramData(newHistogramData);
+    }
+  }, [selectedColumn, data]);
+
+  const handleChange = (event: SelectChangeEvent) => {
+    setSelectedColumn(event.target.value);
+  };
+
+  function calculateHistogramData(
+    data: DataRow[],
+    selectedColumn: string,
+    bins: number = 10
+  ): any[] {
+    if (!data.length || !selectedColumn) {
+      return [];
+    }
+
+    // Extract column values and filter out non-numeric data
+    const columnData: number[] = data
+      .map(row => parseFloat(row[selectedColumn]))
+      .filter(value => !isNaN(value));
+
+    const max = Math.max(...columnData);
+    const min = Math.min(...columnData);
+    const range = max - min;
+    const binSize = range / bins;
+    const histogramData = Array.from({ length: bins }, (_, i) => ({
+      name: `${(min + binSize * i).toFixed(2)}-${(min + binSize * (i + 1)).toFixed(2)}`,
+      value: 0
+    }));
+
+    // Count frequencies
+    columnData.forEach(value => {
+      const binIndex = Math.min(Math.floor((value - min) / binSize), bins - 1);
+      histogramData[binIndex].value += 1;
+    });
+
+    return histogramData;
+  }
+
   return (
     <div style={{ position: 'relative', height: '100%', width: '100%' }}>
       <MainContainer style={{ height: '100%', width: '100%' }}>
@@ -692,6 +832,73 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                         >
                           {message.code}
                         </SyntaxHighlighter>
+                      </div>
+                    )}
+                    {message.interaction === 'drop-down' && (
+                      <div>
+                        <FormControl
+                          sx={{ minWidth: 120, mt: 2, mb: 2 }}
+                          size="small"
+                        >
+                          <InputLabel id="demo-simple-select-label">
+                            Column
+                          </InputLabel>
+                          <Select
+                            labelId="column-select-label"
+                            id="column-select"
+                            value={selectedColumn}
+                            label="Column"
+                            onChange={handleChange}
+                          >
+                            {columnNames.map(columnName => (
+                              <MenuItem key={columnName} value={columnName}>
+                                {columnName}
+                              </MenuItem>
+                            ))}
+                          </Select>
+                        </FormControl>
+                        {statistics && (
+                          <Box
+                            sx={{
+                              display: 'flex', // Use flex display to align items in a row
+                              alignItems: 'center', // Align items vertically
+                              p: 1,
+                              backgroundColor: 'grey.200',
+                              borderRadius: '4px',
+                              width: '80%',
+                              mb: 2
+                            }}
+                          >
+                            <Box sx={{ flex: 1 }}>
+                              <Typography variant="h6">Statistics</Typography>
+                              <Typography>
+                                Description: {description}
+                              </Typography>
+                              <Typography>
+                                Mean: {statistics.mean.toFixed(2)}
+                              </Typography>
+                              <Typography>
+                                Median: {statistics.median.toFixed(2)}
+                              </Typography>
+                              <Typography>
+                                Standard Deviation: {statistics.std.toFixed(2)}
+                              </Typography>
+                            </Box>
+                            <Box sx={{ flex: 0 }}>
+                              <BarChart
+                                width={350}
+                                height={140}
+                                data={histogramData}
+                              >
+                                <CartesianGrid strokeDasharray="3 3" />
+                                <XAxis dataKey="name" />
+                                <YAxis />
+                                <Tooltip />
+                                <Bar dataKey="value" fill="#8884d8" />
+                              </BarChart>
+                            </Box>
+                          </Box>
+                        )}
                       </div>
                     )}
                     {message.videoId && (

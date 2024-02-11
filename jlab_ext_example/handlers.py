@@ -141,27 +141,36 @@ class ChatHandler(APIHandler):
             initialize_chat_server(kernelType)
 
         if notebook:
+            input_data = {}
+            # Default to None to handle cases where it might not get set
+            move_detail = None
             if question == "" and CUR_SEQ != []:
                 # If the student does not ask a question, get the pedagogy, parameters, etc
                 current_move = CUR_SEQ[0]
                 move_detail = eda_video[category][current_move]
-                input_data = {}
+
                 # Get whatever parameters when current segment needs
-                if "transcript" in move_detail["parameters"]:
+                parameters = move_detail.get(
+                    "parameters", {}
+                )  # Safely get parameters with a default
+
+                if "transcript" in parameters:
                     input_data["transcript"] = get_segment_transcript(
                         video_id, segment["start"], segment["end"], category
                     )["transcript"]
-                if "data" in move_detail["parameters"]:
+
+                if "data" in parameters:
                     input_data["data"] = dataset
-                if "code" in move_detail["parameters"]:
+
+                if "code" in parameters:
                     input_data["tutor's code"] = all_code[str(segment_index)]
-                if "func-attri-to-learn" in move_detail["parameters"]:
+                if "func-attri-to-learn" in parameters:
                     _, functions_to_learn, attributes_to_learn = get_function_attribute(
                         video_id, segment_index, all_code
                     )
                     input_data["functions_to_learn"] = str(functions_to_learn)
                     input_data["attributes_to_learn"] = str(attributes_to_learn)
-                    if "step-index" in move_detail["parameters"]:
+                    if "step-index" in parameters:
                         step_index = get_step_index(video_id, segment_index)
                         input_data["step_index"] = step_index
                         input_data["functions_to_learn"] = str(
@@ -170,12 +179,12 @@ class ChatHandler(APIHandler):
                         input_data["attributes_to_learn"] = str(
                             attributes_to_learn[step_index]
                         )
-                if "key-points" in move_detail["parameters"]:
+                if "key-points" in parameters:
                     key_points, _, _ = get_function_attribute(
                         video_id, segment_index, all_code
                     )
                     input_data["key_points"] = str(key_points)
-                    if "step-index" in move_detail["parameters"]:
+                    if "step-index" in parameters:
                         step_index = get_step_index(video_id, segment_index)
                         input_data["key_points"] = str(key_points[step_index])
                         input_data["step_index"] = step_index
@@ -190,22 +199,26 @@ class ChatHandler(APIHandler):
                     # If the student selects a choice, the response is the choice
                     input_data["student's choice"] = selected_choice
             elif question != "":
+                # Logic for when there's a question
                 input_data = {
                     "student's question": question,
-                    "pedagogy": "Use less than three sentences briefly answer student's query.",
+                    "pedagogy": "Use less than three sentences briefly answer student's query or give feedbacks.",
                 }
                 need_response = True
                 interaction = "plain text"
             else:
+                # Default case when there's no question or CUR_SEQ
                 interaction = "auto-reply"
                 pedagogy = "Feel free to go ahead to the next video clip!"
+                need_response = True
 
+            # Handle interaction logic
             if interaction == "auto-reply":
                 results = pedagogy
-                need_response = True
             elif interaction == "show-code":
                 results = pedagogy + "\n" + all_code[str(segment_index)]
-                need_response = True
+            elif interaction == "drop-down":
+                results = pedagogy
             else:
                 results = conversation({"input": str(input_data)})["text"]
                 if "code-with-blanks" in move_detail["parameters"]:

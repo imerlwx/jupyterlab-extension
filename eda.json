@@ -47,16 +47,14 @@
             ]
         },
         "Modeling": {
-            "action": "[Use one sentence to summarize the facts in the dataset taught in the video]",
+            "action": "I have already loaded the dataset for you! Exploring and understanding the dataset and its attributes is the first step to doing exploratory data analysis.",
             "knowledge": "factual",
-            "interaction": "plain text",
-            "parameters": [
-                "transcript"
-            ],
+            "interaction": "auto-reply",
+            "parameters": [],
             "need-response": false
         },
         "Coaching": {
-            "action": "[Use one sentence to summarize the facts in the dataset taught in the video][Use one sentence to ask the student to browse the dataset and record any observations in the chatbox]",
+            "action": "Now you try exploring the data on your own! Select a column below and look at a description and distribution just like Dave!",
             "knowledge": "procedural",
             "interaction": "drop-down",
             "parameters": [],
