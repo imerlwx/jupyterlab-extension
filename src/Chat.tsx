@@ -50,6 +50,7 @@ export interface ISegment {
 }
 
 interface IMessage {
+  id: string;
   message: string;
   sentTime: string;
   direction: MessageDirection;
@@ -92,6 +93,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
   const [segments, setSegments] = useState<ISegment[]>([]);
   const [messages, setMessages] = useState<IMessage[]>([
     {
+      id: `msg-${Date.now()}`,
       message:
         "Welcome to today's Tidy Tuesday project! First, tell me which video you want to watch:",
       videoId: null,
@@ -125,7 +127,10 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
   const [statistics, setStatistics] = useState<IStatistics | null>(null);
   const [columnNames, setColumnNames] = useState<string[]>([]);
   const [histogramData, setHistogramData] = useState<any[]>([]);
-  // const [code, setCode] = React.useState<string>('');
+  const [codes, setCodes] = useState<{ [messageId: string]: string }>({});
+  const [checkedCode, setCheckedCode] = useState<string[]>([]);
+  // const [allBlanksFilled, setAllBlanksFilled] = useState<boolean>(false);
+  // const [currentMessageId, setCurrentMessageId] = useState<string | null>(null);
 
   // dataset url and data attributes descriptions
   const datasetUrl =
@@ -212,6 +217,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
       // setLastSendTime(Date.now()); // Update the last send time
       question = stripHTMLTags(question);
       const newMessage: IMessage = {
+        id: `msg-${Date.now()}`,
         message: question,
         sentTime: 'just now',
         direction: 'outgoing',
@@ -246,6 +252,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
             setMessages(prevMessages => [
               ...prevMessages,
               {
+                id: `msg-${Date.now()}`,
                 message:
                   "The video is segmented into several video clips. While you can navigate through the parts you like, I recommend following the video progress to learn and imitate his Exploratory Data Analysis process and do the task on your own.\n\nWhile watching the video, keep asking yourself these three questions: what is he doing, why is he doing it, and how will success in what he is doing help him find a solution to the problem ? Now let's get started!",
                 sentTime: 'just now',
@@ -412,6 +419,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
             setMessages(prevMessages => [
               ...prevMessages,
               {
+                id: `msg-${Date.now()}`,
                 message: messageWithoutCode,
                 sentTime: `${currentTime} seconds`,
                 direction: 'incoming',
@@ -493,6 +501,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
       setMessages(prevMessages => [
         ...prevMessages,
         {
+          id: `msg-${Date.now()}`,
           message: 'Now let us watch the next video segment!',
           videoId: videoId, // Assuming the videoId remains the same for all segments
           sentTime: `${nextSegment.start}`, // Segment start time
@@ -510,6 +519,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
       setMessages(prevMessages => [
         ...prevMessages,
         {
+          id: `msg-${Date.now()}`,
           message:
             'Can you think of more tasks that are not in the video to do?',
           videoId: null,
@@ -527,6 +537,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
       setMessages(prevMessages => [
         ...prevMessages,
         {
+          id: `msg-${Date.now()}`,
           message: 'Could you conclude what you have learned today?',
           videoId: null,
           sentTime: 'just now',
@@ -553,7 +564,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     if (videoId && isReadyToSend) {
       handleSend('');
       setNeedHint(false);
-      setIsReadyToSend(false); // Reset the flag
+      setIsReadyToSend(false);
     }
   }, [videoId, isReadyToSend, handleSend]);
 
@@ -729,6 +740,131 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     return histogramData;
   }
 
+  interface ICodeEditorWithBlanksProps {
+    id: string;
+    initialCode: string;
+    code: string; // The current state of the code, managed externally
+    onCodeChange: (newCode: string) => void; // Callback to update the code
+    videoId: string;
+    currentSegmentIndex: number;
+    onReadyToSend: () => void; // Callback to notify when the code block is fully filled
+  }
+
+  interface IChoiceResponse {
+    [key: string]: string[];
+  }
+
+  const handleCodeBlockReadyToSend = useCallback(() => {
+    // Logic to handle sending or preparing to send the message
+    handleSend('');
+  }, [handleSend]);
+
+  const CodeEditorWithBlanks: React.FC<ICodeEditorWithBlanksProps> = ({
+    id,
+    initialCode,
+    code,
+    onCodeChange,
+    videoId,
+    currentSegmentIndex,
+    onReadyToSend
+  }) => {
+    const [isDropdownOpen, setDropdownOpen] = useState<boolean>(false);
+    const [commonChoices, setCommonChoices] = useState<string[]>([]);
+
+    const videoIdRef = useRef(videoId);
+    const currentSegmentIndexRef = useRef(currentSegmentIndex);
+
+    useEffect(() => {
+      videoIdRef.current = videoId;
+      currentSegmentIndexRef.current = currentSegmentIndex;
+    }, [videoId, currentSegmentIndex]);
+
+    useEffect(() => {
+      // Only run the check if this code block's ID hasn't been checked yet
+      if (!checkedCode.includes(id)) {
+        // Only run the check if all blanks haven't been confirmed as filled
+        const blanksRemaining = code.includes('___');
+        if (!blanksRemaining) {
+          setCheckedCode(prevIds => [...prevIds, id]);
+          // setAllBlanksFilled(true); // Set this to true to prevent future checks
+          onReadyToSend(); // Call the parent callback instead of directly setting state
+        }
+      }
+    }, [code, onReadyToSend, id, checkedCode]);
+
+    useEffect(() => {
+      if (videoId && currentSegmentIndex >= 0) {
+        requestAPI<IChoiceResponse>('fill_blank', {
+          body: JSON.stringify({
+            videoId: videoIdRef.current,
+            segmentIndex: currentSegmentIndexRef.current
+          }),
+          method: 'POST'
+        })
+          .then(response => {
+            // console.log(response);
+            if (response && Array.isArray(response)) {
+              setCommonChoices(response);
+            } else {
+              // Handle unexpected response structure
+              console.error('Unexpected response structure:', response);
+            }
+          })
+          .catch(reason => {
+            console.error(`Error on POST /fill_blank.\n${reason}`);
+          });
+      }
+    }, [videoId, currentSegmentIndex]); // Dependencies on videoId and currentSegmentIndex to refetch when they change
+
+    const handleCodeClick = (e: React.MouseEvent<HTMLDivElement>) => {
+      const selection: string = window.getSelection()?.toString() || '';
+      if (selection === '___') {
+        setDropdownOpen(true);
+      } else {
+        setDropdownOpen(false);
+      }
+    };
+
+    const replaceBlankWithSelection = (choice: string) => {
+      onCodeChange(code.replace('___', choice));
+      setDropdownOpen(false); // Close the dropdown after selection
+    };
+
+    return (
+      <div style={{ display: 'flex', alignItems: 'flex-start' }}>
+        <div onClick={handleCodeClick} style={{ flex: 1 }}>
+          <SyntaxHighlighter language="r" style={docco}>
+            {code}
+          </SyntaxHighlighter>
+        </div>
+        {isDropdownOpen && (
+          <div
+            style={{
+              marginLeft: '20px',
+              background: 'white',
+              padding: '10px',
+              borderRadius: '5px',
+              boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+              zIndex: 1000,
+              position: 'sticky',
+              top: 0 // Adjust this to change the vertical alignment
+            }}
+          >
+            {commonChoices.map((choice, index) => (
+              <div
+                key={index}
+                onClick={() => replaceBlankWithSelection(choice)}
+                style={{ padding: '5px', cursor: 'pointer' }}
+              >
+                {choice}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div style={{ position: 'relative', height: '100%', width: '100%' }}>
       <MainContainer style={{ height: '100%', width: '100%' }}>
@@ -766,7 +902,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                         sx={{
                           width: '85%',
                           padding: 2,
-                          marginBottom: '20px',
+                          marginBottom: '10px',
                           boxSizing: 'border-box'
                         }}
                       >
@@ -798,7 +934,8 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                             disabled={!selectedChoice}
                             sx={{
                               padding: '4px 10px', // Reduces padding
-                              fontSize: '0.75rem' // Reduces font size
+                              fontSize: '0.75rem', // Reduces font size
+                              margintop: '10px'
                             }}
                           >
                             Submit
@@ -819,19 +956,36 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                     )}
                     {message.code && (
                       <div style={{ width: '61.8%', marginBottom: '20px' }}>
-                        <SyntaxHighlighter
-                          language="r"
-                          style={docco}
-                          wrapLines={true}
-                          lineProps={{
-                            style: {
-                              wordWrap: 'break-word',
-                              whiteSpace: 'pre-wrap'
+                        {message.interaction === 'fill-in-blank' ? (
+                          <CodeEditorWithBlanks
+                            id={message.id}
+                            initialCode={message.code}
+                            code={codes[message.id] || message.code} // Use the current code from state, fallback to initial code
+                            onCodeChange={newCode =>
+                              setCodes(prev => ({
+                                ...prev,
+                                [message.id]: newCode
+                              }))
                             }
-                          }}
-                        >
-                          {message.code}
-                        </SyntaxHighlighter>
+                            videoId={videoId}
+                            currentSegmentIndex={currentSegmentIndex}
+                            onReadyToSend={handleCodeBlockReadyToSend}
+                          />
+                        ) : (
+                          <SyntaxHighlighter
+                            language="r"
+                            style={docco}
+                            wrapLines={true}
+                            lineProps={{
+                              style: {
+                                wordWrap: 'break-word',
+                                whiteSpace: 'pre-wrap'
+                              }
+                            }}
+                          >
+                            {message.code}
+                          </SyntaxHighlighter>
+                        )}
                       </div>
                     )}
                     {message.interaction === 'drop-down' && (

@@ -26,7 +26,7 @@
             ]
         },
         "Modeling": {
-            "action": "The relevant library and dataset have been imported and loaded. Now, move on to the next video to learn how to look at the dataset.",
+            "action": "The relevant library and dataset can be imported and loaded using the following code. Try to understand the code like the video does. Then, move on to the next video to learn how to look at the dataset.",
             "knowledge": "procedural",
             "interaction": "show-code",
             "parameters": [
@@ -47,14 +47,14 @@
             ]
         },
         "Modeling": {
-            "action": "I have already loaded the dataset for you! Exploring and understanding the dataset and its attributes is the first step to doing exploratory data analysis.",
+            "action": "Exploring and understanding the dataset and its attributes is the first step to doing exploratory data analysis.",
             "knowledge": "factual",
             "interaction": "auto-reply",
             "parameters": [],
             "need-response": false
         },
         "Coaching": {
-            "action": "Now you try exploring the data on your own! Select a column below and look at a description and distribution just like Dave!",
+            "action": "Now please try exploring the data on your own! Select a column below and look at a description and distribution just like Dave!",
             "knowledge": "procedural",
             "interaction": "drop-down",
             "parameters": [],
@@ -116,7 +116,7 @@
             "need-response": true
         },
         "Reflection": {
-            "action": "Nice work on this part! Now execute the whole code cell and see what you get.",
+            "action": "Compare your choice with the following code to see if anything is wrong. Then execute the code cell and see what you get.",
             "knowledge": "procedural",
             "interaction": "show-code",
             "parameters": [],
@@ -132,7 +132,7 @@
             "need-response": true
         }
     },
-    "Chart interpretation": {
+    "Interpret the chart": {
         "Sequence": {
             "lower": [
                 "Modeling",

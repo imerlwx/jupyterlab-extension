@@ -52,6 +52,7 @@ user_id = "1"
 previous_notebook = '[{"cell_type":"code","source":"","output_type":null}]'
 last_practicing_skill = None
 learned_functions = []
+step_index = 0
 CUR_SEQ = []  # The current sequence of moves
 with open("eda.json", "r") as file:
     # Parse the file and convert JSON data into a Python dictionary
@@ -114,7 +115,7 @@ class SegmentHandler(APIHandler):
 class ChatHandler(APIHandler):
     @tornado.web.authenticated
     def post(self):
-        global llm, prompt, memory, conversation, VIDEO_ID, eda_video, CUR_SEQ, all_code
+        global llm, prompt, memory, conversation, VIDEO_ID, eda_video, CUR_SEQ, all_code, step_index
 
         # Existing video_id logic
         data = self.get_json_body()
@@ -148,6 +149,7 @@ class ChatHandler(APIHandler):
                 # If the student does not ask a question, get the pedagogy, parameters, etc
                 current_move = CUR_SEQ[0]
                 move_detail = eda_video[category][current_move]
+                current_step_index = step_index
 
                 # Get whatever parameters when current segment needs
                 parameters = move_detail.get(
@@ -171,13 +173,12 @@ class ChatHandler(APIHandler):
                     input_data["functions_to_learn"] = str(functions_to_learn)
                     input_data["attributes_to_learn"] = str(attributes_to_learn)
                     if "step-index" in parameters:
-                        step_index = get_step_index(video_id, segment_index)
-                        input_data["step_index"] = step_index
+                        input_data["step_index"] = current_step_index
                         input_data["functions_to_learn"] = str(
-                            functions_to_learn[step_index]
+                            functions_to_learn[current_step_index]
                         )
                         input_data["attributes_to_learn"] = str(
-                            attributes_to_learn[step_index]
+                            attributes_to_learn[current_step_index]
                         )
                 if "key-points" in parameters:
                     key_points, _, _ = get_function_attribute(
@@ -185,9 +186,8 @@ class ChatHandler(APIHandler):
                     )
                     input_data["key_points"] = str(key_points)
                     if "step-index" in parameters:
-                        step_index = get_step_index(video_id, segment_index)
-                        input_data["key_points"] = str(key_points[step_index])
-                        input_data["step_index"] = step_index
+                        input_data["key_points"] = str(key_points[current_step_index])
+                        input_data["step_index"] = current_step_index
                 pedagogy = move_detail["action"]
                 input_data["pedagogy"] = (
                     "Use the following structure to respond: " + pedagogy
@@ -198,6 +198,45 @@ class ChatHandler(APIHandler):
                 if selected_choice != "":
                     # If the student selects a choice, the response is the choice
                     input_data["student's choice"] = selected_choice
+                if "step-index" in parameters:
+                    # After using step index in this move, update it
+                    step_index += 1
+                # Handle interaction logic
+                if interaction == "auto-reply":
+                    results = pedagogy
+                elif interaction == "show-code":
+                    results = pedagogy + "\n" + all_code[str(segment_index)]
+                elif interaction == "drop-down":
+                    results = pedagogy
+                else:
+                    results = conversation({"input": str(input_data)})["text"]
+                    if "code-with-blanks" in move_detail["parameters"]:
+                        code_with_blanks = get_code_with_blank(
+                            video_id, segment_index, all_code
+                        )
+                        results = (
+                            results
+                            + " Let's learn how to create that visualization. Here is the structure of the code:"
+                            + "\n"
+                            + code_with_blanks
+                        )
+                    if "code-line" in move_detail["parameters"]:
+                        code_line, _ = get_code_with_blank_by_step(
+                            video_id, segment_index, all_code, current_step_index
+                        )
+                        results = results + "\n" + "```R" + code_line + "```"
+                    if "code-line-with-blanks" in move_detail["parameters"]:
+                        _, code_line_with_blanks = get_code_with_blank_by_step(
+                            video_id, segment_index, all_code, current_step_index
+                        )
+                        results = (
+                            results
+                            + " Please fill in the blanks in the code below"
+                            + "\n"
+                            + "```R"
+                            + code_line_with_blanks
+                            + "```"
+                        )
             elif question != "":
                 # Logic for when there's a question
                 input_data = {
@@ -206,48 +245,13 @@ class ChatHandler(APIHandler):
                 }
                 need_response = True
                 interaction = "plain text"
+                results = conversation({"input": str(input_data)})["text"]
             else:
                 # Default case when there's no question or CUR_SEQ
                 interaction = "auto-reply"
-                pedagogy = "Feel free to go ahead to the next video clip!"
+                pedagogy = "You have finished this part. Feel free to go ahead to the next video clip!"
                 need_response = True
-
-            # Handle interaction logic
-            if interaction == "auto-reply":
                 results = pedagogy
-            elif interaction == "show-code":
-                results = pedagogy + "\n" + all_code[str(segment_index)]
-            elif interaction == "drop-down":
-                results = pedagogy
-            else:
-                results = conversation({"input": str(input_data)})["text"]
-                if "code-with-blanks" in move_detail["parameters"]:
-                    code_with_blanks = get_code_with_blank(
-                        video_id, segment_index, all_code
-                    )
-                    results = (
-                        results
-                        + " Let's learn how to create that visualization. Here is the structure of the code:"
-                        + "\n"
-                        + code_with_blanks
-                    )
-                if "code-line" in move_detail["parameters"]:
-                    code_line, _ = get_code_with_blank_by_step(
-                        video_id, segment_index, all_code, step_index
-                    )
-                    results = results + "\n" + "```R" + code_line + "```"
-                if "code-line-with-blanks" in move_detail["parameters"]:
-                    _, code_line_with_blanks = get_code_with_blank_by_step(
-                        video_id, segment_index, all_code, step_index
-                    )
-                    results = (
-                        results
-                        + " Please fill in the blanks in the code below"
-                        + "\n"
-                        + "```R"
-                        + code_line_with_blanks
-                        + "```"
-                    )
 
             response_data = {
                 "message": results,
@@ -263,6 +267,7 @@ class ChatHandler(APIHandler):
 class GoOnHandler(APIHandler):
     @tornado.web.authenticated
     def post(self):
+        """Evaluate if the user is ready to go on to the next segment."""
         data = self.get_json_body()
         video_id = data["videoId"]
         segment_index = data["segmentIndex"]
@@ -284,8 +289,8 @@ class GoOnHandler(APIHandler):
 class UpdateSeqHandler(APIHandler):
     @tornado.web.authenticated
     def post(self):
-        """Update the sequence of moves depending on the mastery of the skill and category."""
-        global CUR_SEQ, bkt_params, learned_functions
+        """Update the sequence of moves and step index depending on the mastery of the skill and category."""
+        global CUR_SEQ, bkt_params, learned_functions, step_index
         data = self.get_json_body()
         video_id = data["videoId"]
         segment_index = data["segmentIndex"]
@@ -351,7 +356,30 @@ class UpdateSeqHandler(APIHandler):
                     )
                 conn.commit()
                 conn.close()
+            step_index = 0  # update step_index for every segment
             print("CUR_SEQ updated successfully: " + str(CUR_SEQ))
+
+
+class FillInBlanksHandler(APIHandler):
+    @tornado.web.authenticated
+    def post(self):
+        """Get all choices for the fill-in-blanks action."""
+        data = self.get_json_body()
+        video_id = data["videoId"]
+        segment_index = data["segmentIndex"]
+        _, functions_to_learn, attributes_to_learn = get_function_attribute(
+            video_id=video_id, segment_index=segment_index, code_json=all_code
+        )
+        # Flattening the list of lists and extracting unique items
+        unique_functions = list(
+            set(item for sublist in functions_to_learn for item in sublist)
+        )
+        unique_attributes = list(
+            set(item for sublist in attributes_to_learn for item in sublist)
+        )
+        choices = unique_functions + unique_attributes
+        print(choices)
+        self.finish(json.dumps(choices))
 
 
 class UpdateBKTHandler(APIHandler):
@@ -1382,6 +1410,10 @@ def parse_function_in_code(code_block):
 
 def get_function_attribute(video_id, segment_index, code_json):
     """Get the functions and attributes to learn in a video segment."""
+    if str(segment_index) in code_json.keys():
+        code_block = code_json[str(segment_index)]
+    else:
+        return [], [], []
     conn = sqlite3.connect("cache.db")
     c = conn.cursor()
     c.execute(
@@ -1407,7 +1439,6 @@ def get_function_attribute(video_id, segment_index, code_json):
         num = "two"
     else:
         num = "three"
-    code_block = code_json[str(segment_index)]
     # get the key points list
     response = openai.ChatCompletion.create(
         model="gpt-4-1106-preview",
@@ -1511,9 +1542,8 @@ def get_code_with_blank(video_id, segment_index, code_json):
         messages=[
             {
                 "role": "system",
-                "content": """You are an expert teaching assistant who can understand and write R code.
-                                Your task is to use the given code block and functions/attributes to learn, make the functions and attributes to learn in the code as blanks for students to fill out.
-                                You should not respond with any comments or explanations. Each blank should be an underline.
+                "content": """Use the given code block and functions/attributes to learn, make all the functions and attributes to learn in the code as blanks.
+                                You should not respond with any comments or explanations. Each blank should be '___'.
                                 Respond in the following format: ```{{r code with blanks}}```
                             """,
             },
@@ -1547,6 +1577,30 @@ def get_step_index(video_id, segment_index):
     return row[0]
 
 
+def update_step_index(video_id, segment_index, step_index):
+    """Update the step index for a video segment."""
+    initialze_database()
+    conn = sqlite3.connect("cache.db")
+    c = conn.cursor()
+    c.execute(
+        "SELECT step_index FROM learning_progress_cache WHERE user_id = ? AND video_id = ? AND segment_index = ?",
+        (user_id, video_id, segment_index),
+    )
+    row = c.fetchone()
+    if row:
+        c.execute(
+            "UPDATE learning_progress_cache SET step_index = ? WHERE user_id = ? AND video_id = ? AND segment_index = ?",
+            (step_index, user_id, video_id, segment_index),
+        )
+    else:
+        c.execute(
+            "INSERT INTO learning_progress_cache VALUES (?, ?, ?)",
+            (user_id, video_id, segment_index, step_index),
+        )
+    conn.commit()
+    conn.close()
+
+
 def get_code_with_blank_by_step(video_id, segment_index, code_json, step_index):
     """Get the code with blank by step index for a video segment."""
     key_points, _, _ = get_function_attribute(video_id, segment_index, code_json)
@@ -1556,6 +1610,8 @@ def get_code_with_blank_by_step(video_id, segment_index, code_json, step_index):
     code_lines = code_block.split("\\n")[1:-1]
     code_lines_with_blanks = code_with_blanks.split("\n")[1:-1]
     # your query and corresponding passages
+    print("key points: ", key_points)
+    print("step index: ", step_index)
     query = key_points[step_index]
     # rerank passages
     rerank_results = model.rerank(query, code_lines)
@@ -1616,4 +1672,9 @@ def setup_handlers(web_app):
     # Add route for getting go on or not response
     update_bkt_pattern = url_path_join(base_url, "jlab_ext_example", "update_bkt")
     handlers = [(update_bkt_pattern, UpdateBKTHandler)]
+    web_app.add_handlers(host_pattern, handlers)
+
+    # Add route for getting go on or not response
+    fill_blank_pattern = url_path_join(base_url, "jlab_ext_example", "fill_blank")
+    handlers = [(fill_blank_pattern, FillInBlanksHandler)]
     web_app.add_handlers(host_pattern, handlers)
