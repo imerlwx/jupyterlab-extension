@@ -38,23 +38,21 @@
     "Understand the dataset": {
         "Sequence": {
             "lower": [
-                "Modeling",
                 "Coaching"
             ],
             "upper": [
-                "Modeling",
                 "Coaching"
             ]
         },
         "Modeling": {
             "action": "Exploring and understanding the dataset and its attributes is the first step to doing exploratory data analysis.",
-            "knowledge": "factual",
+            "knowledge": "procedural",
             "interaction": "auto-reply",
             "parameters": [],
             "need-response": false
         },
         "Coaching": {
-            "action": "Now please try exploring the data on your own! Select a column below and look at a description and distribution just like Dave!",
+            "action": "Exploring and understanding the dataset and its attributes is the first step to doing exploratory data analysis. Now please try exploring the data on your own! Select a column below and look at a description and distribution just like Dave!",
             "knowledge": "procedural",
             "interaction": "drop-down",
             "parameters": [],
@@ -85,7 +83,7 @@
             "need-response": false
         },
         "Scaffolding": {
-            "action": "[Use one word to represent the step index for this step (first, second, etc)][Use one sentence to explain the key points to do]",
+            "action": "[Use one word to represent the step index (start from 0) for this step (first, second, etc)][Use one sentence to explain the key points to do]",
             "knowledge": "procedural",
             "interaction": "plain text",
             "parameters": [
@@ -105,7 +103,7 @@
             "need-response": true
         },
         "Coaching": {
-            "action": "[Use one word to represent the step index for this step (first, second, etc)][Use one sentence to explain the key point]",
+            "action": "[Use one word to represent the step index for this step (step_index is 0 means first, step_index = 1 means second, etc)][Use one sentence to explain the key point]",
             "knowledge": "procedural",
             "interaction": "fill-in-blank",
             "parameters": [

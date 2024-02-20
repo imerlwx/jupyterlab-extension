@@ -48,7 +48,7 @@ prompt = None
 memory = None
 conversation = None
 bkt_params = {}
-user_id = "1"
+user_id = ""
 previous_notebook = '[{"cell_type":"code","source":"","output_type":null}]'
 last_practicing_skill = None
 learned_functions = []
@@ -106,8 +106,10 @@ class SegmentHandler(APIHandler):
 
     @tornado.web.authenticated
     def post(self):
+        global user_id
         data = self.get_json_body()
         video_id = data["videoId"]
+        user_id = data["userId"]
         segments = get_segments(video_id)
         self.finish(json.dumps(segments))
 
@@ -126,6 +128,7 @@ class ChatHandler(APIHandler):
         segment_index = data["segmentIndex"]
         kernelType = data["kernelType"]
         selected_choice = data["selectedChoice"]
+        print("selected choice: ", selected_choice)
         segment = get_segments(video_id)[segment_index]
         dataset = get_csv_from_youtube_video(video_id)
 
@@ -537,9 +540,9 @@ def initialze_database():
         {"category": "Understand the dataset", "start": 212, "end": 418},  # 2
         {"category": "Visualizing the data", "start": 418, "end": 463},  # 3
         {"category": "Interpret the chart", "start": 463, "end": 507},  # 4
-        {"category": "Visualizing the data", "start": 507, "end": 601},  # 5
-        {"category": "Interpret the chart", "start": 601, "end": 640},  # 6
-        {"category": "Visualizing the data", "start": 640, "end": 720},  # 7
+        {"category": "Visualizing the data", "start": 507, "end": 602},  # 5
+        {"category": "Interpret the chart", "start": 602, "end": 638},  # 6
+        {"category": "Visualizing the data", "start": 638, "end": 720},  # 7
         {"category": "Interpret the chart", "start": 720, "end": 848},  # 8
         {"category": "Visualizing the data", "start": 848, "end": 971},  # 9
         {"category": "Interpret the chart", "start": 971, "end": 1101},  # 10
@@ -1543,7 +1546,7 @@ def get_code_with_blank(video_id, segment_index, code_json):
             {
                 "role": "system",
                 "content": """Use the given code block and functions/attributes to learn, make all the functions and attributes to learn in the code as blanks.
-                                You should not respond with any comments or explanations. Each blank should be '___'.
+                                You should not make more than two blanks in one code line. You should not respond with any comments or explanations. Each blank should be '___'.
                                 Respond in the following format: ```{{r code with blanks}}```
                             """,
             },
@@ -1609,23 +1612,26 @@ def get_code_with_blank_by_step(video_id, segment_index, code_json, step_index):
     # Split the code block into a list by newline character
     code_lines = code_block.split("\\n")[1:-1]
     code_lines_with_blanks = code_with_blanks.split("\n")[1:-1]
-    # your query and corresponding passages
-    print("key points: ", key_points)
-    print("step index: ", step_index)
-    query = key_points[step_index]
-    # rerank passages
-    rerank_results = model.rerank(query, code_lines)
-    functions_over_05 = [
-        passage
-        for passage, score in zip(
-            rerank_results["rerank_passages"], rerank_results["rerank_scores"]
-        )
-        if score > 0.6
-    ]
-    line_index = []
-    for item in functions_over_05:
-        line_index.append(code_lines.index(item))
-    line_index.sort()
+    # get the code with blank
+    response = openai.ChatCompletion.create(
+        model="gpt-4-1106-preview",
+        messages=[
+            {
+                "role": "system",
+                "content": """You are an expert programmer who can understand R code. A student is learning EDA by filling in blanks in codes.
+                                Now your task is to find out the corresponding code lines index (start from 0) in the code block that corresponds to the key point for the student to fill in.
+                                The corresponding code lines can have one or two lines. Respond in the following format: [index_1, ...]
+                            """,
+            },
+            {
+                "role": "user",
+                "content": f"key point: {str(key_points[step_index])}, code block: {code_lines}",
+            },
+        ],
+        temperature=0.2,
+    )
+    line_index = response.choices[0].message.content
+    line_index = ast.literal_eval(line_index)
     # Extract the lines corresponding to the given indices
     selected_lines = [code_lines[i] for i in line_index]
     selected_lines_with_blank = [code_lines_with_blanks[i] for i in line_index]

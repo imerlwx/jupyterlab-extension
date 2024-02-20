@@ -236,13 +236,19 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
         // console.log(question);
         setIsTyping(true);
         setCanGoOn(true);
-        setVideoId(question);
-        props.onVideoIdChange({ videoId: question }); // Emit signal
+
+        // Assuming question is a string like "video_id,user_id"
+        const parts = question.split(',');
+        const extractedVideoId = parts[0];
+        const userId = parts.length > 1 ? parts[1] : ''; // Fallback in case the user_id is missing
+
+        setVideoId(extractedVideoId);
+        props.onVideoIdChange({ videoId: extractedVideoId }); // Emit signal
         const kernel = props.getCurrentNotebookKernel();
         // console.log(kernel.name);
         setKernelType(kernel.name);
         requestAPI<any>('segments', {
-          body: JSON.stringify({ videoId: question }),
+          body: JSON.stringify({ videoId: extractedVideoId, userId: userId }),
           method: 'POST'
         })
           .then(response => {
@@ -258,7 +264,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                 sentTime: 'just now',
                 direction: 'incoming',
                 sender: 'iTutor',
-                videoId: question,
+                videoId: extractedVideoId,
                 start: response[0].start,
                 end: response[0].end,
                 category: response[0].category,
@@ -357,7 +363,6 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
         })
           .then(response => {
             // console.log(response);
-            setSelectedChoice('');
             // Remove code blocks from the message before setting it
             const messageWithoutCode = response.message.replace(codeRegex, '');
             // Extract code blocks from the response
@@ -433,6 +438,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
               }
             ]);
             setIsTyping(false);
+            setSelectedChoice('');
             // New logic to check for 'need_response'
             if (!response.need_response) {
               setTimeout(() => {
@@ -452,7 +458,8 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
       videoId,
       segments,
       props.getCurrentNotebookContent,
-      props.onVideoIdChange
+      props.onVideoIdChange,
+      selectedChoice
     ]
   );
 
@@ -930,12 +937,15 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                           <Button
                             variant="contained"
                             color="primary"
-                            onClick={() => handleSend('')}
+                            onClick={() => {
+                              console.log('selected_choice:', selectedChoice);
+                              handleSend('');
+                            }}
                             disabled={!selectedChoice}
                             sx={{
                               padding: '4px 10px', // Reduces padding
                               fontSize: '0.75rem', // Reduces font size
-                              margintop: '10px'
+                              marginTop: '10px'
                             }}
                           >
                             Submit
