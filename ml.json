@@ -1,0 +1,412 @@
+{
+    "Basic linear regression concepts - 1": [
+        {
+            "knowledge": "Understand the concept of simple linear regression and how it relates to predicting values such as home prices based on a single independent variable (area) (declarative)",
+            "method": [
+                "Modeling"
+            ],
+            "actions": [
+                {
+                    "prompt": "[Use one sentence to explain the importance and necessity of this ${learning objective}]",
+                    "interaction": "plain-text",
+                    "parameters": [
+                        "learning-objective"
+                    ],
+                    "need-response": false,
+                    "action": "Interpret the importance and necessity of the learning objective"
+                }
+            ]
+        },
+        {
+            "knowledge": "Learn the equation of a straight line (y = mx + b) in the context of linear regression, where m is the slope, b is the intercept, y is the dependent variable (price), and x is the independent variable (area) (declarative)",
+            "method": [
+                "Modeling"
+            ],
+            "actions": [
+                {
+                    "prompt": "[Based on the ${transcript}, use no more than three bullet points to briefly teach the student the ${knowledge}. Requirement: each bullet point should contain only one sentence]",
+                    "interaction": "plain text",
+                    "parameters": [
+                        "transcript"
+                    ],
+                    "need-response": false,
+                    "action": "Give a general brief introduction about how to do the learning objective"
+                }
+            ]
+        },
+        {
+            "knowledge": "Grasp the method of calculating and minimizing the sum of squared errors to find the best fit line (declarative)",
+            "method": [
+                "Modeling"
+            ],
+            "actions": [
+                {
+                    "prompt": "[Based on the ${transcript}, use no more than three bullet points to briefly teach the student the ${knowledge}. Requirement: each bullet point should contain only one sentence]",
+                    "interaction": "drop-down",
+                    "parameters": [],
+                    "need-response": true,
+                    "action": "Have the student illustrate his findings by observing the output"
+                }
+            ]
+        },
+        {
+            "knowledge": "Comprehend the process for linear regression including plotting data points on a scatter plot and drawing a line of best fit (declarative)",
+            "method": [
+                "Articulation",
+                "Reflection"
+            ],
+            "actions": [
+                {
+                    "prompt": "Propose a multiple-choice question for the student to understand the knowledge better",
+                    "interaction": "multiple-choice",
+                    "parameters": [
+                        "transcript"
+                    ],
+                    "need-response": true,
+                    "action": "Propose a question for the student to consider the reason behind the pattern in the chart"
+                },
+                {
+                    "prompt": "[Use one sentence to give feedback on the ${student-choice}]",
+                    "interaction": "plain-text",
+                    "parameters": [
+                        "student-choice"
+                    ],
+                    "need-response": true,
+                    "action": "Give feedback on the student's choice of the question"
+                }
+            ]
+        }
+    ],
+    "Load packages/data - 153": [
+        {
+            "knowledge": "loading home prices data from a CSV file into a pandas DataFrame for price prediction using scikit-learn",
+            "method": [
+                "Modeling"
+            ],
+            "actions": [
+                {
+                    "prompt": "[Use one sentence to tell the student the problem (${knowledge}) explored in the video][Use one sentence to encourage the student to follow your steps to solve this problem]",
+                    "interaction": "plain-text",
+                    "parameters": [
+                        "knowledge"
+                    ],
+                    "need-response": false,
+                    "action": "Introduce the current task and encourage the student to follow your steps"
+                }
+            ]
+        },
+        {
+            "knowledge": "Use pd.read_csv on file name to load data into a pandas DataFrame because it is the initial step in exploratory data analysis to organize and examine the dataset",
+            "method": [
+                "Scaffolding"
+            ],
+            "actions": [
+                {
+                    "prompt": "[Use one word to represent the ${step index} for this step (first, second, etc) and use one sentence to explain the ${knowledge} to do][Use one sentence to let the student practice the ${knowledge} and understand the results]",
+                    "interaction": "plain text",
+                    "parameters": [
+                        "step-index",
+                        "knowledge",
+                        "code-line"
+                    ],
+                    "need-response": true,
+                    "action": "Explain the current step's key point and functions/attributes to use"
+                }
+            ]
+        }
+    ],
+    "Plot a plot for linear regression - 232": [
+        {
+            "knowledge": "Plotting a scatter plot to visualize the distribution of data points for area versus price in preparation for linear regression analysis.",
+            "method": [
+                "Modeling"
+            ],
+            "actions": [
+                {
+                    "prompt": "[Use one sentence to tell the student the problem (${knowledge}) explored in the video][Use one sentence to encourage the student to follow your steps to solve this problem]",
+                    "interaction": "plain-text",
+                    "parameters": [
+                        "knowledge"
+                    ],
+                    "need-response": false,
+                    "action": "Introduce the current task and encourage the student to follow your steps"
+                }
+            ]
+        },
+        {
+            "knowledge": "Use plt.scatter on 'area' and 'price' to visualize the relationship because it helps identify the distribution and potential model suitability",
+            "method": [
+                "Scaffolding",
+                "Coaching"
+            ],
+            "actions": [
+                {
+                    "prompt": "[Use one word to represent the ${step index} for this step (first, second, etc) and use one sentence to explain the ${knowledge} to do]",
+                    "interaction": "plain text",
+                    "parameters": [
+                        "step-index",
+                        "knowledge"
+                    ],
+                    "need-response": false,
+                    "action": "Explain the current step's key point and functions/attributes to use"
+                },
+                {
+                    "prompt": "[Use one sentence to prompt the student to fill in the blanks below][Use one sentence to let the student run the code cell after filling blanks]",
+                    "interaction": "fill-in-blanks",
+                    "parameters": [
+                        "code-line-with-blanks"
+                    ],
+                    "need-response": true,
+                    "action": "Prompt the student to fill in the code blanks of the current step"
+                }
+            ]
+        },
+        {
+            "knowledge": "Use plt.xlabel and plt.ylabel to label axes because it provides context and meaning to the scatter plot",
+            "method": [
+                "Scaffolding"
+            ],
+            "actions": [
+                {
+                    "prompt": "[Use one word to represent the ${step index} for this step (first, second, etc) and use one sentence to explain the ${knowledge} to do][Use one sentence to let the student understand the ${code-line} and execute the code]",
+                    "interaction": "plain text",
+                    "parameters": [
+                        "step-index",
+                        "knowledge",
+                        "code-line"
+                    ],
+                    "need-response": true,
+                    "action": "Explain the current step's key point and functions/attributes to use"
+                }
+            ]
+        }
+    ],
+    "Create and understand linear regression object - 325": [
+        {
+            "knowledge": "Creating and understanding a linear regression object to predict house prices based on area.",
+            "method": [
+                "Modeling"
+            ],
+            "actions": [
+                {
+                    "prompt": "[Use one sentence to tell the student the problem (${knowledge}) explored in the video][Use one sentence to encourage the student to follow your steps to solve this problem]",
+                    "interaction": "plain-text",
+                    "parameters": [
+                        "knowledge"
+                    ],
+                    "need-response": false,
+                    "action": "Introduce the current task and encourage the student to follow your steps"
+                }
+            ]
+        },
+        {
+            "knowledge": "Use `linear_model.LinearRegression()` to create a regression object because it initializes the model that will be used for fitting and predicting data.",
+            "method": [
+                "Scaffolding",
+                "Coaching"
+            ],
+            "actions": [
+                {
+                    "prompt": "[Use one word to represent the ${step index} for this step (first, second, etc) and use one sentence to explain the ${knowledge} to do]",
+                    "interaction": "plain text",
+                    "parameters": [
+                        "step-index",
+                        "knowledge"
+                    ],
+                    "need-response": false,
+                    "action": "Explain the current step's key point and functions/attributes to use"
+                },
+                {
+                    "prompt": "[Use one sentence to prompt the student to fill in the blanks below][Use one sentence to let the student run the code cell after filling blanks]",
+                    "interaction": "fill-in-blanks",
+                    "parameters": [
+                        "code-line-with-blanks"
+                    ],
+                    "need-response": true,
+                    "action": "Prompt the student to fill in the code blanks of the current step"
+                }
+            ]
+        },
+        {
+            "knowledge": "Use `fit` on the dataset with features and target variable to train the model because it calculates the model coefficients and intercept based on the provided data.",
+            "method": [
+                "Scaffolding"
+            ],
+            "actions": [
+                {
+                    "prompt": "[Use one word to represent the ${step index} for this step (first, second, etc) and use one sentence to explain the ${knowledge} to do][Use one sentence to let the student practice the ${knowledge} and understand the results]",
+                    "interaction": "plain text",
+                    "parameters": [
+                        "step-index",
+                        "knowledge",
+                        "code-line"
+                    ],
+                    "need-response": true,
+                    "action": "Explain the current step's key point and functions/attributes to use"
+                }
+            ]
+        },
+        {
+            "knowledge": "Use `predict` on the regression object with new data points to estimate target values because it applies the learned coefficients and intercept to the new data to generate predictions.",
+            "method": [
+                "Scaffolding",
+                "Coaching"
+            ],
+            "actions": [
+                {
+                    "prompt": "[Use one word to represent the ${step index} for this step (first, second, etc) and use one sentence to explain the ${knowledge} to do]",
+                    "interaction": "plain text",
+                    "parameters": [
+                        "step-index",
+                        "knowledge"
+                    ],
+                    "need-response": false,
+                    "action": "Explain the current step's key point and functions/attributes to use"
+                },
+                {
+                    "prompt": "[Use one sentence to prompt the student to fill in the blanks below][Use one sentence to let the student run the code cell after filling blanks]",
+                    "interaction": "fill-in-blanks",
+                    "parameters": [
+                        "code-line-with-blanks"
+                    ],
+                    "need-response": true,
+                    "action": "Prompt the student to fill in the code blanks of the current step"
+                }
+            ]
+        },
+        {
+            "knowledge": "Access `coef_` and `intercept_` attributes after fitting the model to understand the relationship between features and target because they represent the slope (coefficients) and the y-intercept of the linear model, respectively.",
+            "method": [
+                "Scaffolding"
+            ],
+            "actions": [
+                {
+                    "prompt": "[Use one word to represent the ${step index} for this step (first, second, etc) and use one sentence to explain the ${knowledge} to do][Use one sentence to let the student practice the ${knowledge} and understand the results]",
+                    "interaction": "plain text",
+                    "parameters": [
+                        "step-index",
+                        "knowledge",
+                        "code-line"
+                    ],
+                    "need-response": true,
+                    "action": "Explain the current step's key point and functions/attributes to use"
+                }
+            ]
+        }
+    ],
+    "Generate CSV file with list of home price predictions - 551": [
+        {
+            "knowledge": "Generating a CSV file containing predictions of home prices based on a list of areas using a pre-trained regression model.",
+            "method": [
+                "Modeling"
+            ],
+            "actions": [
+                {
+                    "prompt": "[Use one sentence to tell the student the problem (${knowledge}) explored in the video][Use one sentence to encourage the student to follow your steps to solve this problem]",
+                    "interaction": "plain-text",
+                    "parameters": [
+                        "knowledge"
+                    ],
+                    "need-response": false,
+                    "action": "Introduce the current task and encourage the student to follow your steps"
+                }
+            ]
+        },
+        {
+            "knowledge": "Use `pd.read_csv` on the 'areas.csv' file to create a data frame because it allows you to read and work with your input data.",
+            "method": [
+                "Scaffolding",
+                "Coaching"
+            ],
+            "actions": [
+                {
+                    "prompt": "[Use one word to represent the ${step index} for this step (first, second, etc) and use one sentence to explain the ${knowledge} to do]",
+                    "interaction": "plain text",
+                    "parameters": [
+                        "step-index",
+                        "knowledge"
+                    ],
+                    "need-response": false,
+                    "action": "Explain the current step's key point and functions/attributes to use"
+                },
+                {
+                    "prompt": "[Use one sentence to prompt the student to fill in the blanks below][Use one sentence to let the student run the code cell after filling blanks]",
+                    "interaction": "fill-in-blanks",
+                    "parameters": [
+                        "code-line-with-blanks"
+                    ],
+                    "need-response": true,
+                    "action": "Prompt the student to fill in the code blanks of the current step"
+                }
+            ]
+        },
+        {
+            "knowledge": "Use `reg.predict` on the 'area_df' data frame to generate predictions because it applies the trained regression model to new data for price estimation.",
+            "method": [
+                "Scaffolding",
+                "Coaching"
+            ],
+            "actions": [
+                {
+                    "prompt": "[Use one word to represent the ${step index} for this step (first, second, etc) and use one sentence to explain the ${knowledge} to do]",
+                    "interaction": "plain text",
+                    "parameters": [
+                        "step-index",
+                        "knowledge"
+                    ],
+                    "need-response": false,
+                    "action": "Explain the current step's key point and functions/attributes to use"
+                },
+                {
+                    "prompt": "[Use one sentence to prompt the student to fill in the blanks below][Use one sentence to let the student run the code cell after filling blanks]",
+                    "interaction": "fill-in-blanks",
+                    "parameters": [
+                        "code-line-with-blanks"
+                    ],
+                    "need-response": true,
+                    "action": "Prompt the student to fill in the code blanks of the current step"
+                }
+            ]
+        },
+        {
+            "knowledge": "Use the assignment `area_df['prices']=p` to add a new column to the data frame because it stores the predicted prices alongside the corresponding areas.",
+            "method": [
+                "Scaffolding",
+                "Coaching"
+            ],
+            "actions": [
+                {
+                    "prompt": "[Use one word to represent the ${step index} for this step (first, second, etc) and use one sentence to explain the ${knowledge} to do][Use one sentence to let the student run the code given and understand the results]",
+                    "interaction": "plain text",
+                    "parameters": [
+                        "step-index",
+                        "knowledge",
+                        "code-line"
+                    ],
+                    "need-response": true,
+                    "action": "Explain the current step's key point and functions/attributes to use"
+                }
+            ]
+        },
+        {
+            "knowledge": "Use `to_csv` with `index=False` on the 'area_df' data frame to export the data to 'prediction.csv' without the index because it creates a clean CSV file with only the required columns.",
+            "method": [
+                "Scaffolding",
+                "Coaching"
+            ],
+            "actions": [
+                {
+                    "prompt": "[Use one word to represent the ${step index} for this step (first, second, etc) and use one sentence to explain the ${knowledge} to do][Use one sentence to let the student run the code given and understand the results]",
+                    "interaction": "plain text",
+                    "parameters": [
+                        "step-index",
+                        "knowledge",
+                        "code-line"
+                    ],
+                    "need-response": true,
+                    "action": "Explain the current step's key point and functions/attributes to use"
+                }
+            ]
+        }
+    ]
+}

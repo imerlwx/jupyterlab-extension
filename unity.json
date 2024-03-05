@@ -1,0 +1,141 @@
+{
+    "Introduction to Properties - 0": [
+        {
+            "knowledge": "Understand the concept of properties in contrast to directly accessing fields in C# (declarative)",
+            "method": [
+                "Modeling"
+            ],
+            "actions": [
+                {
+                    "prompt": "[Use one sentence to explain the importance and necessity of this ${knowledge}]",
+                    "interaction": "plain-text",
+                    "parameters": [
+                        "learning-objective"
+                    ],
+                    "need-response": false,
+                    "action": "Interpret the importance and necessity of the learning objective"
+                }
+            ]
+        }
+    ],
+    "How to create Properties - 86": [
+        {
+            "knowledge": "Learn the syntax for creating a property with a get and set accessor in C# (declarative)",
+            "method": [
+                "Scaffolding"
+            ],
+            "actions": [
+                {
+                    "prompt": "[Based on the ${transcript}, use no more than three sentences to briefly teach the student how to do ${learning objective}. Requirement: each bullet point should contain only one sentence]",
+                    "interaction": "plain text",
+                    "parameters": [
+                        "transcript",
+                        "learning-objective"
+                    ],
+                    "need-response": false,
+                    "action": "Give a general brief introduction about how to do the learning objective"
+                }
+            ]
+        },
+        {
+            "knowledge": "Implement a get accessor to retrieve the value of a field (procedural)",
+            "method": [
+                "Articulation",
+                "Reflection"
+            ],
+            "actions": [
+                {
+                    "prompt": "Propose a multiple-choice question for possible reasons behind the operation.",
+                    "interaction": "multiple-choice",
+                    "parameters": [
+                        "transcript"
+                    ],
+                    "need-response": true,
+                    "action": "Propose a question for the student to consider the reason behind the operation"
+                },
+                {
+                    "prompt": "[Use one sentence to give feedback on the ${student-choice}]",
+                    "interaction": "plain-text",
+                    "parameters": [
+                        "student-choice"
+                    ],
+                    "need-response": true,
+                    "action": "Give feedback on the student's choice of the question"
+                }
+            ]
+        },
+        {
+            "knowledge": "Implement a set accessor to assign a value to a field using the 'value' keyword (procedural)",
+            "method": [
+                "Articulation",
+                "Reflection"
+            ],
+            "actions": [
+                {
+                    "prompt": "Propose a multiple-choice question for possible reasons behind the operation.",
+                    "interaction": "multiple-choice",
+                    "parameters": [
+                        "transcript"
+                    ],
+                    "need-response": true,
+                    "action": "Propose a question for the student to consider the reason behind the operation"
+                },
+                {
+                    "prompt": "[Use one sentence to give feedback on the ${student-choice}]",
+                    "interaction": "plain-text",
+                    "parameters": [
+                        "student-choice"
+                    ],
+                    "need-response": true,
+                    "action": "Give feedback on the student's choice of the question"
+                }
+            ]
+        }
+    ],
+    "Why are Properties better to use": [
+        {
+            "knowledge": "Properties can be made read-only or write-only by omitting set or get accessors respectively (declarative)",
+            "method": [
+                "Modeling"
+            ],
+            "actions": [
+                {
+                    "prompt": "[Use one sentence to explain the importance and necessity of this ${knowledge}]",
+                    "interaction": "plain-text",
+                    "parameters": [
+                        "learning-objective"
+                    ],
+                    "need-response": false,
+                    "action": "Interpret the importance and necessity of the knowledge"
+                }
+            ]
+        },
+        {
+            "knowledge": "Properties allow encapsulation of fields, enabling control over data access (declarative)",
+            "method": [
+                "Articulation",
+                "Reflection"
+            ],
+            "actions": [
+                {
+                    "prompt": "Propose a multiple-choice question for possible reasons behind the knowledge.",
+                    "interaction": "multiple-choice",
+                    "parameters": [
+                        "transcript"
+                    ],
+                    "need-response": true,
+                    "action": "Propose a question for the student to consider the reason behind the knowledge"
+                },
+                {
+                    "prompt": "[Use one sentence to give feedback on the ${student-choice}]",
+                    "interaction": "plain-text",
+                    "parameters": [
+                        "student-choice"
+                    ],
+                    "need-response": true,
+                    "action": "Give feedback on the student's choice of the question"
+                }
+            ]
+        }
+    ]
+}

@@ -1,0 +1,3 @@
+{
+    "3": "```csharp\\nusing System.Collections;\\nusing System.Collections.Generic;\\nusing UnityEngine;\\n\\npublic class Test : MonoBehaviour\\n{\\n    private int _playerHealth = 100;\\n    public int PlayerHealth\\n    {\\n        get\\n        {\\n            return _playerHealth;\\n        }\\n        set\\n        {\\n            _playerHealth = value;\\n         }\\n     }\\n     public string DisplayHealthPercentage\\n     {\\n         get\\n         {\\n             string health = _playerHealth.ToString() + \"%\";\\n             return health;\\n      }\\n}\\n```"
+}

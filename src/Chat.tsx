@@ -95,7 +95,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     {
       id: `msg-${Date.now()}`,
       message:
-        "Welcome to today's Tidy Tuesday project! First, tell me which video you want to watch:",
+        "Welcome to today's Tidy Tuesday project! First, tell me your user id and which video you want to watch (format: video id, user id):",
       videoId: null,
       sentTime: '0 second',
       direction: 'incoming',
@@ -237,10 +237,11 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
         setIsTyping(true);
         setCanGoOn(true);
 
-        // Assuming question is a string like "video_id,user_id"
-        const parts = question.split(',');
-        const extractedVideoId = parts[0];
-        const userId = parts.length > 1 ? parts[1] : ''; // Fallback in case the user_id is missing
+        // Assuming question is a string like "openai api key, video_id, user_id"
+        const parts = question.split(',').map(s => s.trim());
+        const apiKey = parts[0];
+        const extractedVideoId = parts[1];
+        const userId = parts.length > 2 ? parts[2] : '1'; // Fallback in case the user_id is missing
 
         setVideoId(extractedVideoId);
         props.onVideoIdChange({ videoId: extractedVideoId }); // Emit signal
@@ -248,7 +249,11 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
         // console.log(kernel.name);
         setKernelType(kernel.name);
         requestAPI<any>('segments', {
-          body: JSON.stringify({ videoId: extractedVideoId, userId: userId }),
+          body: JSON.stringify({
+            apiKey: apiKey,
+            videoId: extractedVideoId,
+            userId: userId
+          }),
           method: 'POST'
         })
           .then(response => {
@@ -945,7 +950,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                             sx={{
                               padding: '4px 10px', // Reduces padding
                               fontSize: '0.75rem', // Reduces font size
-                              marginTop: '10px'
+                              marginTop: '8px'
                             }}
                           >
                             Submit
@@ -965,8 +970,8 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                       />
                     )}
                     {message.code && (
-                      <div style={{ width: '61.8%', marginBottom: '20px' }}>
-                        {message.interaction === 'fill-in-blank' ? (
+                      <div style={{ width: '61.8%', marginBottom: '8px' }}>
+                        {message.interaction === 'fill-in-blanks' ? (
                           <CodeEditorWithBlanks
                             id={message.id}
                             initialCode={message.code}

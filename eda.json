@@ -105,7 +105,7 @@
         "Coaching": {
             "action": "[Use one word to represent the step index for this step (step_index is 0 means first, step_index = 1 means second, etc)][Use one sentence to explain the key point]",
             "knowledge": "procedural",
-            "interaction": "fill-in-blank",
+            "interaction": "fill-in-blanks",
             "parameters": [
                 "key-points",
                 "step-index",
@@ -180,7 +180,7 @@
         "Coaching": {
             "action": "[Use one sentence to tell the student if any additional steps could confirm their choice]{if the student's choice could be achieved by using the dataset to make another plot: [Code with blanks and choice] (requirements: provide a starter code template for how to use code to do the example you provide; the code should contain at least one blank for the student to fill in and give them choices to fill in. The blank should be about the attributes or the plot functions or the parameters that the student should learn from the video)[Use one sentence to let the student finish the code and execute the code cell]}{else if the student's choice could be proved by using some facts on the internet: [Use less than three sentence to summarize some facts on the internet]}",
             "knowledge": "procedural",
-            "interaction": "fill-in-blank",
+            "interaction": "fill-in-blanks",
             "parameters": [
                 "data"
             ],
@@ -220,7 +220,7 @@
         "Coaching": {
             "action": "[tutor's code with blanks and choice (requirements: provide a starter code template in a code block for how to do the data processing taught in the video segment; the code should contain at least one blank for the student to fill in and give them choices to fill in. The blank should be about the attributes or the plot functions or the parameters that the student should learn from the video)]",
             "knowledge": "procedural",
-            "interaction": "fill-in-blank",
+            "interaction": "fill-in-blanks",
             "parameters": [
                 "code"
             ],
