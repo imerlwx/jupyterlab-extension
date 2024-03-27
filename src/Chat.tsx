@@ -239,9 +239,9 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
 
         // Assuming question is a string like "openai api key, video_id, user_id"
         const parts = question.split(',').map(s => s.trim());
-        const apiKey = parts[0];
-        const extractedVideoId = parts[1];
-        const userId = parts.length > 2 ? parts[2] : '1'; // Fallback in case the user_id is missing
+        // const apiKey = parts[0];
+        const extractedVideoId = parts[0];
+        const userId = parts.length > 1 ? parts[1] : '1'; // Fallback in case the user_id is missing
 
         setVideoId(extractedVideoId);
         props.onVideoIdChange({ videoId: extractedVideoId }); // Emit signal
@@ -250,7 +250,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
         setKernelType(kernel.name);
         requestAPI<any>('segments', {
           body: JSON.stringify({
-            apiKey: apiKey,
+            // apiKey: apiKey,
             videoId: extractedVideoId,
             userId: userId
           }),

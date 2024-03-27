@@ -35,9 +35,9 @@ model = RerankerModel(model_name_or_path="maidalun1020/bce-reranker-base_v1")
 # YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 # OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 YOUTUBE_API_KEY = "AIzaSyA_72GvOE9OdRKdCIk2-lXC_BTUrGwnz2A"
-# OPENAI_API_KEY = "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"
-OPENAI_API_KEY = ""
-# openai.api_key = OPENAI_API_KEY
+OPENAI_API_KEY = "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"
+# OPENAI_API_KEY = ""
+openai.api_key = OPENAI_API_KEY
 youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
 DATA_URL = "https://api.github.com/repos/rfordatascience/tidytuesday/contents/data/"
 CODE_URL = "https://api.github.com/repos/dgrtwo/data-screencasts/contents/"
@@ -55,12 +55,8 @@ last_practicing_skill = None
 learned_functions = []
 step_index = 0
 CUR_SEQ = []  # The current sequence of moves
-with open("test.json", "r") as file:
-    # Parse the file and convert JSON data into a Python dictionary
-    eda_video = json.load(file)
-with open("code.json", "r") as file:
-    # Parse the file and convert JSON data into a Python dictionary
-    all_code = json.load(file)
+eda_video = {}
+all_code = {}
 
 
 class DataHandler(APIHandler):
@@ -111,8 +107,8 @@ class SegmentHandler(APIHandler):
         data = self.get_json_body()
         video_id = data["videoId"]
         user_id = data["userId"]
-        OPENAI_API_KEY = data["apiKey"]
-        openai.api_key = OPENAI_API_KEY
+        # OPENAI_API_KEY = data["apiKey"]
+        # openai.api_key = OPENAI_API_KEY
         segments = get_segments(video_id)
         self.finish(json.dumps(segments))
 
@@ -131,7 +127,7 @@ class ChatHandler(APIHandler):
         segment_index = data["segmentIndex"]
         kernelType = data["kernelType"]
         selected_choice = data["selectedChoice"]
-        print("selected choice: ", selected_choice)
+        # print("selected choice: ", selected_choice)
         segment = get_segments(video_id)[segment_index]
         dataset = get_csv_from_youtube_video(video_id)
 
@@ -144,6 +140,24 @@ class ChatHandler(APIHandler):
         c = conn.cursor()
         if llm is None or prompt is None or memory is None or conversation is None:
             VIDEO_ID = video_id
+            if eda_video is {}:
+                if video_id == "nx5yhXAQLxw":
+                    with open("college_major.json", "r") as file:
+                        # Parse the file and convert JSON data into a Python dictionary
+                        eda_video = json.load(file)
+                elif video_id == "Kd9BNI6QMmQ":
+                    with open("video_game.json", "r") as file:
+                        # Parse the file and convert JSON data into a Python dictionary
+                        eda_video = json.load(file)
+            if all_code == {}:
+                if video_id == "nx5yhXAQLxw":
+                    with open("college_major_code.json", "r") as file:
+                        # Parse the file and convert JSON data into a Python dictionary
+                        all_code = json.load(file)
+                elif video_id == "Kd9BNI6QMmQ":
+                    with open("video_game_code.json", "r") as file:
+                        # Parse the file and convert JSON data into a Python dictionary
+                        all_code = json.load(file)
             init_bkt_params()
             initialize_chat_server(kernelType)
 
@@ -242,6 +256,7 @@ class ChatHandler(APIHandler):
                     code_with_blanks = get_code_with_blank(
                         video_id, segment_index, all_code
                     )
+                    print("code_with_blanks", code_with_blanks)
                     results = (
                         results
                         + " Let's learn how to create that visualization. Here is the structure of the code:"
@@ -299,21 +314,24 @@ class GoOnHandler(APIHandler):
     @tornado.web.authenticated
     def post(self):
         """Evaluate if the user is ready to go on to the next segment."""
-        data = self.get_json_body()
-        video_id = data["videoId"]
-        segment_index = data["segmentIndex"]
-        segment_skill = get_skill_by_segment(video_id, segment_index)
-        # Check if there is any False in the practicing skills
-        contains_false = any(
-            not value
-            for inner_dict in segment_skill.values()
-            for value in inner_dict.values()
-        )
-        if contains_false:
-            result = "yes"  # if there is false, don't go on
+        # data = self.get_json_body()
+        # video_id = data["videoId"]
+        # segment_index = data["segmentIndex"]
+        # segment_skill = get_skill_by_segment(video_id, segment_index)
+        # # Check if there is any False in the practicing skills
+        # contains_false = any(
+        #     not value
+        #     for inner_dict in segment_skill.values()
+        #     for value in inner_dict.values()
+        # )
+        # if contains_false:
+        #     result = "no"  # if there is false and there are still moves, don't go on
+        if CUR_SEQ != []:
+            result = "no"
         else:
             # set_prev_notebook(data["notebook"])
             result = "yes"  # if there is no false, go on
+        print("CUR_SEQ:", CUR_SEQ)
         self.finish(json.dumps(result))
 
 
@@ -329,81 +347,93 @@ class UpdateSeqHandler(APIHandler):
         segment = get_segments(video_id)[segment_index]
         start_time = segment["start"]
         learning_obj = category + " - " + str(start_time)
+        if eda_video == {}:
+            if video_id == "nx5yhXAQLxw":
+                with open("college_major.json", "r") as file:
+                    # Parse the file and convert JSON data into a Python dictionary
+                    eda_video = json.load(file)
+            elif video_id == "Kd9BNI6QMmQ":
+                with open("video_game.json", "r") as file:
+                    # Parse the file and convert JSON data into a Python dictionary
+                    eda_video = json.load(file)
         sections = eda_video[learning_obj]
+        CUR_SEQ = [
+            dict(knowledge=section["knowledge"], **action)
+            for section in sections
+            for action in section["actions"]
+        ]
+        step_index = 0  # update step_index for every segment
         # CUR_SEQ = [action for section in sections for action in section["actions"]]
-        init_bkt_params()
-        segment_skill = get_skill_by_segment(video_id, segment_index)
-        skills_with_false = []
-        for skills in segment_skill.values():
-            for skill, value in skills.items():
-                if not value:
-                    skills_with_false.append(skill)
-        if skills_with_false != []:
-            skill_to_practice = skills_with_false[0]
-            skills = list(segment_skill.values())[0]
-            category_params = {
-                skill: bkt_params[skill]["probMastery"] for skill in skills.keys()
-            }
-            # Update the sequence of moves depending on the mastery of the skill
-            if category_params[skill_to_practice] < 0.5:
-                # CUR_SEQ = eda_video[category]["Sequence"]["lower"].copy()
-                CUR_SEQ = [
-                    dict(knowledge=section["knowledge"], **action)
-                    for section in sections
-                    for action in section["actions"]
-                ]
-                # print("lower:" + str(CUR_SEQ))
-            else:
-                # CUR_SEQ = eda_video[category]["Sequence"]["upper"].copy()
-                CUR_SEQ = [
-                    dict(knowledge=section["knowledge"], **action)
-                    for section in sections
-                    for action in section["actions"]
-                ]
-                # print("upper:" + str(CUR_SEQ))
-            # if category == "Visualizing the data":
-            # # Find out the proper pedagogy for Visualizing the data segment
-            # _, functions_to_learn, _ = get_function_attribute(
-            #     video_id, segment_index, all_code
-            # )
-            # # filter out functions that are not learned before
-            # filtered_functions_to_learn = [
-            #     [
-            #         function
-            #         for function in sublist
-            #         if function not in learned_functions
-            #     ]
-            #     for sublist in functions_to_learn
-            # ]
-            # CUR_SEQ = ["Modeling"]
-            # for function_to_learn in filtered_functions_to_learn:
-            #     if function_to_learn == []:
-            #         CUR_SEQ.append("Scaffolding")
-            #     else:
-            #         CUR_SEQ.append("Coaching")
-            # CUR_SEQ.append("Reflection")
-            # initialze_database()
-            # conn = sqlite3.connect("cache.db")
-            # c = conn.cursor()
-            # c.execute(
-            #     "SELECT * FROM learning_progress_cache WHERE user_id = ? AND video_id = ? AND segment_index = ?",
-            #     (user_id, video_id, segment_index),
-            # )
-            # row = c.fetchone()
-            # if not row:
-            #     c.execute(
-            #         "INSERT INTO learning_progress_cache VALUES (?, ?, ?, ?)",
-            #         (
-            #             user_id,
-            #             video_id,
-            #             segment_index,
-            #             0,
-            #         ),
-            #     )
-            # conn.commit()
-            # conn.close()
-            step_index = 0  # update step_index for every segment
-            print("CUR_SEQ updated successfully: " + str(CUR_SEQ))
+        # init_bkt_params()
+        # segment_skill = get_skill_by_segment(video_id, segment_index)
+        # skills_with_false = []
+        # for skills in segment_skill.values():
+        #     for skill, value in skills.items():
+        #         if not value:
+        #             skills_with_false.append(skill)
+        # if skills_with_false != []:
+        #     skill_to_practice = skills_with_false[0]
+        #     skills = list(segment_skill.values())[0]
+        #     category_params = {
+        #         skill: bkt_params[skill]["probMastery"] for skill in skills.keys()
+        #     }
+        #     # Update the sequence of moves depending on the mastery of the skill
+        #     if category_params[skill_to_practice] < 0.5:
+        #         # CUR_SEQ = eda_video[category]["Sequence"]["lower"].copy()
+        #         CUR_SEQ = [
+        #             dict(knowledge=section["knowledge"], **action)
+        #             for section in sections
+        #             for action in section["actions"]
+        #         ]
+        #     else:
+        #         # CUR_SEQ = eda_video[category]["Sequence"]["upper"].copy()
+        #         CUR_SEQ = [
+        #             dict(knowledge=section["knowledge"], **action)
+        #             for section in sections
+        #             for action in section["actions"]
+        #         ]
+        # if category == "Visualizing the data":
+        # # Find out the proper pedagogy for Visualizing the data segment
+        # _, functions_to_learn, _ = get_function_attribute(
+        #     video_id, segment_index, all_code
+        # )
+        # # filter out functions that are not learned before
+        # filtered_functions_to_learn = [
+        #     [
+        #         function
+        #         for function in sublist
+        #         if function not in learned_functions
+        #     ]
+        #     for sublist in functions_to_learn
+        # ]
+        # CUR_SEQ = ["Modeling"]
+        # for function_to_learn in filtered_functions_to_learn:
+        #     if function_to_learn == []:
+        #         CUR_SEQ.append("Scaffolding")
+        #     else:
+        #         CUR_SEQ.append("Coaching")
+        # CUR_SEQ.append("Reflection")
+        # initialze_database()
+        # conn = sqlite3.connect("cache.db")
+        # c = conn.cursor()
+        # c.execute(
+        #     "SELECT * FROM learning_progress_cache WHERE user_id = ? AND video_id = ? AND segment_index = ?",
+        #     (user_id, video_id, segment_index),
+        # )
+        # row = c.fetchone()
+        # if not row:
+        #     c.execute(
+        #         "INSERT INTO learning_progress_cache VALUES (?, ?, ?, ?)",
+        #         (
+        #             user_id,
+        #             video_id,
+        #             segment_index,
+        #             0,
+        #         ),
+        #     )
+        # conn.commit()
+        # conn.close()
+        # print("CUR_SEQ updated successfully: " + str(CUR_SEQ))
 
 
 class FillInBlanksHandler(APIHandler):
@@ -436,7 +466,6 @@ class UpdateBKTHandler(APIHandler):
         video_id = data["videoId"]
         cell_content = data["cell"]
         cell_output = data["output"]
-        # print(cell_content)
         if cell_output:  # the student executed the cell and the cell has output
             output_type = cell_output[0].get("name", "")
             # print(output_type)
@@ -510,10 +539,11 @@ def initialze_database():
     c.execute(
         """
     CREATE TABLE IF NOT EXISTS skills_cache (
+        user_id TEXT,
         video_id TEXT,
         segment_index NUMBER NOT NULL,
         skills TEXT NOT NULL,
-        PRIMARY KEY (video_id, segment_index)
+        PRIMARY KEY (user_id, video_id, segment_index)
     );"""
     )
     c.execute(
@@ -578,8 +608,8 @@ def initialze_database():
 
     video_id = "nx5yhXAQLxw"
     segments_set = [
-        {"category": "Introduction", "start": 1, "end": 113},  # 0
-        {"category": "Load packages/data", "start": 113, "end": 212},  # 1
+        {"category": "Introduction", "start": 1, "end": 86},  # 0
+        {"category": "Load packages/data", "start": 86, "end": 212},  # 1
         {"category": "Understand the dataset", "start": 212, "end": 418},  # 2
         {"category": "Visualize the data", "start": 418, "end": 463},  # 3
         {"category": "Interpret the chart", "start": 463, "end": 509},  # 4
@@ -604,17 +634,17 @@ def initialze_database():
 
     video_id = "Kd9BNI6QMmQ"
     segments_set = [
-        {"category": "Introduction", "start": 1, "end": 102},
-        {"category": "Load packages/data", "start": 102, "end": 137},
-        {"category": "Understand the dataset", "start": 137, "end": 220},
-        {"category": "Preprocess the data", "start": 220, "end": 568},
-        {"category": "Visualize the data", "start": 568, "end": 580},
-        {"category": "Interpret the chart", "start": 580, "end": 596},
-        {"category": "Visualize the data", "start": 596, "end": 655},
-        {"category": "Interpret the chart", "start": 655, "end": 680},
-        {"category": "Preprocess the data", "start": 680, "end": 715},
-        {"category": "Interpret the chart", "start": 715, "end": 740},
-        {"category": "Visualize the data", "start": 740, "end": 900},
+        {"category": "Introduction", "start": 1, "end": 102},  # 0
+        {"category": "Load packages/data", "start": 102, "end": 137},  # 1
+        {"category": "Understand the dataset", "start": 137, "end": 220},  # 2
+        {"category": "Preprocess the data", "start": 220, "end": 568},  # 3
+        {"category": "Visualize the data", "start": 568, "end": 580},  # 4
+        {"category": "Interpret the chart", "start": 580, "end": 596},  # 5
+        {"category": "Visualize the data", "start": 596, "end": 655},  # 6
+        {"category": "Interpret the chart", "start": 655, "end": 740},  # 7
+        {"category": "Visualize the data", "start": 740, "end": 900},  # 8
+        {"category": "Interpret the chart", "start": 900, "end": 968},  # 9
+        {"category": "Visualize the data", "start": 968, "end": 1027},  # 10
     ]
     segments_json = json.dumps(segments_set)
     c.execute("SELECT * FROM segments_cache WHERE video_id = ?", (video_id,))
@@ -1032,10 +1062,17 @@ def get_video_segment(video_id, length=600):
 
 def get_skills(video_id):
     """Summary all the EDA skills in the given tutorial video."""
+    global user_id
     initialze_database()
     conn = sqlite3.connect("cache.db")
     c = conn.cursor()
-    c.execute("SELECT skills FROM skills_cache WHERE video_id = ?", (video_id,))
+    c.execute(
+        "SELECT skills FROM skills_cache WHERE user_id = ? AND video_id = ?",
+        (
+            user_id,
+            video_id,
+        ),
+    )
     row = c.fetchone()
     if row:
         return json.loads(row[0])
@@ -1076,7 +1113,10 @@ def get_skills(video_id):
             temperature=0.5,
         )
         skills_data = completion.choices[0].message["content"]
-        c.execute("INSERT INTO skills_cache VALUES (?, ?)", (video_id, skills_data))
+        c.execute(
+            "INSERT INTO skills_cache VALUES (?, ?, ?)",
+            (user_id, video_id, skills_data),
+        )
         conn.commit()
         conn.close()
     return json.loads(skills_data)
@@ -1197,7 +1237,7 @@ def get_diff_between_notebooks(previous_notebook, current_notebook):
 
 def update_bkt_params(video_id, segment_index, cell_content, question, kernelType):
     """Update the bkt parameters for the practiced skills."""
-    global bkt_params
+    global bkt_params, user_id
     # diff = get_diff_between_notebooks(previous_notebook, current_notebook)
     # Get skills for the current segment
     # segment_skill is in this format: {"Load data/packages":
@@ -1265,8 +1305,8 @@ def update_bkt_params(video_id, segment_index, cell_content, question, kernelTyp
         c = conn.cursor()
         category_skill_json = json.dumps(segment_skill)
         c.execute(
-            "UPDATE skills_cache SET skills = ? WHERE video_id = ? AND segment_index = ?",
-            (category_skill_json, video_id, segment_index),
+            "UPDATE skills_cache SET skills = ? WHERE user_id = ? AND video_id = ? AND segment_index = ?",
+            (category_skill_json, user_id, video_id, segment_index),
         )
         conn.commit()
         conn.close()
@@ -1283,8 +1323,9 @@ def get_skill_by_segment(video_id, segment_index):
     c = conn.cursor()
     segment = all_segment[segment_index]
     c.execute(
-        "SELECT skills FROM skills_cache WHERE video_id = ? AND segment_index = ?",
+        "SELECT skills FROM skills_cache WHERE user_id = ? AND video_id = ? AND segment_index = ?",
         (
+            user_id,
             video_id,
             segment_index,
         ),
@@ -1306,8 +1347,8 @@ def get_skill_by_segment(video_id, segment_index):
     category_skill_json = json.dumps(category_skill)
     # Insert new data if video_id doesn't exist
     c.execute(
-        "INSERT INTO skills_cache (video_id, segment_index, skills) VALUES (?, ?, ?)",
-        (video_id, segment_index, category_skill_json),
+        "INSERT INTO skills_cache (user_id, video_id, segment_index, skills) VALUES (?, ?, ?, ?)",
+        (user_id, video_id, segment_index, category_skill_json),
     )
     conn.commit()
     conn.close()
@@ -1316,6 +1357,7 @@ def get_skill_by_segment(video_id, segment_index):
 
 def get_skill_action_by_segment(video_id, segment_index):
     """Get the skills and actions corresponding to the given segment."""
+    global user_id
     all_segment = get_segments(video_id)
     conn = sqlite3.connect("cache.db")
     c = conn.cursor()
@@ -1327,8 +1369,9 @@ def get_skill_action_by_segment(video_id, segment_index):
         category=segment["category"],
     )
     c.execute(
-        "SELECT skills FROM skills_cache WHERE video_id = ? AND segment_index = ?",
+        "SELECT skills FROM skills_cache WHERE user_id = ? AND video_id = ? AND segment_index = ?",
         (
+            user_id,
             video_id,
             segment_index,
         ),
@@ -1397,10 +1440,10 @@ def get_skill_action_by_segment(video_id, segment_index):
         category_skill_json = json.dumps(category_skill)
         skill_action_json = json.dumps(skill_action)
         # Insert new data if video_id doesn't exist
-        c.execute(
-            "INSERT INTO skills_cache (video_id, segment_index, skills, actions) VALUES (?, ?, ?, ?)",
-            (video_id, segment_index, category_skill_json, skill_action_json),
-        )
+        # c.execute(
+        #     "INSERT INTO skills_cache (video_id, segment_index, skills, actions) VALUES (?, ?, ?, ?)",
+        #     (video_id, segment_index, category_skill_json, skill_action_json),
+        # )
         conn.commit()
         conn.close()
         return category_skill
@@ -1468,11 +1511,12 @@ def get_function_attribute(video_id, segment_index, code_json):
     )
     row = c.fetchone()
     if row:
-        # Convert each string in the tuple to a Python object using ast.literal_eval
-        key_points = ast.literal_eval(row[0])
-        functions_to_learn = ast.literal_eval(row[1])
-        attributes_to_learn = ast.literal_eval(row[2])
-        return key_points, functions_to_learn, attributes_to_learn
+        if row[0] and row[1] and row[2]:
+            # Convert each string in the tuple to a Python object using ast.literal_eval
+            key_points = ast.literal_eval(row[0])
+            functions_to_learn = ast.literal_eval(row[1])
+            attributes_to_learn = ast.literal_eval(row[2])
+            return key_points, functions_to_learn, attributes_to_learn
     all_segment = get_segments(video_id)
     start_time = all_segment[segment_index]["start"]
     # end_time = all_segment[segment_index]["end"]
@@ -1579,13 +1623,19 @@ def get_code_with_blank(video_id, segment_index, code_json):
         (video_id, segment_index),
     )
     row = c.fetchone()
-    if row:
+    if row[0]:
+        # print("row[0]:", row[0])
         return row[0]
     # get the code block
     _, functions_to_learn, attributes_to_learn = get_function_attribute(
         video_id, segment_index, code_json
     )
     code_block = code_json[str(segment_index)]
+    print(
+        "functions_to_learn, attributes_to_learn:",
+        functions_to_learn,
+        attributes_to_learn,
+    )
     # get the code with blank
     response = openai.ChatCompletion.create(
         model="gpt-4-1106-preview",
@@ -1654,6 +1704,8 @@ def update_step_index(video_id, segment_index, step_index):
 def get_code_with_blank_by_step(video_id, segment_index, code_json, step_index):
     """Get the code with blank by step index for a video segment."""
     key_points, _, _ = get_function_attribute(video_id, segment_index, code_json)
+    print("key_points:", key_points)
+    print("step_index:", step_index)
     code_with_blanks = get_code_with_blank(video_id, segment_index, code_json)
     code_block = code_json[str(segment_index)]
     # Split the code block into a list by newline character

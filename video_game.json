@@ -1,0 +1,466 @@
+{
+    "Introduction - 1": [
+        {
+            "knowledge": "Watch the video, know who is David Robinson and what EDA is about",
+            "actions": []
+        }
+    ],
+    "Load packages/data - 102": [
+        {
+            "knowledge": "Know how to load the dataset and packages to do EDA-related tasks",
+            "actions": [
+                {
+                    "method": "Coaching",
+                    "action": "Let the student execute the completed full code block",
+                    "prompt": "The relevant library and dataset can be imported and loaded using the following code. Try to understand the code like the video does. Then, move on to the next video to learn how to look at the dataset.",
+                    "interaction": "show-code",
+                    "parameters": [
+                        "code-block"
+                    ],
+                    "need-response": true
+                }
+            ]
+        }
+    ],
+    "Understand the dataset - 137": [
+        {
+            "knowledge": "Understand the attribute meanings and metrics of the dataset, and generate hypothesis on the data",
+            "actions": [
+                {
+                    "action": "Have students use {interaction} to illustrate their findings by observing the output",
+                    "interaction": "auto-reply",
+                    "method": "Articulation",
+                    "need-response": true,
+                    "parameters": [
+                        "knowledge"
+                    ],
+                    "prompt": "Exploring and understanding the dataset and its attributes is the first step to doing exploratory data analysis. Now please try exploring the data on your own! If you have any hypothesis, please share with me."
+                }
+            ]
+        }
+    ],
+    "Preprocess the data - 220": [
+        {
+            "actions": [
+                {
+                    "action": "Use {interaction} to introduce the current task and encourage the student to follow your steps",
+                    "interaction": "plain-text",
+                    "method": "Modeling",
+                    "need-response": false,
+                    "parameters": [
+                        "knowledge"
+                    ],
+                    "prompt": "[Use one sentence to tell the student the problem ({knowledge}) explored in the video][Use one sentence to encourage the student to follow your steps to solve this problem]"
+                }
+            ],
+            "knowledge": "Converting year and month columns into a proper date column for time series analysis"
+        },
+        {
+            "actions": [
+                {
+                    "method": "Scaffolding",
+                    "action": "Explain the current step's key point and functions/attributes to use and prompt the student to fill in the code blanks of the current step",
+                    "prompt": "[Use one word to represent the {step-index} for this step ({step_index} is 0 means first, {step_index} is larger than 0 should use next, then, etc) and use one sentence to explain the {knowledge} to do, including what effect we want to achieve, why we do it, and what function we use to do it.]",
+                    "interaction": "fill-in-blanks",
+                    "need-response": true,
+                    "parameters": [
+                        "step-index",
+                        "knowledge"
+                    ]
+                }
+            ],
+            "knowledge": "Use parse_number on avg_peak_perc to convert percentage strings to numeric values because it facilitates numerical analysis and visualization in tools like ggplot2."
+        },
+        {
+            "knowledge": "Understand the error in the code and execute the cell",
+            "actions": [
+                {
+                    "method": "Reflection",
+                    "action": "Have the student compare his completed code block with the standard code and execute the completed full code block",
+                    "prompt": "Compare your choice with the following code to see if anything is wrong. Then execute the code cell and see what you get.",
+                    "interaction": "show-code",
+                    "parameters": [
+                        "code-block"
+                    ],
+                    "need-response": true
+                }
+            ]
+        }
+    ],
+    "Visualize the data - 568": [
+        {
+            "actions": [
+                {
+                    "action": "Use {interaction} to introduce the current task and encourage the student to follow your steps",
+                    "interaction": "plain-text",
+                    "method": "Modeling",
+                    "need-response": false,
+                    "parameters": [
+                        "knowledge"
+                    ],
+                    "prompt": "[Use one sentence to tell the student the problem ({knowledge}) explored in the video][Use one sentence to encourage the student to follow your steps to solve this problem]"
+                }
+            ],
+            "knowledge": "Understanding the distribution of games over time"
+        },
+        {
+            "actions": [
+                {
+                    "method": "Scaffolding",
+                    "action": "Explain the current step's key point and functions/attributes to use and prompt the student to fill in the code blanks of the current step",
+                    "prompt": "[Use one word to represent the {step-index} for this step ({step_index} is 0 means first, {step_index} is larger than 0 should use next, then, etc) and use one sentence to explain the {knowledge} to do, including what effect we want to achieve, why we do it, and what function we use to do it.]",
+                    "interaction": "fill-in-blanks",
+                    "need-response": true,
+                    "parameters": [
+                        "step-index",
+                        "knowledge"
+                    ]
+                }
+            ],
+            "knowledge": "Use `count()` on `date` to achieve aggregation of games by date because it summarizes the number of games that occurred on each date."
+        },
+        {
+            "actions": [
+                {
+                    "action": "Use {interaction} to allow students articulate their understanding of knowledge",
+                    "interaction": "multiple-choice",
+                    "method": "Articulation",
+                    "need-response": true,
+                    "parameters": [
+                        "knowledge"
+                    ],
+                    "prompt": "Propose a multiple-choice question for the student to answer to learn the {knowledge}, such as why make this kinds of visualization rather than others, etc"
+                },
+                {
+                    "method": "Reflection",
+                    "action": "Give feedback on the student's answer",
+                    "prompt": "[Use one sentence to give feedback on the student's answer ({student-choice} or plain-text answer). Student's answer could be wrong so if the answer is wrong, please indicate why it is wrong and the correct answer]",
+                    "interaction": "plain-text",
+                    "parameters": [
+                        "student-choice"
+                    ],
+                    "need-response": false
+                }
+            ],
+            "knowledge": "Use `ggplot()` along with `aes()` and `geom_col()` to visualize the distribution of games over time because it helps in understanding the frequency and trends of game occurrences."
+        },
+        {
+            "knowledge": "Understand the error in the code and execute the cell",
+            "actions": [
+                {
+                    "method": "Reflection",
+                    "action": "Have the student compare his completed code block with the standard code and execute the completed full code block",
+                    "prompt": "Compare your choice with the following code to see if anything is wrong. Then execute the code cell and see what you get.",
+                    "interaction": "show-code",
+                    "parameters": [
+                        "code-block"
+                    ],
+                    "need-response": true
+                }
+            ]
+        }
+    ],
+    "Interpret the chart - 580": [
+        {
+            "actions": [
+                {
+                    "action": "Use {interaction} to give a brief introduction about how to learn the knowledge",
+                    "interaction": "plain-text",
+                    "method": "Scaffolding",
+                    "need-response": false,
+                    "parameters": [
+                        "knowledge"
+                    ],
+                    "prompt": "[Use no more than three sentences to briefly teach the student how to learn the {knowledge}]"
+                }
+            ],
+            "knowledge": "To interpret the trend of games being tracked on a platform, one must observe the line graph and note the changes over time, considering any significant increases or decreases and possible reasons for these changes."
+        },
+        {
+            "actions": [
+                {
+                    "action": "Use {interaction} for the student to answer to learn the knowledge",
+                    "interaction": "multiple-choice",
+                    "method": "Coaching",
+                    "need-response": true,
+                    "parameters": [
+                        "knowledge"
+                    ],
+                    "prompt": "Propose a multiple-choice question for the student to answer to learn the {knowledge}, such as what pattern do the student find in the chart, what could be the potential reason behind the pattern, etc"
+                },
+                {
+                    "action": "Use {interaction} to give feedback on the student's answer",
+                    "interaction": "plain-text",
+                    "method": "Reflection",
+                    "need-response": true,
+                    "parameters": [
+                        "student-answer"
+                    ],
+                    "prompt": "[Use one sentence to give feedback on the {student-answer}][Use one sentence to tell the student if any additional steps could confirm his choice][Ask the student to remember the choice and see if it makes sense as he watch the rest of the video]"
+                }
+            ],
+            "knowledge": "To understand the fluctuations in the data, such as the decrease in early 2018, one must consider external factors that may have led to games being removed from the platform."
+        }
+    ],
+    "Visualize the data - 596": [
+        {
+            "actions": [
+                {
+                    "action": "Use {interaction} to introduce the current task and encourage the student to follow your steps",
+                    "interaction": "plain-text",
+                    "method": "Modeling",
+                    "need-response": false,
+                    "parameters": [
+                        "knowledge"
+                    ],
+                    "prompt": "[Use one sentence to tell the student the problem ({knowledge}) explored in the video][Use one sentence to encourage the student to follow your steps to solve this problem]"
+                }
+            ],
+            "knowledge": "Understanding the distribution of average number of players over time and why median is used instead of mean"
+        },
+        {
+            "actions": [
+                {
+                    "method": "Scaffolding",
+                    "action": "Explain the current step's key point and functions/attributes to use and prompt the student to fill in the code blanks of the current step",
+                    "prompt": "[Use one word to represent the {step-index} for this step ({step_index} is 0 means first, {step_index} is larger than 0 should use next, then, etc) and use one sentence to explain the {knowledge} to do, including what effect we want to achieve, why we do it, and what function we use to do it.]",
+                    "interaction": "fill-in-blanks",
+                    "need-response": true,
+                    "parameters": [
+                        "step-index",
+                        "knowledge"
+                    ]
+                }
+            ],
+            "knowledge": "Use `group_by(date)` on the `date` attribute to achieve grouped analysis because it prepares the data for calculating statistics within each group."
+        },
+        {
+            "actions": [
+                {
+                    "action": "Use {interaction} to allow students articulate their understanding of knowledge",
+                    "interaction": "multiple-choice",
+                    "method": "Articulation",
+                    "need-response": true,
+                    "parameters": [
+                        "knowledge"
+                    ],
+                    "prompt": "Propose a multiple-choice question for the student to answer to learn the {knowledge}, such as why make this kinds of visualization rather than others, etc"
+                },
+                {
+                    "method": "Reflection",
+                    "action": "Give feedback on the student's answer",
+                    "prompt": "[Use one sentence to give feedback on the student's answer ({student-choice} or plain-text answer). Student's answer could be wrong so if the answer is wrong, please indicate why it is wrong and the correct answer]",
+                    "interaction": "plain-text",
+                    "parameters": [
+                        "student-choice"
+                    ],
+                    "need-response": false
+                }
+            ],
+            "knowledge": "Use `summarize` after `group_by` to achieve aggregated statistics because it computes summary measures like median for each group."
+        },
+        {
+            "actions": [
+                {
+                    "method": "Scaffolding",
+                    "action": "Explain the current step's key point and functions/attributes to use and prompt the student to fill in the code blanks of the current step",
+                    "prompt": "[Use one word to represent the {step-index} for this step ({step_index} is 0 means first, {step_index} is larger than 0 should use next, then, etc) and use one sentence to explain the {knowledge} to do, including what effect we want to achieve, why we do it, and what function we use to do it.]",
+                    "interaction": "fill-in-blanks",
+                    "need-response": true,
+                    "parameters": [
+                        "step-index",
+                        "knowledge"
+                    ]
+                }
+            ],
+            "knowledge": "Use `ggplot(aes(date, median_avg))` with `geom_line()` to visualize trends over time because it helps in understanding the median popularity of games across different dates."
+        },
+        {
+            "knowledge": "Understand the error in the code and execute the cell",
+            "actions": [
+                {
+                    "method": "Reflection",
+                    "action": "Have the student compare his completed code block with the standard code and execute the completed full code block",
+                    "prompt": "Compare your choice with the following code to see if anything is wrong. Then execute the code cell and see what you get.",
+                    "interaction": "show-code",
+                    "parameters": [
+                        "code-block"
+                    ],
+                    "need-response": true
+                }
+            ]
+        }
+    ],
+    "Interpret the chart - 655": [
+        {
+            "actions": [
+                {
+                    "action": "Use {interaction} to introduce the current task in the video",
+                    "interaction": "plain-text",
+                    "method": "Modeling",
+                    "need-response": false,
+                    "parameters": [
+                        "knowledge"
+                    ],
+                    "prompt": "[Use one sentence to tell the student the current task ({knowledge}) in the video]"
+                }
+            ],
+            "knowledge": "The chart relating to video game usage contains specific information indicating a significant increase in activity at the start of 2020."
+        },
+        {
+            "actions": [
+                {
+                    "action": "Use {interaction} to allow students articulate their understanding of knowledge",
+                    "interaction": "multiple-choice",
+                    "method": "Articulation",
+                    "need-response": true,
+                    "parameters": [
+                        "knowledge"
+                    ],
+                    "prompt": "Propose a multiple-choice question for the student to answer to learn the {knowledge}, such as why make this kinds of visualization rather than others, etc"
+                },
+                {
+                    "action": "Use {interaction} to give feedback on the student's answer",
+                    "interaction": "plain-text",
+                    "method": "Reflection",
+                    "need-response": true,
+                    "parameters": [
+                        "student-answer"
+                    ],
+                    "prompt": "[Use one sentence to give feedback on the {student-answer}. Student's answer could be wrong so if the answer is wrong, please indicate why it is wrong and the correct answer][Use one sentence to tell the student if any additional steps could confirm his choice][Ask the student to remember the choice and see if it makes sense as he watch the rest of the video]"
+                }
+            ],
+            "knowledge": "To interpret the cause of the spike in video game usage in 2020, one must correlate the data with historical events, considering the impact of the COVID-19 pandemic on indoor activities."
+        }
+    ],
+    "Visualize the data - 740": [
+        {
+            "actions": [
+                {
+                    "action": "Use {interaction} to introduce the current task and encourage the student to follow your steps",
+                    "interaction": "plain-text",
+                    "method": "Modeling",
+                    "need-response": false,
+                    "parameters": [
+                        "knowledge"
+                    ],
+                    "prompt": "[Use one sentence to tell the student the problem ({knowledge}) explored in the video][Use one sentence to encourage the student to follow your steps to solve this problem]"
+                }
+            ],
+            "knowledge": "Investigating potential seasonal patterns in the median popularity of games on Steam by visualizing data and handling partial or anomalous data from the first month."
+        },
+        {
+            "actions": [
+                {
+                    "method": "Scaffolding",
+                    "action": "Explain the current step's key point and functions/attributes to use and prompt the student to fill in the code blanks of the current step",
+                    "prompt": "[Use one word to represent the {step-index} for this step ({step_index} is 0 means first, {step_index} is larger than 0 should use next, then, etc) and use one sentence to explain the {knowledge} to do, including what effect we want to achieve, why we do it, and what function we use to do it.]",
+                    "interaction": "fill-in-blanks",
+                    "need-response": true,
+                    "parameters": [
+                        "step-index",
+                        "knowledge"
+                    ]
+                }
+            ],
+            "knowledge": "Use `filter` on `date` to achieve data selection because it excludes data beyond a specified date range, ensuring analysis is focused on a relevant time period"
+        },
+        {
+            "knowledge": "Understand the error in the code and execute the cell",
+            "actions": [
+                {
+                    "method": "Reflection",
+                    "action": "Have the student compare his completed code block with the standard code and execute the completed full code block",
+                    "prompt": "Compare your choice with the following code to see if anything is wrong. Then execute the code cell and see what you get.",
+                    "interaction": "show-code",
+                    "parameters": [
+                        "code-block"
+                    ],
+                    "need-response": true
+                }
+            ]
+        }
+    ],
+    "Interpret the chart - 900": [
+        {
+            "actions": [
+                {
+                    "action": "Use {interaction} to introduce the current task in the video",
+                    "interaction": "plain-text",
+                    "method": "Modeling",
+                    "need-response": false,
+                    "parameters": [
+                        "knowledge"
+                    ],
+                    "prompt": "[Use one sentence to tell the student the current task ({knowledge}) in the video]"
+                }
+            ],
+            "knowledge": "The subject of seasonal trends in Steam games contains specific information about average popularity and median popularity by month."
+        },
+        {
+            "actions": [
+                {
+                    "action": "Use {interaction} to give a brief introduction about how to learn the knowledge",
+                    "interaction": "plain-text",
+                    "method": "Scaffolding",
+                    "need-response": false,
+                    "parameters": [
+                        "knowledge"
+                    ],
+                    "prompt": "[Use no more than three sentences to briefly teach the student how to learn the {knowledge}]"
+                }
+            ],
+            "knowledge": "To interpret the seasonal trend in Steam games, one must analyze the chart data across months, noting the peaks and troughs in popularity, and consider excluding atypical periods such as the pandemic to avoid skewed results."
+        },
+        {
+            "actions": [
+                {
+                    "action": "Have students use {interaction} to illustrate their findings by observing the output",
+                    "interaction": "plain-text",
+                    "method": "Articulation",
+                    "need-response": true,
+                    "parameters": [
+                        "knowledge"
+                    ],
+                    "prompt": "[Use one sentence to ask the student to do the task in {knowledge} and articulate what he found]"
+                },
+                {
+                    "action": "Use {interaction} to give feedback on the student's answer",
+                    "interaction": "plain-text",
+                    "method": "Reflection",
+                    "need-response": false,
+                    "parameters": [
+                        "student-answer"
+                    ],
+                    "prompt": "[Use one sentence to give feedback on the {student-answer}][Use one sentence to tell the student if any additional steps could confirm his choice][Ask the student to remember the choice and see if it makes sense as he watch the rest of the video]"
+                }
+            ],
+            "knowledge": "The chart title 'Seasonal Trend in Steam Games' relates to the pattern of game popularity on Steam over different months of the year."
+        },
+        {
+            "actions": [
+                {
+                    "action": "Use {interaction} for the student to answer to learn the knowledge",
+                    "interaction": "multiple-choice",
+                    "method": "Coaching",
+                    "need-response": true,
+                    "parameters": [
+                        "knowledge"
+                    ],
+                    "prompt": "Propose a multiple-choice question for the student to answer to learn the {knowledge}, such as what pattern do the student find in the chart, what could be the potential reason behind the pattern, etc"
+                },
+                {
+                    "action": "Use {interaction} to give feedback on the student's answer",
+                    "interaction": "plain-text",
+                    "method": "Reflection",
+                    "need-response": true,
+                    "parameters": [
+                        "student-answer"
+                    ],
+                    "prompt": "[Use one sentence to give feedback on the {student-answer}][Use one sentence to tell the student if any additional steps could confirm his choice][Ask the student to remember the choice and see if it makes sense as he watch the rest of the video]"
+                }
+            ],
+            "knowledge": "To accurately represent the data in the chart, one must choose an appropriate title and subtitle that reflect the time frame and any exclusions, such as omitting data from the pandemic year to present a typical trend."
+        }
+    ]
+}
