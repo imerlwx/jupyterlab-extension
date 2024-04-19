@@ -47,36 +47,36 @@
                     "prompt": "[Use one sentence to tell the student the problem ({knowledge}) explored in the video][Use one sentence to encourage the student to follow your steps to solve this problem]",
                     "interaction": "plain-text",
                     "parameters": [
-                        "knowledge",
-                        "code-with-blanks"
+                        "knowledge"
                     ],
                     "need-response": false
                 }
             ]
         },
         {
-            "knowledge": "To visualize the distribution of median salaries, one must use `ggplot` combined with `geom_histogram` on `Median` because it helps in understanding the spread and central tendency of earnings across different majors.",
+            "knowledge": "To visualize the distribution of median salaries, use `ggplot` combined with `geom_histogram` on `Median` because it helps in understanding the spread and central tendency of earnings across different majors.",
             "actions": [
                 {
                     "method": "Scaffolding",
-                    "action": "Explain the current step's key point and functions/attributes to use and prompt the student to fill in the code blanks of the current step",
-                    "prompt": "[Use one word to represent the {step-index} for this step ({step_index} is 0 means first, {step_index} is larger than 0 should use next, then, etc) and use one sentence to explain the {knowledge} to do, including what effect we want to achieve, why we do it, and what function we use to do it.]",
-                    "interaction": "fill-in-blanks",
-                    "need-response": true,
+                    "action": "Explain the current step's key point and functions/attributes to use and prompt the student to understand the knowledge of the current step",
+                    "prompt": "[Use one word to represent the {step-index} for this step ({step_index} is 0 means first, {step_index} is larger than 0 should use next, then, etc) and use one sentence to explain the {knowledge} to do, including what effect we want to achieve, why we do it, and what function we use to do it][Use one sentence to let student try to understand the code and ask questions if he has]",
+                    "interaction": "plain-text",
                     "parameters": [
                         "step-index",
-                        "knowledge"
-                    ]
+                        "knowledge",
+                        "code-line"
+                    ],
+                    "need-response": true
                 }
             ]
         },
         {
-            "knowledge": "Understand the error in the code and execute the cell",
+            "knowledge": "Execute the cell",
             "actions": [
                 {
                     "method": "Reflection",
                     "action": "Have the student compare his completed code block with the standard code and execute the completed full code block",
-                    "prompt": "Compare your choice with the following code to see if anything is wrong. Then execute the code cell and see what you get.",
+                    "prompt": "Now execute the code cell in the notebook panel and see what you get!",
                     "interaction": "show-code",
                     "parameters": [
                         "code-block"
@@ -92,7 +92,7 @@
             "actions": [
                 {
                     "method": "Modeling",
-                    "action": "Introduce the current task in the video segment",
+                    "action": "Use {interaction} to demonstrates the {knowledge} in the video",
                     "prompt": "[Use one sentence to tell the student the current task ({knowledge}) in the video]",
                     "interaction": "plain-text",
                     "parameters": [
@@ -103,27 +103,12 @@
             ]
         },
         {
-            "knowledge": "Learn how to interpret a histogram and consider dividing the data for further analysis.",
+            "knowledge": "Analyze the distribution of data within the chart to infer characteristics (e.g., identifying overall median incoming trends and outliers).",
             "actions": [
                 {
-                    "moves": "Scaffolding",
-                    "action": "Give a general brief introduction about how to learn the knowledge",
-                    "prompt": "[Use no more than three sentences to briefly teach the student how to learn the {knowledge}]",
-                    "interaction": "plain-text",
-                    "parameters": [
-                        "knowledge"
-                    ],
-                    "need-response": false
-                }
-            ]
-        },
-        {
-            "knowledge": "Analyze the distribution of data within the chart to infer characteristics (e.g., identifying overall median incoming trends).",
-            "actions": [
-                {
-                    "method": "Articulation",
-                    "action": "Have the student illustrate his findings by observing the output",
-                    "prompt": "[Use one sentence to ask the student to complete the task described in {knowledge} and clarify what he discovered]",
+                    "moves": "Modeling",
+                    "action": "Use {interaction} to demonstrates the {knowledge} in the video, walking through the process and revealing hidden strategies or tricks",
+                    "prompt": "[Use no more than three sentences to briefly teach the student how to learn the {knowledge}, such as where to pay attention on the chart]",
                     "interaction": "plain-text",
                     "parameters": [
                         "knowledge"
@@ -133,25 +118,15 @@
             ]
         },
         {
-            "knowledge": "Identify that the chart includes outliers with high earnings and consider the reasons, such as the type of college major, the sample size, or variation within the data.",
+            "knowledge": "The subject of median income by college major contains specific information that majors earn a median income of over $30K right out of college. High-earning majors on the chart could be influenced by factors such as low sample size and high variation",
             "actions": [
                 {
-                    "method": "Coaching",
-                    "action": "Propose a question for the student to learn the knowledge",
-                    "prompt": "Propose a multiple-choice question for the student to answer to learn the {knowledge}, such as what pattern do the student find in the chart, what could be the potential reason behind the pattern, etc",
-                    "interaction": "multiple-choice",
-                    "parameters": [
-                        "knowledge"
-                    ],
-                    "need-response": true
-                },
-                {
-                    "method": "Reflection",
-                    "action": "Give feedback on the student's answer",
-                    "prompt": "[Use one sentence to give feedback on the student's answer ({student-choice} or plain-text answer) Student's answer could be wrong so if the answer is wrong, please indicate why it is wrong and the correct answer][Use one sentence to tell the student if any additional steps could confirm his choice][Ask the student to remember the choice and see if it makes sense as he watch the rest of the video]",
+                    "moves": "Modeling",
+                    "action": "Use {interaction} to demonstrates the {knowledge} in the video, walking through the process and revealing hidden strategies or tricks",
+                    "prompt": "[Use no more than two sentences to briefly describe the facts and patterns and potential reasons for the pattern in the {knowledge}]",
                     "interaction": "plain-text",
                     "parameters": [
-                        "student-choice"
+                        "knowledge"
                     ],
                     "need-response": true
                 }
@@ -160,7 +135,7 @@
     ],
     "Visualize the data - 509": [
         {
-            "knowledge": "Comparing the median earnings of graduates across different major categories using a box plot to visualize the distribution and identify which categories have the highest and lowest earnings.",
+            "knowledge": "The task is comparing the median earnings of graduates across different major categories using a box plot to visualize the distribution and identify which categories have the highest and lowest earnings.",
             "actions": [
                 {
                     "method": "Modeling",
@@ -176,50 +151,62 @@
             ]
         },
         {
-            "knowledge": "Use `fct_reorder` on `Major_category` to achieve an ordered factor level based on the `Median` because it helps in identifying the order of majors from lowest to highest earning.",
+            "knowledge": "To achieve an ordered factor level based on the `Median`, use `fct_reorder` on `Major_category` because it helps in identifying the order of majors from lowest to highest earning.",
             "actions": [
                 {
                     "method": "Scaffolding",
-                    "action": "Explain the current step's key point and functions/attributes to use and prompt the student to fill in the code blanks of the current step",
-                    "prompt": "[Use one word to represent the {step-index} for this step ({step_index} is 0 means first, {step_index} is larger than 0 should use next, then, etc) and use one sentence to explain the {knowledge} to do, including what effect we want to achieve, why we do it, and what function we use to do it.]",
-                    "interaction": "fill-in-blanks",
-                    "need-response": true,
+                    "action": "Explain the current step's key point and functions/attributes to use",
+                    "prompt": "[Use one word to represent the {step-index} for this step ({step_index} is 0 means first, {step_index} is larger than 0 should use next, then, etc) and use one sentence to explain the {knowledge} to do, including what effect we want to achieve, why we do it, and what function we use to do it][Use one sentence to let student try to understand the code and ask questions if he has]",
+                    "interaction": "plain-text",
                     "parameters": [
                         "step-index",
-                        "knowledge"
-                    ]
+                        "knowledge",
+                        "code-line"
+                    ],
+                    "need-response": true
                 }
             ]
         },
         {
-            "knowledge": "Use `geom_boxplot` on `Major_category` and `Median` to achieve a visual comparison of distributions across categories because it can reveal variations in median earnings among different major categories.",
+            "knowledge": "To achieve a visual comparison of distributions across categories, use `geom_boxplot` on `Major_category` and `Median` because it can reveal variations in median earnings among different major categories.",
             "actions": [
                 {
                     "method": "Scaffolding",
-                    "action": "Explain the current step's key point and functions/attributes to use and prompt the student to fill in the code blanks of the current step",
+                    "action": "Explain the current step's key point and functions/attributes to use",
                     "prompt": "[Use one word to represent the {step-index} for this step ({step_index} is 0 means first, {step_index} is larger than 0 should use next, then, etc) and use one sentence to explain the {knowledge} to do, including what effect we want to achieve, why we do it, and what function we use to do it.]",
-                    "interaction": "fill-in-blanks",
-                    "need-response": true,
+                    "interaction": "plain-text",
+                    "need-response": false,
                     "parameters": [
                         "step-index",
                         "knowledge"
                     ]
+                },
+                {
+                    "action": "Prompt the student to use {interaction} to practice the knowledge",
+                    "interaction": "fill-in-blanks",
+                    "method": "Coaching",
+                    "need-response": true,
+                    "parameters": [
+                        "code-line-with-blanks"
+                    ],
+                    "prompt": "[Use one sentence to prompt the student to make the box plot on his own]"
                 }
             ]
         },
         {
-            "knowledge": "Use `coord_flip` to achieve a readable x-axis by flipping the coordinates because long category names can be difficult to read on a standard x-axis.",
+            "knowledge": "To achieve a readable x-axis by flipping the coordinates, use `coord_flip` because long category names can be difficult to read on a standard x-axis.",
             "actions": [
                 {
                     "method": "Scaffolding",
                     "action": "Explain the current step's key point and functions/attributes to use and prompt the student to fill in the code blanks of the current step",
-                    "prompt": "[Use one word to represent the {step-index} for this step ({step_index} is 0 means first, {step_index} is larger than 0 should use next, then, etc) and use one sentence to explain the {knowledge} to do, including what effect we want to achieve, why we do it, and what function we use to do it.]",
-                    "interaction": "fill-in-blanks",
-                    "need-response": true,
+                    "prompt": "[Use one word to represent the {step-index} for this step ({step_index} is 0 means first, {step_index} is larger than 0 should use next, then, etc) and use one sentence to explain the {knowledge} to do, including what effect we want to achieve, why we do it, and what function we use to do it.][Use one sentence to let student try to understand the code and ask questions if he has]",
+                    "interaction": "plain-text",
                     "parameters": [
                         "step-index",
-                        "knowledge"
-                    ]
+                        "knowledge",
+                        "code-line"
+                    ],
+                    "need-response": true
                 }
             ]
         },
@@ -243,7 +230,7 @@
         {
             "actions": [
                 {
-                    "action": "Use {interaction} to introduce the current task in the video",
+                    "action": "Use {interaction} to demonstrates the {knowledge} in the video, walking through the process and revealing hidden strategies or tricks",
                     "interaction": "plain-text",
                     "method": "Modeling",
                     "need-response": false,
@@ -256,31 +243,31 @@
             "knowledge": "To interpret the differences in median income by college major, one must analyze the chart and identify the position of each major's median income, using the visual spectrum from STEM to Liberal Arts to draw early conclusions."
         },
         {
+            "knowledge": "Analyze the distribution of data within the chart to infer characteristics (e.g., identifying overall median incoming trends).",
             "actions": [
                 {
-                    "action": "Use {interaction} to give a brief introduction about how to learn the knowledge",
+                    "method": "Articulation",
+                    "action": "Encourage students to use {interaction} to verbally explain their thought process and reasoning behind their observations and conclusions",
+                    "prompt": "[Use one sentence to ask the student to explain their understanding and reasoning about {knowledge}, such as articulate what patterns does he found in the chart]",
                     "interaction": "plain-text",
-                    "method": "Scaffolding",
-                    "need-response": false,
                     "parameters": [
                         "knowledge"
                     ],
-                    "prompt": "[Use no more than three sentences to briefly teach the student how to learn the {knowledge}]"
+                    "need-response": true
                 }
-            ],
-            "knowledge": "To draw final conclusions from the chart regarding median income by college major, one must synthesize the information presented and consider the overall pattern indicated by the data."
+            ]
         },
         {
             "actions": [
                 {
-                    "action": "Use {interaction} for the student to answer to learn the knowledge",
+                    "action": "Use {interaction} to observe the student's approach to tasks, offering feedback to guide learning",
                     "interaction": "multiple-choice",
                     "method": "Coaching",
                     "need-response": true,
                     "parameters": [
                         "knowledge"
                     ],
-                    "prompt": "Propose a multiple-choice question for the student to answer to learn the {knowledge}, such as what pattern do the student find in the chart, what could be the potential reason behind the pattern, etc"
+                    "prompt": "Propose a multiple-choice question for the student to answer to learn the {knowledge}, such as what could be the potential reason behind the pattern"
                 },
                 {
                     "action": "Use {interaction} to give feedback on the student's answer",
@@ -290,7 +277,7 @@
                     "parameters": [
                         "student-answer"
                     ],
-                    "prompt": "[Use one sentence to give feedback on the {student-answer} Student's answer could be wrong so if the answer is wrong, please indicate why it is wrong and the correct answer][Use one sentence to tell the student if any additional steps could confirm his choice][Ask the student to remember the choice and see if it makes sense as he watch the rest of the video]"
+                    "prompt": "[Use one sentence to give feedback on the {student-answer}. Student's answer could be wrong so if the answer is wrong, please indicate why it is wrong and the correct answer][Use one sentence to tell the student if any additional steps could confirm his choice][Ask the student to remember the choice and see if it makes sense as he watch the rest of the video]"
                 }
             ],
             "knowledge": "The chart on median income by college major contains information that STEM majors, particularly engineering, have higher median incomes compared to Liberal Arts majors."
@@ -310,42 +297,37 @@
                     "prompt": "[Use one sentence to tell the student the problem ({knowledge}) explored in the video][Use one sentence to encourage the student to follow your steps to solve this problem]"
                 }
             ],
-            "knowledge": "Choosing between different types of plots to effectively communicate the central tendency of data to a non-technical audience"
+            "knowledge": "The task is choosing between different types of plots to effectively communicate the central tendency of data."
         },
         {
             "actions": [
                 {
-                    "action": "Use {interaction} to allow students articulate their understanding of knowledge",
-                    "interaction": "multiple-choice",
-                    "method": "Articulation",
+                    "action": "Prompt the student to use {interaction} to practice the knowledge",
+                    "interaction": "fill-in-blanks",
+                    "method": "Coaching",
                     "need-response": true,
                     "parameters": [
-                        "knowledge"
+                        "code-line-with-blanks"
                     ],
-                    "prompt": "Propose a multiple-choice question for the student to answer to learn the {knowledge}, such as why make this kinds of visualization rather than others, etc"
-                },
+                    "prompt": "[Use one sentence to prompt the student to make the visualization on his own]"
+                }
+            ],
+            "knowledge": "Use `geom_col` to create a bar plot of the median salaries"
+        },
+        {
+            "knowledge": "Understand the error in the code and execute the cell",
+            "actions": [
                 {
                     "method": "Reflection",
-                    "action": "Give feedback on the student's answer",
-                    "prompt": "[Use one sentence to give feedback on the student's answer ({student-choice} or plain-text answer). Student's answer could be wrong so if the answer is wrong, please indicate why it is wrong and the correct answer]",
-                    "interaction": "plain-text",
-                    "parameters": [
-                        "student-choice"
-                    ],
-                    "need-response": false
-                },
-                {
-                    "action": "Use {interaction} to have students check their code for errors and execute the completed full code block",
+                    "action": "Have the student compare his completed code block with the standard code and execute the completed full code block",
+                    "prompt": "Check your answer with the following code, then execute the code cell and see what you get.",
                     "interaction": "show-code",
-                    "method": "Reflection",
-                    "need-response": true,
                     "parameters": [
                         "code-block"
                     ],
-                    "prompt": "Compare your choice with the following code to see if anything is wrong. Then execute the code cell and see what you get."
+                    "need-response": true
                 }
-            ],
-            "knowledge": "Use `geom_col` to create a bar plot of the median salaries because it effectively represents the central value for each category in a way that is easy to compare across categories"
+            ]
         }
     ],
     "Interpret the chart - 720": [

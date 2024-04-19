@@ -63,7 +63,7 @@ interface IMessage {
   code: string | null;
 }
 
-interface ICellOutput {
+interface ICellOutputType {
   output_type?: string;
 }
 
@@ -86,6 +86,13 @@ type ChatComponentProps = {
   getCurrentNotebookKernel: () => any;
 };
 
+type ICellOutput = {
+  ename: string;
+  evalue: string;
+  traceback: string[];
+  output_type: string;
+};
+
 // Create a new React component for the Chat logic
 const ChatComponent = (props: ChatComponentProps): JSX.Element => {
   const [player, setPlayer] = useState<any | null>(null);
@@ -99,7 +106,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
       videoId: null,
       sentTime: '0 second',
       direction: 'incoming',
-      sender: 'iTutor',
+      sender: 'Tutorly',
       start: null,
       end: null,
       category: null,
@@ -120,7 +127,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
   const canGoOnRef = useRef(canGoOn);
   const [isReadyToSend, setIsReadyToSend] = useState(false);
   const [isAlredaySend, setIsAlredaySend] = useState(false);
-  const [needHint, setNeedHint] = useState(false);
+  const [errorInCode, setErrorInCode] = useState('');
   const [selectedChoice, setSelectedChoice] = React.useState('');
   const [data, setData] = useState<DataRow[]>([]);
   const [selectedColumn, setSelectedColumn] = useState<string>('');
@@ -216,21 +223,41 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
       // setInputValue(''); // Reset inputValue after sending the message
       // setLastSendTime(Date.now()); // Update the last send time
       question = stripHTMLTags(question);
-      const newMessage: IMessage = {
-        id: `msg-${Date.now()}`,
-        message: question,
-        sentTime: 'just now',
-        direction: 'outgoing',
-        sender: 'user',
-        videoId: null,
-        start: null,
-        end: null,
-        category: null,
-        interaction: 'plain text',
-        code: null
-      };
+      console.log(errorInCode);
+      if (errorInCode === '') {
+        const newMessage: IMessage = {
+          id: `msg-${Date.now()}`,
+          message: question,
+          sentTime: 'just now',
+          direction: 'outgoing',
+          sender: 'user',
+          videoId: null,
+          start: null,
+          end: null,
+          category: null,
+          interaction: 'plain text',
+          code: null
+        };
 
-      setMessages(prevMessages => [...prevMessages, newMessage]);
+        setMessages(prevMessages => [...prevMessages, newMessage]);
+      } else {
+        // const newMessage: IMessage = {
+        //   id: `msg-${Date.now()}`,
+        //   message: 'There is an error in the code. Please fix it.',
+        //   sentTime: 'just now',
+        //   direction: 'outgoing',
+        //   sender: 'user',
+        //   videoId: null,
+        //   start: null,
+        //   end: null,
+        //   category: null,
+        //   interaction: 'plain text',
+        //   code: null
+        // };
+
+        // setMessages(prevMessages => [...prevMessages, newMessage]);
+        setErrorInCode('');
+      }
 
       if (videoId === '') {
         // console.log(question);
@@ -265,10 +292,10 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
               {
                 id: `msg-${Date.now()}`,
                 message:
-                  "The video is segmented into several video clips. While you can navigate through the parts you like, I recommend following the video progress to learn and imitate his Exploratory Data Analysis process and do the task on your own.\n\nWhile watching the video, keep asking yourself these three questions: what is he doing, why is he doing it, and how will success in what he is doing help him find a solution to the problem ? Now let's get started!",
+                  "The video is segmented into several video clips. While you can navigate through the parts you like, I recommend following the video progress to learn and imitate his Exploratory Data Analysis process and do the task on your own.\n\nWhile watching the video, keep asking yourself these three questions: what is he doing, why is he doing it, and how will success in what he is doing help him find a solution to the problem? Now let's get started!",
                 sentTime: 'just now',
                 direction: 'incoming',
-                sender: 'iTutor',
+                sender: 'Tutorly',
                 videoId: extractedVideoId,
                 start: response[0].start,
                 end: response[0].end,
@@ -361,7 +388,6 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
             category: category,
             segmentIndex: currentSegmentIndex,
             kernelType: kernelType,
-            needHint: needHint,
             selectedChoice: selectedChoice
           }),
           method: 'POST'
@@ -433,7 +459,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                 message: messageWithoutCode,
                 sentTime: `${currentTime} seconds`,
                 direction: 'incoming',
-                sender: 'iTutor',
+                sender: 'Tutorly',
                 videoId: null,
                 start: null,
                 end: null,
@@ -464,7 +490,8 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
       segments,
       props.getCurrentNotebookContent,
       props.onVideoIdChange,
-      selectedChoice
+      selectedChoice,
+      errorInCode
     ]
   );
 
@@ -472,21 +499,21 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
   const handleGoOn = () => {
     setCanGoOn(false); // Disable the button
     if (currentSegmentIndex < segments.length - 1) {
-      requestAPI<any>('go_on', {
-        body: JSON.stringify({
-          videoId: videoId,
-          segmentIndex: currentSegmentIndex + 1
-          // notebook: currentNotebookContent
-        }),
-        method: 'POST'
-      })
-        .then(response => {
-          // console.log(response);
-          setCanGoOn(response.toLowerCase() === 'yes');
-        })
-        .catch(reason => {
-          console.error(`Error on POST /jlab_ext_example/go_on .\n${reason}`);
-        });
+      // requestAPI<any>('go_on', {
+      //   body: JSON.stringify({
+      //     videoId: videoId,
+      //     segmentIndex: currentSegmentIndex + 1
+      //     // notebook: currentNotebookContent
+      //   }),
+      //   method: 'POST'
+      // })
+      //   .then(response => {
+      //     // console.log(response);
+      //     setCanGoOn(response.toLowerCase() === 'yes');
+      //   })
+      //   .catch(reason => {
+      //     console.error(`Error on POST /jlab_ext_example/go_on .\n${reason}`);
+      //   });
       setCurrentSegmentIndex(currentSegmentIndex + 1);
       const nextSegment = segments[currentSegmentIndex + 1];
       // console.log('nextSegment:', nextSegment);
@@ -518,7 +545,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
           videoId: videoId, // Assuming the videoId remains the same for all segments
           sentTime: `${nextSegment.start}`, // Segment start time
           direction: 'incoming',
-          sender: 'iTutor',
+          sender: 'Tutorly',
           start: nextSegment.start, // Store the start and end times in the message
           end: nextSegment.end,
           category: nextSegment.category,
@@ -537,7 +564,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
           videoId: null,
           sentTime: 'just now',
           direction: 'incoming',
-          sender: 'iTutor',
+          sender: 'Tutorly',
           start: null, // Store the start and end times in the message
           end: null,
           category: 'Self-exploration',
@@ -554,7 +581,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
           videoId: null,
           sentTime: 'just now',
           direction: 'incoming',
-          sender: 'iTutor',
+          sender: 'Tutorly',
           start: null, // Store the start and end times in the message
           end: null,
           category: 'Conclusion',
@@ -574,8 +601,11 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
   useEffect(() => {
     // This effect runs when videoId changes
     if (videoId && isReadyToSend) {
-      handleSend('');
-      setNeedHint(false);
+      if (errorInCode === '') {
+        handleSend('');
+      } else {
+        handleSend(errorInCode);
+      }
       setIsReadyToSend(false);
     }
   }, [videoId, isReadyToSend, handleSend]);
@@ -590,12 +620,18 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     }
   ) {
     const executedCellContent = args.cell.model.toJSON()['source'];
-    const executedCellOutput = args.cell.model.toJSON()['outputs'];
+    const executedCellOutput = args.cell.model.toJSON()[
+      'outputs'
+    ] as ICellOutput[];
     const currentNotebookContent = JSON.stringify(
       props.getCurrentNotebookContent()
     );
     console.log(executedCellContent);
     console.log(executedCellOutput);
+    if (executedCellOutput && executedCellOutput[0].output_type === 'error') {
+      setErrorInCode(executedCellOutput[0].traceback.join('\n'));
+      setIsReadyToSend(true);
+    }
     // console.log(canGoOnRef.current);
     const kernel = props.getCurrentNotebookKernel();
     console.log(currentNotebookContent);
@@ -615,8 +651,6 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
         // console.log(response);
         if (response) {
           console.log('video id is about:', videoId);
-          // The user has fault or error in their code
-          setNeedHint(true);
           // Set a flag or state to indicate readiness to send
           setIsReadyToSend(true);
         }
@@ -887,7 +921,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
           <MessageList
             scrollBehavior="auto"
             typingIndicator={
-              isTyping ? <TypingIndicator content="iTutor is typing" /> : null
+              isTyping ? <TypingIndicator content="Tutorly is typing" /> : null
             }
             style={{ height: 'auto', width: '100%' }} // Leaving 50px for MessageInput
           >
@@ -987,16 +1021,47 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                             onReadyToSend={handleCodeBlockReadyToSend}
                           />
                         ) : (
+                          // <SyntaxHighlighter
+                          //   language="r"
+                          //   style={docco}
+                          //   wrapLines={true}
+                          //   lineProps={{
+                          //     style: {
+                          //       wordWrap: 'break-word',
+                          //       whiteSpace: 'pre-wrap'
+                          //     }
+                          //   }}
+                          // >
+                          //   {message.code}
+                          // </SyntaxHighlighter>
                           <SyntaxHighlighter
                             language="r"
                             style={docco}
                             wrapLines={true}
-                            lineProps={{
+                            lineProps={lineNumber => ({
                               style: {
                                 wordWrap: 'break-word',
                                 whiteSpace: 'pre-wrap'
-                              }
-                            }}
+                              },
+                              children: (
+                                <React.Fragment>
+                                  <span
+                                    onClick={() =>
+                                      handleSend(
+                                        // eslint-disable-next-line prettier/prettier
+                                        message.code!.split('\n')[lineNumber - 1]
+                                      )
+                                    }
+                                    style={{
+                                      cursor: 'pointer',
+                                      marginLeft: '10px'
+                                    }}
+                                  >
+                                    ❓
+                                  </span>
+                                </React.Fragment>
+                              )
+                            })}
                           >
                             {message.code}
                           </SyntaxHighlighter>
@@ -1182,7 +1247,7 @@ export class ChatWidget extends ReactWidget {
 
         let output_type: string | null = null;
         if (Array.isArray(cell_json.outputs) && cell_json.outputs.length > 0) {
-          const firstOutput = cell_json.outputs[0] as ICellOutput;
+          const firstOutput = cell_json.outputs[0] as ICellOutputType;
           output_type = firstOutput.output_type || null;
         }
 

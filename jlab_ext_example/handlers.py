@@ -28,6 +28,7 @@ from langchain.chains import LLMChain
 from langchain.chat_models import ChatOpenAI
 from langchain.memory import ConversationSummaryMemory
 from BCEmbedding import RerankerModel
+from langchain.memory import ConversationBufferMemory
 
 # init reranker model
 model = RerankerModel(model_name_or_path="maidalun1020/bce-reranker-base_v1")
@@ -57,6 +58,7 @@ step_index = 0
 CUR_SEQ = []  # The current sequence of moves
 eda_video = {}
 all_code = {}
+chat_bot = None
 
 
 class DataHandler(APIHandler):
@@ -116,7 +118,7 @@ class SegmentHandler(APIHandler):
 class ChatHandler(APIHandler):
     @tornado.web.authenticated
     def post(self):
-        global llm, prompt, memory, conversation, VIDEO_ID, eda_video, CUR_SEQ, all_code, step_index
+        global llm, prompt, memory, conversation, VIDEO_ID, eda_video, CUR_SEQ, all_code, step_index, chat_bot
 
         # Existing video_id logic
         data = self.get_json_body()
@@ -138,15 +140,19 @@ class ChatHandler(APIHandler):
 
         conn = sqlite3.connect("cache.db")
         c = conn.cursor()
-        if llm is None or prompt is None or memory is None or conversation is None:
+        if llm is None or prompt is None or memory is None or chat_bot is None:
             VIDEO_ID = video_id
             if eda_video is {}:
                 if video_id == "nx5yhXAQLxw":
-                    with open("college_major.json", "r") as file:
+                    with open("test.json", "r") as file:
                         # Parse the file and convert JSON data into a Python dictionary
                         eda_video = json.load(file)
                 elif video_id == "Kd9BNI6QMmQ":
                     with open("video_game.json", "r") as file:
+                        # Parse the file and convert JSON data into a Python dictionary
+                        eda_video = json.load(file)
+                elif video_id == "8jazNUpO3lQ":
+                    with open("ml.json", "r") as file:
                         # Parse the file and convert JSON data into a Python dictionary
                         eda_video = json.load(file)
             if all_code == {}:
@@ -156,6 +162,10 @@ class ChatHandler(APIHandler):
                         all_code = json.load(file)
                 elif video_id == "Kd9BNI6QMmQ":
                     with open("video_game_code.json", "r") as file:
+                        # Parse the file and convert JSON data into a Python dictionary
+                        all_code = json.load(file)
+                elif video_id == "8jazNUpO3lQ":
+                    with open("ml_code.json", "r") as file:
                         # Parse the file and convert JSON data into a Python dictionary
                         all_code = json.load(file)
             init_bkt_params()
@@ -235,28 +245,44 @@ class ChatHandler(APIHandler):
                         input_data["pedagogy"]
                         + ' Please respond with the following json structure without the ```json``` title: {"question": "question", "choices": ["choice", "choice", "choice"]}'
                     )
-                    results = conversation({"input": str(input_data)})["text"]
+                    # results = conversation({"input": str(input_data)})["text"]
+                    results = chat_bot.ask({"input": str(input_data)})
                 elif interaction == "fill-in-blanks":
-                    results = conversation({"input": str(input_data)})["text"]
+                    # results = conversation({"input": str(input_data)})["text"]
+                    results = chat_bot.ask({"input": str(input_data)})
                     _, code_line_with_blanks = get_code_with_blank_by_step(
                         video_id, segment_index, all_code, current_step_index
                     )
                     results = (
                         results
                         + " Please fill in the blanks in the code below"
+                        # + " Try to understand the following lines."
                         + "\n"
                         + "```R"
                         + code_line_with_blanks
                         + "```"
                     )
                 else:
-                    results = conversation({"input": str(input_data)})["text"]
+                    # results = conversation({"input": str(input_data)})["text"]
+                    results = chat_bot.ask({"input": str(input_data)})
+                    if "code-line" in move_detail["parameters"]:
+                        code_line, _ = get_code_with_blank_by_step(
+                            video_id, segment_index, all_code, current_step_index
+                        )
+                        results = (
+                            results
+                            + " If you don't have any questions and are ready to continue, type 'continue'"
+                            + "\n"
+                            + "```R"
+                            + code_line
+                            + "```"
+                        )
 
                 if "code-with-blanks" in move_detail["parameters"]:
                     code_with_blanks = get_code_with_blank(
                         video_id, segment_index, all_code
                     )
-                    print("code_with_blanks", code_with_blanks)
+                    # print("code_with_blanks", code_with_blanks)
                     results = (
                         results
                         + " Let's learn how to create that visualization. Here is the structure of the code:"
@@ -291,7 +317,8 @@ class ChatHandler(APIHandler):
                 else:
                     need_response = False
                 interaction = "plain text"
-                results = conversation({"input": str(input_data)})["text"]
+                # results = conversation({"input": str(input_data)})["text"]
+                results = chat_bot.ask({"input": str(input_data)})
             else:
                 # Default case when there's no question or CUR_SEQ
                 interaction = "auto-reply"
@@ -314,6 +341,7 @@ class GoOnHandler(APIHandler):
     @tornado.web.authenticated
     def post(self):
         """Evaluate if the user is ready to go on to the next segment."""
+        global CUR_SEQ
         # data = self.get_json_body()
         # video_id = data["videoId"]
         # segment_index = data["segmentIndex"]
@@ -331,7 +359,7 @@ class GoOnHandler(APIHandler):
         else:
             # set_prev_notebook(data["notebook"])
             result = "yes"  # if there is no false, go on
-        print("CUR_SEQ:", CUR_SEQ)
+        # print("CUR_SEQ after go on:", CUR_SEQ)
         self.finish(json.dumps(result))
 
 
@@ -349,11 +377,15 @@ class UpdateSeqHandler(APIHandler):
         learning_obj = category + " - " + str(start_time)
         if eda_video == {}:
             if video_id == "nx5yhXAQLxw":
-                with open("college_major.json", "r") as file:
+                with open("test.json", "r") as file:
                     # Parse the file and convert JSON data into a Python dictionary
                     eda_video = json.load(file)
             elif video_id == "Kd9BNI6QMmQ":
                 with open("video_game.json", "r") as file:
+                    # Parse the file and convert JSON data into a Python dictionary
+                    eda_video = json.load(file)
+            elif video_id == "8jazNUpO3lQ":
+                with open("ml.json", "r") as file:
                     # Parse the file and convert JSON data into a Python dictionary
                     eda_video = json.load(file)
         sections = eda_video[learning_obj]
@@ -654,6 +686,36 @@ def initialze_database():
             "INSERT INTO segments_cache (video_id, segments) VALUES (?, ?)",
             (video_id, segments_json),
         )
+
+    video_id = "8jazNUpO3lQ"
+    segments_set = [
+        {"category": "Basic linear regression concepts", "start": 1, "end": 155},  # 0
+        {"category": "Load packages/data", "start": 155, "end": 232},  # 1
+        {
+            "category": "Plot a plot for linear regression",
+            "start": 232,
+            "end": 325,
+        },  # 2
+        {
+            "category": "Create and understand linear regression object",
+            "start": 325,
+            "end": 551,
+        },  # 3
+        {
+            "category": "Generate CSV file with list of home price predictions",
+            "start": 551,
+            "end": 712,
+        },
+    ]
+    segments_json = json.dumps(segments_set)
+    c.execute("SELECT * FROM segments_cache WHERE video_id = ?", (video_id,))
+    if c.fetchone() is None:
+        # Insert new data if video_id doesn't exist
+        c.execute(
+            "INSERT INTO segments_cache (video_id, segments) VALUES (?, ?)",
+            (video_id, segments_json),
+        )
+
     c.execute("SELECT * FROM bkt_params_cache WHERE user_id = ?", (user_id,))
     if c.fetchone() is None:
         prob_mastery = {skill: 0.1 for skill in all_skills}
@@ -667,53 +729,115 @@ def initialze_database():
     conn.close()
 
 
+class CustomChatBotWithMemory:
+    def __init__(self, kernel_type):
+        self.kernel_type = self._translate_kernel_type(kernel_type)
+        self.video_type = "Exploratory Data Analysis (EDA)"
+        self.memory = ConversationBufferMemory()
+
+    def _translate_kernel_type(self, kernel_type):
+        if kernel_type == "ir":
+            return "R"
+        elif kernel_type == "python3":
+            return "Python"
+        return kernel_type
+
+    def _generate_prompt(self):
+        template = f"""
+        You are an expert in Data Science, specializing in {self.video_type}. Your task is to use the Cognitive Apprenticeship approach to assist a student in learning {self.video_type} through David Robinson's Tidy Tuesday tutorial series.
+
+        You will be provided with one or more of the following inputs:
+        - transcript: the transcript of the current video segment.
+        - tutor's code: the code the tutor wrote in the current video segment.
+        - pedagogy: the specific cognitive apprenticeship move that you need to follow to guide students.
+        - student's code or question or choice: the student's current performance, encompassing either the code in the student's notebook or the student's query sent to you or student's choice in the multiple-choice question.
+        - dataset information: the dataset to explore in the video.
+
+        Notes for Response:
+        - Use natural language to communicate in the first person as a teaching assistant.
+        - You must strictly follow the pedagogy to provide guidance.
+        - Tailor your advice to the programming language the student uses: {self.kernel_type}.
+        - Don't tell the student that your response is based on the transcript or code.
+        - You can find out the full list of conversation history below.
+        """
+        history = self.memory.load_memory_variables({})["history"]
+        return template + "conversation history: " + history
+
+    def ask(self, user_input):
+        prompt = self._generate_prompt()
+        response = openai.ChatCompletion.create(
+            model="gpt-4-1106-preview",
+            messages=[
+                {
+                    "role": "system",
+                    "content": prompt,
+                },
+                {
+                    "role": "user",
+                    "content": str(user_input),
+                },
+            ],
+            temperature=0.3,
+        )
+        bot_response = response["choices"][0]["message"]["content"]
+        # Update memory with the latest exchange
+        self.memory.save_context({"input": str(user_input)}, {"output": bot_response})
+        return bot_response
+
+
 def initialize_chat_server(kernelType):
     """Initialize the chat server."""
-    global llm, prompt, memory, conversation
-    # LLM initialization
-    llm = ChatOpenAI(model="gpt-4-1106-preview", openai_api_key=OPENAI_API_KEY)
-    if kernelType == "ir":
-        kernelType = "R"
-    elif kernelType == "python3":
-        kernelType = "Python"
+    global chat_bot
+    chat_bot = CustomChatBotWithMemory(kernel_type=kernelType)
 
-    video_type = "Exploratory Data Analysis (EDA)"
-    # Prompt
-    prompt = ChatPromptTemplate(
-        messages=[
-            SystemMessagePromptTemplate.from_template(
-                """
-                You are an expert in Data Science, specializing in {video_type}.
-                Your task is to use the Cognitive Apprenticeship approach to assist a student in learning {video_type} through David Robinson's Tidy Tuesday tutorial series.
 
-                You will be provided with one or more of the following inputs:
-                - transcript: the transcript of the current video segment.
-                - tutor's code: the code the tutor wrote in the current video segment.
-                - pedagogy: the specific cognitive apprenticeship move that you need to follow to guide students.
-                - student's code or question or choice: the student's current performance, encompassing either the code in the student's notebook or the student's query sent to you or student's choice in the multiple-choice question.
-                - dataset information: the dataset to explore in the video.
+# def initialize_chat_server(kernelType):
+#     """Initialize the chat server."""
+#     global llm, prompt, memory, conversation
+#     # LLM initialization
+#     llm = ChatOpenAI(model="gpt-4-1106-preview", openai_api_key=OPENAI_API_KEY)
+#     if kernelType == "ir":
+#         kernelType = "R"
+#     elif kernelType == "python3":
+#         kernelType = "Python"
 
-                Notes for Response:
-                - Use natural language to communicate in the first person as a teaching assistant.
-                - You must strictly follow the pedagogy to provide guidance.
-                - Tailor your advice to the programming language the student uses: {kernelType}.
-                - Don't tell the student that your response is based on the transcript or code.
-                """
-            ).format(
-                video_type=video_type,
-                kernelType=kernelType,
-            ),
-            MessagesPlaceholder(variable_name="chat_history"),
-            HumanMessagePromptTemplate.from_template("input: {input}"),
-        ]
-    )
+#     video_type = "Exploratory Data Analysis (EDA)"
+#     # Prompt
+#     prompt = ChatPromptTemplate(
+#         messages=[
+#             SystemMessagePromptTemplate.from_template(
+#                 """
+#                 You are an expert in Data Science, specializing in {video_type}.
+#                 Your task is to use the Cognitive Apprenticeship approach to assist a student in learning {video_type} through David Robinson's Tidy Tuesday tutorial series.
 
-    memory = ConversationSummaryMemory(
-        llm=llm, memory_key="chat_history", return_messages=True
-    )
+#                 You will be provided with one or more of the following inputs:
+#                 - transcript: the transcript of the current video segment.
+#                 - tutor's code: the code the tutor wrote in the current video segment.
+#                 - pedagogy: the specific cognitive apprenticeship move that you need to follow to guide students.
+#                 - student's code or question or choice: the student's current performance, encompassing either the code in the student's notebook or the student's query sent to you or student's choice in the multiple-choice question.
+#                 - dataset information: the dataset to explore in the video.
 
-    global conversation
-    conversation = LLMChain(llm=llm, prompt=prompt, verbose=True, memory=memory)
+#                 Notes for Response:
+#                 - Use natural language to communicate in the first person as a teaching assistant.
+#                 - You must strictly follow the pedagogy to provide guidance.
+#                 - Tailor your advice to the programming language the student uses: {kernelType}.
+#                 - Don't tell the student that your response is based on the transcript or code.
+#                 """
+#             ).format(
+#                 video_type=video_type,
+#                 kernelType=kernelType,
+#             ),
+#             MessagesPlaceholder(variable_name="chat_history"),
+#             HumanMessagePromptTemplate.from_template("input: {input}"),
+#         ]
+#     )
+
+#     memory = ConversationSummaryMemory(
+#         llm=llm, memory_key="chat_history", return_messages=True
+#     )
+
+#     global conversation
+#     conversation = LLMChain(llm=llm, prompt=prompt, verbose=True, memory=memory)
 
 
 def iso8601_duration_as_seconds(duration):
@@ -1510,8 +1634,9 @@ def get_function_attribute(video_id, segment_index, code_json):
         (video_id, segment_index),
     )
     row = c.fetchone()
+    print("row:", row)
     if row:
-        if row[0] and row[1] and row[2]:
+        if row[0] != "[]" and row[1] != "[]" and row[2] != "[]":
             # Convert each string in the tuple to a Python object using ast.literal_eval
             key_points = ast.literal_eval(row[0])
             functions_to_learn = ast.literal_eval(row[1])
@@ -1522,8 +1647,10 @@ def get_function_attribute(video_id, segment_index, code_json):
     # end_time = all_segment[segment_index]["end"]
     category = all_segment[segment_index]["category"]
     learning_obj = category + " - " + str(start_time)
+    print("learning_obj:", learning_obj)
     sections = eda_video[learning_obj]
     key_points = [section["knowledge"] for section in sections[1:-1]]
+    print("key_points:", key_points)
     # segment_transcript = get_segment_transcript(video_id, start_time, end_time, "")[
     #     "transcript"
     # ]
@@ -1598,7 +1725,11 @@ def get_function_attribute(video_id, segment_index, code_json):
         seen_functions.update(functions_over_05)
         # seen_attributes.update(attributes_over_05)
     c.execute(
-        "INSERT INTO function_attribute_cache VALUES (?, ?, ?, ?, ?, ?)",
+        """
+    INSERT OR REPLACE INTO function_attribute_cache
+    (video_id, segment_index, key_points, functions_to_learn, attributes_to_learn, code_with_blanks)
+    VALUES (?, ?, ?, ?, ?, ?)
+    """,
         (
             video_id,
             segment_index,
@@ -1719,7 +1850,7 @@ def get_code_with_blank_by_step(video_id, segment_index, code_json, step_index):
                 "role": "system",
                 "content": """You are an expert programmer who can understand R code. A student is learning EDA by filling in blanks in codes.
                                 Now your task is to find out the corresponding code lines index (start from 0) in the code block that corresponds to the key point for the student to fill in.
-                                The corresponding code lines can have one or two lines. Respond in the following format: [index_1, ...]
+                                The corresponding code lines can have one or two lines. Respond in the following format (a list without explanation): [index_1, ...]
                             """,
             },
             {

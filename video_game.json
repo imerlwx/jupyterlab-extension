@@ -216,7 +216,22 @@
                     "prompt": "[Use one sentence to tell the student the problem ({knowledge}) explored in the video][Use one sentence to encourage the student to follow your steps to solve this problem]"
                 }
             ],
-            "knowledge": "Understanding the distribution of average number of players over time and why median is used instead of mean"
+            "knowledge": "The task is understanding the distribution of average number of players over time and why median is used instead of mean"
+        },
+        {
+            "actions": [
+                {
+                    "action": "Prompt the student to use {interaction} to practice the knowledge",
+                    "interaction": "fill-in-blanks",
+                    "method": "Coaching",
+                    "need-response": true,
+                    "parameters": [
+                        "code-line-with-blanks"
+                    ],
+                    "prompt": "[Use one sentence to prompt the student to make the visualization on his own]"
+                }
+            ],
+            "knowledge": "Use `ggplot(aes(date, median_avg))` with `geom_line()` to visualize trends over time because it helps in understanding the median popularity of games across different dates."
         },
         {
             "actions": [
@@ -258,22 +273,6 @@
                 }
             ],
             "knowledge": "Use `summarize` after `group_by` to achieve aggregated statistics because it computes summary measures like median for each group."
-        },
-        {
-            "actions": [
-                {
-                    "method": "Scaffolding",
-                    "action": "Explain the current step's key point and functions/attributes to use and prompt the student to fill in the code blanks of the current step",
-                    "prompt": "[Use one word to represent the {step-index} for this step ({step_index} is 0 means first, {step_index} is larger than 0 should use next, then, etc) and use one sentence to explain the {knowledge} to do, including what effect we want to achieve, why we do it, and what function we use to do it.]",
-                    "interaction": "fill-in-blanks",
-                    "need-response": true,
-                    "parameters": [
-                        "step-index",
-                        "knowledge"
-                    ]
-                }
-            ],
-            "knowledge": "Use `ggplot(aes(date, median_avg))` with `geom_line()` to visualize trends over time because it helps in understanding the median popularity of games across different dates."
         },
         {
             "knowledge": "Understand the error in the code and execute the cell",

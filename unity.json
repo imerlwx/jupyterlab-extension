@@ -2,18 +2,16 @@
     "Introduction to Properties - 0": [
         {
             "knowledge": "Understand the concept of properties in contrast to directly accessing fields in C# (declarative)",
-            "method": [
-                "Modeling"
-            ],
             "actions": [
                 {
-                    "prompt": "[Use one sentence to explain the importance and necessity of this ${knowledge}]",
+                    "method": "Modeling",
+                    "action": "Introduce the current task and encourage the student to follow your steps",
+                    "prompt": "[Use one sentence to tell the student the problem ({knowledge}) explored in the video][Use one sentence to encourage the student to follow your steps to solve this problem]",
                     "interaction": "plain-text",
                     "parameters": [
-                        "learning-objective"
+                        "knowledge"
                     ],
-                    "need-response": false,
-                    "action": "Interpret the importance and necessity of the learning objective"
+                    "need-response": true
                 }
             ]
         }
@@ -21,19 +19,18 @@
     "How to create Properties - 86": [
         {
             "knowledge": "Learn the syntax for creating a property with a get and set accessor in C# (declarative)",
-            "method": [
-                "Scaffolding"
-            ],
             "actions": [
                 {
-                    "prompt": "[Based on the ${transcript}, use no more than three sentences to briefly teach the student how to do ${learning objective}. Requirement: each bullet point should contain only one sentence]",
-                    "interaction": "plain text",
+                    "method": "Scaffolding",
+                    "action": "Explain the current step's key point and functions/attributes to use and prompt the student to understand the knowledge of the current step",
+                    "prompt": "[Use one word to represent the {step-index} for this step ({step_index} is 0 means first, {step_index} is larger than 0 should use next, then, etc) and use one sentence to explain the {knowledge} to do, including what effect we want to achieve, why we do it, and what function we use to do it][Use one sentence to let student try to understand the code and ask questions if he has]",
+                    "interaction": "plain-text",
                     "parameters": [
-                        "transcript",
-                        "learning-objective"
+                        "step-index",
+                        "knowledge",
+                        "code-line"
                     ],
-                    "need-response": false,
-                    "action": "Give a general brief introduction about how to do the learning objective"
+                    "need-response": true
                 }
             ]
         },
