@@ -60,11 +60,10 @@
                 {
                     "method": "Scaffolding",
                     "action": "Explain the current step's key point and functions/attributes to use and prompt the student to fill in the code blanks of the current step",
-                    "prompt": "[Use one word to represent the {step-index} for this step ({step_index} is 0 means first, {step_index} is larger than 0 should use next, then, etc) and use one sentence to explain the {knowledge} to do, including what effect we want to achieve, why we do it, and what function we use to do it.]",
+                    "prompt": "[Use one sentence to explain the {knowledge} to do, including what effect we want to achieve, why we do it, and what function we use to do it.]",
                     "interaction": "fill-in-blanks",
                     "need-response": true,
                     "parameters": [
-                        "step-index",
                         "knowledge"
                     ]
                 }
@@ -181,11 +180,10 @@
                 {
                     "method": "Scaffolding",
                     "action": "Explain the current step's key point and functions/attributes to use and prompt the student to fill in the code blanks of the current step",
-                    "prompt": "[Use one word to represent the {step-index} for this step ({step_index} is 0 means first, {step_index} is larger than 0 should use next, then, etc) and use one sentence to explain the {knowledge} to do, including what effect we want to achieve, why we do it, and what function we use to do it.]",
+                    "prompt": "[Use one sentence to explain the {knowledge} to do, including what effect we want to achieve, why we do it, and what function we use to do it.]",
                     "interaction": "fill-in-blanks",
                     "need-response": true,
                     "parameters": [
-                        "step-index",
                         "knowledge"
                     ]
                 }
@@ -197,11 +195,10 @@
                 {
                     "method": "Scaffolding",
                     "action": "Explain the current step's key point and functions/attributes to use and prompt the student to fill in the code blanks of the current step",
-                    "prompt": "[Use one word to represent the {step-index} for this step ({step_index} is 0 means first, {step_index} is larger than 0 should use next, then, etc) and use one sentence to explain the {knowledge} to do, including what effect we want to achieve, why we do it, and what function we use to do it.]",
+                    "prompt": "[Use one sentence to explain the {knowledge} to do, including what effect we want to achieve, why we do it, and what function we use to do it]",
                     "interaction": "fill-in-blanks",
                     "need-response": true,
                     "parameters": [
-                        "step-index",
                         "knowledge"
                     ]
                 }
@@ -213,11 +210,10 @@
                 {
                     "method": "Scaffolding",
                     "action": "Explain the current step's key point and functions/attributes to use and prompt the student to fill in the code blanks of the current step",
-                    "prompt": "[Use one word to represent the {step-index} for this step ({step_index} is 0 means first, {step_index} is larger than 0 should use next, then, etc) and use one sentence to explain the {knowledge} to do, including what effect we want to achieve, why we do it, and what function we use to do it.]",
+                    "prompt": "[Use one sentence to explain the {knowledge} to do, including what effect we want to achieve, why we do it, and what function we use to do it.]",
                     "interaction": "fill-in-blanks",
                     "need-response": true,
                     "parameters": [
-                        "step-index",
                         "knowledge"
                     ]
                 }
