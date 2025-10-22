@@ -55,6 +55,42 @@ jlpm build
 jupyter lab
 ```
 
+## User Analytics and Learning Tracking
+
+This extension includes comprehensive logging of user interactions to support learning analytics and research.
+
+### What Gets Logged:
+
+- **Chat Interactions**: User questions and AI responses
+- **Code Execution**: All notebook code execution with outputs/errors
+- **Learning Progress**: Student model (BKT) updates showing skill mastery evolution
+- **User Sessions**: Session timing and navigation patterns
+
+### Firebase Setup (Optional but Recommended)
+
+To enable cloud-based logging and analytics:
+
+1. Create a Firebase project
+2. Set up Firebase Realtime Database
+3. Configure credentials on your server
+
+See **[FIREBASE_SETUP.md](./FIREBASE_SETUP.md)** for detailed instructions.
+
+**Benefits of Firebase logging:**
+- Access learning data from anywhere
+- Real-time analytics and dashboards
+- Track student progress across sessions
+- Export data for research and analysis
+
+**Note:** Firebase is optional. Without it, some caching still uses local SQLite, but comprehensive logging will be disabled. A warning will appear in logs if Firebase is not configured.
+
+### User ID Tracking
+
+When users start the extension, they'll be prompted to enter a user ID. This ID is used to:
+- Track individual learning progress
+- Personalize the AI tutoring experience
+- Associate data in Firebase for analytics
+
 ## Deploy as Web Application
 
 Want to share your extension with others without requiring installation? You can deploy it as a web application using JupyterHub!

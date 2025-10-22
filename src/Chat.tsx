@@ -45,6 +45,7 @@ import HelpIcon from '@mui/icons-material/Help';
 import ArrowForwardIosIcon from '@mui/icons-material/ArrowForwardIos';
 import Papa from 'papaparse';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
+import { UserIDDialog } from './UserIDDialog';
 
 export interface ISegment {
   start: number;
@@ -98,6 +99,11 @@ type ICellOutput = {
 
 // Create a new React component for the Chat logic
 const ChatComponent = (props: ChatComponentProps): JSX.Element => {
+  // User identification and session tracking
+  const [userId, setUserId] = useState<string>('');
+  const [sessionId] = useState<string>(() => `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`);
+  const [showUserIDDialog, setShowUserIDDialog] = useState(true);
+
   const [player, setPlayer] = useState<any | null>(null);
   const [videoId, setVideoId] = useState('');
   const [segments, setSegments] = useState<ISegment[]>([]);
@@ -105,7 +111,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     {
       id: `msg-${Date.now()}`,
       message:
-        "Welcome to today's Tidy Tuesday project! First, tell me your user id and which video you want to watch (format: video id, user id):",
+        "Welcome to today's Tidy Tuesday project! Please select a video you want to watch by entering its video ID (e.g., nx5yhXAQLxw):",
       videoId: null,
       sentTime: '0 second',
       direction: 'incoming',
@@ -247,21 +253,31 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
         setIsTyping(true);
         setCanGoOn(true);
 
-        // Assuming question is a string like "openai api key, video_id, user_id"
-        const parts = question.split(',').map(s => s.trim());
-        // const apiKey = parts[0];
-        const extractedVideoId = parts[0];
-        const userId = parts.length > 1 ? parts[1] : '1'; // Fallback in case the user_id is missing
+        // Extract video ID from the question (user now just enters video ID)
+        const extractedVideoId = question.trim();
 
         setVideoId(extractedVideoId);
         props.onVideoIdChange({ videoId: extractedVideoId }); // Emit signal
         const kernel = props.getCurrentNotebookKernel();
         setKernelType(kernel.name);
+
+        // Log session start to backend (which will log to Firebase)
+        requestAPI<any>('log_session_start', {
+          body: JSON.stringify({
+            userId: userId,
+            sessionId: sessionId,
+            videoId: extractedVideoId
+          }),
+          method: 'POST'
+        }).catch(err => {
+          console.error('Failed to log session start:', err);
+        });
+
         requestAPI<any>('segments', {
           body: JSON.stringify({
-            // apiKey: apiKey,
             videoId: extractedVideoId,
-            userId: userId
+            userId: userId,
+            sessionId: sessionId
           }),
           method: 'POST'
         })
@@ -314,7 +330,9 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
               filledCode: '',
               selectedChoice: selectedChoice,
               videoId: videoIdRef.current,
-              segmentIndex: currentSegmentIndexRef.current
+              segmentIndex: currentSegmentIndexRef.current,
+              userId: userId,
+              sessionId: sessionId
             }),
             method: 'POST'
           })
@@ -364,7 +382,9 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
             category: category,
             segmentIndex: currentSegmentIndex,
             kernelType: kernelType,
-            selectedChoice: selectedChoice
+            selectedChoice: selectedChoice,
+            userId: userId,
+            sessionId: sessionId
           }),
           method: 'POST'
         })
@@ -481,7 +501,9 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
         body: JSON.stringify({
           videoId: videoId,
           segmentIndex: currentSegmentIndex + 1,
-          category: nextSegment.category
+          category: nextSegment.category,
+          userId: userId,
+          sessionId: sessionId
         }),
         method: 'POST'
       })
@@ -577,14 +599,45 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
       error?: KernelError | null | undefined;
     }
   ) {
-    // const executedCellContent = args.cell.model.toJSON()['source'];
+    const executedCellContent = args.cell.model.toJSON()['source'] as string;
+    const cellType = args.cell.model.type;
     const executedCellOutput = args.cell.model.toJSON()[
       'outputs'
     ] as ICellOutput[];
-    if (executedCellOutput && executedCellOutput[0].output_type === 'error') {
-      setErrorInCode(executedCellOutput[0].traceback.join('\n'));
-      setIsReadyToSend(true);
+
+    // Determine execution status and extract output/error
+    let executionStatus = 'success';
+    let outputText = null;
+    let errorText = null;
+
+    if (executedCellOutput && executedCellOutput[0]) {
+      if (executedCellOutput[0].output_type === 'error') {
+        executionStatus = 'error';
+        errorText = executedCellOutput[0].traceback.join('\n');
+        setErrorInCode(errorText);
+        setIsReadyToSend(true);
+      } else if (executedCellOutput[0].output_type === 'stream' || executedCellOutput[0].output_type === 'execute_result') {
+        outputText = JSON.stringify(executedCellOutput[0]);
+      }
     }
+
+    // Log code execution to Firebase
+    requestAPI<any>('log_code_execution', {
+      body: JSON.stringify({
+        userId: userId,
+        sessionId: sessionId,
+        code: executedCellContent,
+        cellType: cellType,
+        status: executionStatus,
+        output: outputText,
+        error: errorText,
+        videoId: videoId,
+        segmentIndex: currentSegmentIndex
+      }),
+      method: 'POST'
+    }).catch(err => {
+      console.error('Failed to log code execution:', err);
+    });
 
     if (canGoOnRef.current === false) {
       requestAPI<any>('go_on', {
@@ -755,7 +808,9 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
               filledCode: code,
               selectedChoice: '',
               videoId: videoIdRef.current,
-              segmentIndex: currentSegmentIndexRef.current
+              segmentIndex: currentSegmentIndexRef.current,
+              userId: userId,
+              sessionId: sessionId
             }),
             method: 'POST'
           })
@@ -932,8 +987,16 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     }
   }
 
+  // Handler for when user submits their ID
+  const handleUserIDSubmit = (submittedUserId: string) => {
+    setUserId(submittedUserId);
+    setShowUserIDDialog(false);
+    console.log(`User ID set: ${submittedUserId}, Session ID: ${sessionId}`);
+  };
+
   return (
     <div style={{ position: 'relative', height: '100%', width: '100%' }}>
+      <UserIDDialog open={showUserIDDialog} onSubmit={handleUserIDSubmit} />
       <MainContainer style={{ height: '100%', width: '100%' }}>
         <ChatContainer
           id="chatContainerId"

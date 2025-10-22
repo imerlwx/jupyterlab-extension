@@ -21,6 +21,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 from langchain.memory import ConversationBufferMemory
 from BCEmbedding import RerankerModel
 from g4f.client import Client
+from . import firebase_logger
 
 # init reranker model
 model = RerankerModel(model_name_or_path="maidalun1020/bce-reranker-base_v1")
@@ -192,6 +193,23 @@ class ChatHandler(APIHandler):
         segment_index = data["segmentIndex"]
         kernelType = data["kernelType"]
         selected_choice = data["selectedChoice"]
+        user_id_req = data.get("userId", "unknown")
+        session_id = data.get("sessionId", "unknown")
+
+        # Log user question to Firebase
+        if question:
+            firebase_logger.log_chat_message(
+                user_id=user_id_req,
+                session_id=session_id,
+                message_type='user_question',
+                content=question,
+                video_id=video_id,
+                segment_index=segment_index,
+                metadata={
+                    'selected_choice': selected_choice,
+                    'kernel_type': kernelType
+                }
+            )
 
         if kernelType == "ir":
             kernelType = "R"
@@ -322,6 +340,21 @@ class ChatHandler(APIHandler):
                 "need_response": need_response,
                 "interaction": interaction,
             }
+
+            # Log AI response to Firebase
+            firebase_logger.log_chat_message(
+                user_id=user_id_req,
+                session_id=session_id,
+                message_type='ai_response',
+                content=results,
+                video_id=video_id,
+                segment_index=segment_index,
+                metadata={
+                    'interaction': interaction,
+                    'need_response': need_response
+                }
+            )
+
             self.finish(json.dumps(response_data))
         else:
             self.set_status(400)
@@ -441,9 +474,12 @@ class UpdateBKTHandler(APIHandler):
         video_id = data["videoId"]
         filled_code = data["filledCode"]
         selected_choice = data["selectedChoice"]
+        segment_index = data.get("segmentIndex", 0)
+        user_id_req = data.get("userId", "unknown")
+        session_id = data.get("sessionId", "unknown")
         skill = get_skill_by_knowledge(knowledge_buffer)
         if video_id != "" and skill != "":
-            update_bkt_params(skill, filled_code, selected_choice)
+            update_bkt_params(skill, filled_code, selected_choice, user_id_req, session_id, video_id, segment_index)
             self.finish(json.dumps("update bkt successfully"))
         else:
             print("Something wrong in UpdateBKTHandler.")
@@ -1342,18 +1378,41 @@ def get_mastery_level_by_segment(list_of_knowledge, bkt_params):
     return mastery_level
 
 
-def update_bkt_params(skill, filled_code, selected_choice):
+def update_bkt_params(skill, filled_code, selected_choice, user_id_req="unknown", session_id="unknown", video_id=None, segment_index=None):
     """Update the bkt parameters for the practiced skills."""
     global bkt_params, code_line_buffer, correct_answer_buffer
+
+    # Store old mastery before update
+    old_mastery = bkt_params[skill]["probMastery"]
+
     if filled_code != "":
         is_correct = filled_code.strip() == code_line_buffer.strip()
+        interaction_type = "fill_in_blanks"
+        user_response = filled_code
         code_line_buffer = ""
     else:
         is_correct = selected_choice == correct_answer_buffer
+        interaction_type = "multiple_choice"
+        user_response = selected_choice
         correct_answer_buffer = ""
 
     update_bkt_param(bkt_params[skill], is_correct)
+    new_mastery = bkt_params[skill]["probMastery"]
     print("bkt_params: " + str(bkt_params))
+
+    # Log BKT update to Firebase
+    firebase_logger.log_bkt_update(
+        user_id=user_id_req,
+        session_id=session_id,
+        skill=skill,
+        old_mastery=old_mastery,
+        new_mastery=new_mastery,
+        is_correct=is_correct,
+        interaction_type=interaction_type,
+        video_id=video_id,
+        segment_index=segment_index,
+        user_response=user_response
+    )
 
 
 def get_skill_by_knowledge(knowledge):
@@ -1529,6 +1588,61 @@ def get_code_with_blank_by_step(video_id, segment_index, code_json, knowledge):
     return combined_code, combined_code_with_blank
 
 
+class LogSessionStartHandler(APIHandler):
+    """Handler for logging session start to Firebase"""
+    @tornado.web.authenticated
+    def post(self):
+        data = self.get_json_body()
+        user_id = data.get("userId", "unknown")
+        session_id = data.get("sessionId", "unknown")
+        video_id = data.get("videoId", None)
+
+        # Log session start to Firebase
+        firebase_logger.log_session_start(
+            user_id=user_id,
+            session_id=session_id,
+            user_metadata={
+                'video_id': video_id,
+                'start_timestamp': firebase_logger.get_timestamp()
+            }
+        )
+
+        self.finish(json.dumps({"status": "success", "message": "Session logged"}))
+
+
+class LogCodeExecutionHandler(APIHandler):
+    """Handler for logging code execution to Firebase"""
+    @tornado.web.authenticated
+    def post(self):
+        data = self.get_json_body()
+        user_id = data.get("userId", "unknown")
+        session_id = data.get("sessionId", "unknown")
+        code = data.get("code", "")
+        cell_type = data.get("cellType", "code")
+        execution_status = data.get("status", "success")
+        output = data.get("output", None)
+        error = data.get("error", None)
+        execution_time = data.get("executionTime", None)
+        video_id = data.get("videoId", None)
+        segment_index = data.get("segmentIndex", None)
+
+        # Log code execution to Firebase
+        firebase_logger.log_code_execution(
+            user_id=user_id,
+            session_id=session_id,
+            code=code,
+            cell_type=cell_type,
+            execution_status=execution_status,
+            output=output,
+            error=error,
+            execution_time=execution_time,
+            video_id=video_id,
+            segment_index=segment_index
+        )
+
+        self.finish(json.dumps({"status": "success", "message": "Code execution logged"}))
+
+
 def setup_handlers(web_app):
     host_pattern = ".*$"
     base_url = web_app.settings["base_url"]
@@ -1571,4 +1685,14 @@ def setup_handlers(web_app):
     # Add route for getting go on or not response
     fill_blank_pattern = url_path_join(base_url, "jlab_ext_example", "fill_blank")
     handlers = [(fill_blank_pattern, FillInBlanksHandler)]
+    web_app.add_handlers(host_pattern, handlers)
+
+    # Add route for logging session start to Firebase
+    log_session_pattern = url_path_join(base_url, "jlab_ext_example", "log_session_start")
+    handlers = [(log_session_pattern, LogSessionStartHandler)]
+    web_app.add_handlers(host_pattern, handlers)
+
+    # Add route for logging code execution to Firebase
+    log_code_pattern = url_path_join(base_url, "jlab_ext_example", "log_code_execution")
+    handlers = [(log_code_pattern, LogCodeExecutionHandler)]
     web_app.add_handlers(host_pattern, handlers)
