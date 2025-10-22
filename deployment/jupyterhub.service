@@ -1,0 +1,33 @@
+[Unit]
+Description=JupyterHub
+After=network.target
+Documentation=https://jupyterhub.readthedocs.io/
+
+[Service]
+Type=simple
+User=root
+Environment="PATH=/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
+EnvironmentFile=/etc/jupyterhub/env
+ExecStart=/usr/local/bin/jupyterhub --config=/etc/jupyterhub/jupyterhub_config.py
+WorkingDirectory=/srv/jupyterhub
+Restart=always
+RestartSec=10
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=jupyterhub
+
+# Security settings
+NoNewPrivileges=false
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=false
+ReadWritePaths=/srv/jupyterhub /var/log/jupyterhub /tmp /home /opt/jupyterlab-extension
+
+# Resource limits (optional - adjust based on your needs)
+# LimitNOFILE=65536
+# LimitNPROC=4096
+
+[Install]
+WantedBy=multi-user.target

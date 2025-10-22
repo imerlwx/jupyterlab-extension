@@ -55,6 +55,44 @@ jlpm build
 jupyter lab
 ```
 
+## Deploy as Web Application
+
+Want to share your extension with others without requiring installation? You can deploy it as a web application using JupyterHub!
+
+### Quick Deploy
+
+```bash
+# On your cloud server (Ubuntu 22.04)
+cd /opt
+sudo git clone https://github.com/YOUR_USERNAME/jupyterlab-extension.git
+cd jupyterlab-extension/deployment
+sudo bash setup.sh
+```
+
+The automated setup script will:
+- Install JupyterHub and all dependencies
+- Configure your extension to be available for all users
+- Set up SSL with Let's Encrypt (if you have a domain)
+- Configure authentication and user management
+
+### Deployment Options
+
+See the [deployment](./deployment/) directory for:
+- **[DEPLOYMENT_GUIDE.md](./deployment/DEPLOYMENT_GUIDE.md)** - Comprehensive step-by-step guide
+- **[README.md](./deployment/README.md)** - Deployment files overview
+- Configuration files for JupyterHub, nginx, and systemd
+- Automated setup script
+
+**Supported Cloud Providers:**
+- DigitalOcean (recommended for beginners)
+- AWS EC2
+- Google Cloud Platform
+- Any Ubuntu 22.04 server
+
+**Estimated Cost:** $12-24/month for a 2-4 GB RAM server
+
+After deployment, users can access your extension at your domain or server IP without any installation!
+
 <!-- ## Uninstall
 
 To remove the extension, execute:
