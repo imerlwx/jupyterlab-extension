@@ -130,3 +130,5 @@ dmypy.json
 *.ipynb
 *.Rmd
 *.db
+firebase-credentials.json
+.zshrc

@@ -20,18 +20,24 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from langchain.memory import ConversationBufferMemory
 from BCEmbedding import RerankerModel
-from g4f.client import Client
+from jlab_ext_example import firebase_logger
 
 # init reranker model
 model = RerankerModel(model_name_or_path="maidalun1020/bce-reranker-base_v1")
 
-# YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
-# OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-YOUTUBE_API_KEY = "AIzaSyA_72GvOE9OdRKdCIk2-lXC_BTUrGwnz2A"
-OPENAI_API_KEY = ""
-openai.api_key = OPENAI_API_KEY
-client = Client()
-youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
+YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+if OPENAI_API_KEY:
+    openai.api_key = OPENAI_API_KEY
+else:
+    print("⚠️  OPENAI_API_KEY is not set. OpenAI features will not work.")
+
+YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY") or YOUTUBE_API_KEY
+if not YOUTUBE_API_KEY:
+    print("⚠️  YOUTUBE_API_KEY is not set. YouTube API features may not work.")
+youtube = (
+    build("youtube", "v3", developerKey=YOUTUBE_API_KEY) if YOUTUBE_API_KEY else None
+)
 DATA_URL = "https://api.github.com/repos/rfordatascience/tidytuesday/contents/data/"
 CODE_URL = "https://api.github.com/repos/dgrtwo/data-screencasts/contents/"
 
@@ -192,6 +198,23 @@ class ChatHandler(APIHandler):
         segment_index = data["segmentIndex"]
         kernelType = data["kernelType"]
         selected_choice = data["selectedChoice"]
+        user_id_req = data.get("userId", "unknown")
+        session_id = data.get("sessionId", "unknown")
+
+        # Log user question to Firebase
+        if question:
+            firebase_logger.log_chat_message(
+                user_id=user_id_req,
+                session_id=session_id,
+                message_type="user_question",
+                content=question,
+                video_id=video_id,
+                segment_index=segment_index,
+                metadata={
+                    "selected_choice": selected_choice,
+                    "kernel_type": kernelType,
+                },
+            )
 
         if kernelType == "ir":
             kernelType = "R"
@@ -322,6 +345,15 @@ class ChatHandler(APIHandler):
                 "need_response": need_response,
                 "interaction": interaction,
             }
+            firebase_logger.log_chat_message(
+                user_id=user_id_req,
+                session_id=session_id,
+                message_type="ai_response",
+                content=results,
+                video_id=video_id,
+                segment_index=segment_index,
+                metadata={"interaction": interaction, "need_response": need_response},
+            )
             self.finish(json.dumps(response_data))
         else:
             self.set_status(400)
@@ -441,9 +473,20 @@ class UpdateBKTHandler(APIHandler):
         video_id = data["videoId"]
         filled_code = data["filledCode"]
         selected_choice = data["selectedChoice"]
+        segment_index = data.get("segmentIndex", 0)
+        user_id_req = data.get("userId", "unknown")
+        session_id = data.get("sessionId", "unknown")
         skill = get_skill_by_knowledge(knowledge_buffer)
         if video_id != "" and skill != "":
-            update_bkt_params(skill, filled_code, selected_choice)
+            update_bkt_params(
+                skill,
+                filled_code,
+                selected_choice,
+                user_id_req,
+                session_id,
+                video_id,
+                segment_index,
+            )
             self.finish(json.dumps("update bkt successfully"))
         else:
             print("Something wrong in UpdateBKTHandler.")
@@ -634,9 +677,8 @@ class CustomChatBotWithMemory:
 
     def ask(self, user_input):
         prompt = self._generate_prompt()
-        # response = openai.ChatCompletion.create(
-        response = client.chat.completions.create(
-            model="gpt-4",
+        response = openai.ChatCompletion.create(
+            model="gpt-5",
             messages=[
                 {
                     "role": "system",
@@ -647,7 +689,6 @@ class CustomChatBotWithMemory:
                     "content": str(user_input),
                 },
             ],
-            temperature=0.3,
         )
         bot_response = response.choices[0].message.content
         # bot_response = response["choices"][0]["message"]["content"]
@@ -824,8 +865,8 @@ def get_segments(video_id):
 
 def get_summary_by_LO(transcript, learning_goal):
     """Get the summary of a transcript by learning goal."""
-    response = client.chat.completions.create(
-        model="gpt-4-turbo",
+    response = openai.ChatCompletion.create(
+        model="gpt-5",
         messages=[
             {
                 "role": "system",
@@ -850,7 +891,6 @@ def get_summary_by_LO(transcript, learning_goal):
                 "content": f"transcript: {transcript}, learning goals: {learning_goal}",
             },
         ],
-        temperature=0.1,
     )
     summary = ast.literal_eval(response.choices[0].message.content)
     formatted_list = [{"category": item[0], "summary": item[1]} for item in summary]
@@ -875,8 +915,8 @@ def get_start_sentence(summary_list, transcript):
         else:
             result_string = transcript
 
-        response = client.chat.completions.create(
-            model="gpt-4-turbo",
+        response = openai.ChatCompletion.create(
+            model="gpt-5",
             messages=[
                 {
                     "role": "system",
@@ -891,7 +931,6 @@ def get_start_sentence(summary_list, transcript):
                     "content": f"transcript: {result_string}, summary: {item['summary']}",
                 },
             ],
-            temperature=0.1,
         )
 
         sentence = response.choices[0].message.content
@@ -905,8 +944,8 @@ def get_start_sentence(summary_list, transcript):
 
 def get_timestamp(transcript_with_time, start_sentence_list):
     """Returns the start timestamp of each sentence in the start sentence list."""
-    response = client.chat.completions.create(
-        model="gpt-4-turbo",
+    response = openai.ChatCompletion.create(
+        model="gpt-5",
         messages=[
             {
                 "role": "system",
@@ -926,7 +965,6 @@ def get_timestamp(transcript_with_time, start_sentence_list):
                 "content": f"transcript: {transcript_with_time}, sentence list: {start_sentence_list}",
             },
         ],
-        temperature=0.1,
     )
     time = ast.literal_eval(response.choices[0].message.content)
     return time
@@ -1105,9 +1143,8 @@ def get_knowledge(video_id, video_type, learning_obj, segment_index, code_block)
     else:
         num = 4
     if code_block != "":
-        # response = openai.ChatCompletion.create(
-        response = client.chat.completions.create(
-            model="gpt-4",
+        response = openai.ChatCompletion.create(
+            model="gpt-5",
             messages=[
                 {
                     "role": "system",
@@ -1132,12 +1169,10 @@ def get_knowledge(video_id, video_type, learning_obj, segment_index, code_block)
                     "content": f"video transcript: {segment_transcript}, code block: {code_block}",
                 },
             ],
-            temperature=0.2,
         )
     else:
-        # response = openai.ChatCompletion.create(
-        response = client.chat.completions.create(
-            model="gpt-4",
+        response = openai.ChatCompletion.create(
+            model="gpt-5",
             messages=[
                 {
                     "role": "system",
@@ -1162,7 +1197,6 @@ def get_knowledge(video_id, video_type, learning_obj, segment_index, code_block)
                     "content": f"video transcript: {segment_transcript}",
                 },
             ],
-            temperature=0.2,
         )
     knowledge = response.choices[0].message.content
     # Insert new data if video_id doesn't exist
@@ -1182,9 +1216,8 @@ def get_methods(video_type, learning_obj, knowledge, mastery_level, code_block):
         video_content = "concept-related"
     else:
         video_content = "programming-related"
-    # response = openai.ChatCompletion.create(
-    response = client.chat.completions.create(
-        model="gpt-4",
+    response = openai.ChatCompletion.create(
+        model="gpt-5",
         messages=[
             {
                 "role": "system",
@@ -1234,7 +1267,6 @@ def get_methods(video_type, learning_obj, knowledge, mastery_level, code_block):
                 "content": f"programming or concept: {video_content}, knowledge: {knowledge}, student's mastery level: {mastery_level}",
             },
         ],
-        temperature=0.2,
     )
     methods = response.choices[0].message.content
     methods = ast.literal_eval(methods)
@@ -1342,18 +1374,47 @@ def get_mastery_level_by_segment(list_of_knowledge, bkt_params):
     return mastery_level
 
 
-def update_bkt_params(skill, filled_code, selected_choice):
+def update_bkt_params(
+    skill,
+    filled_code,
+    selected_choice,
+    user_id_req="unknown",
+    session_id="unknown",
+    video_id=None,
+    segment_index=None,
+):
     """Update the bkt parameters for the practiced skills."""
     global bkt_params, code_line_buffer, correct_answer_buffer
+    # Store old mastery before update
+    old_mastery = bkt_params[skill]["probMastery"]
     if filled_code != "":
         is_correct = filled_code.strip() == code_line_buffer.strip()
+        interaction_type = "fill_in_blanks"
+        user_response = filled_code
         code_line_buffer = ""
     else:
         is_correct = selected_choice == correct_answer_buffer
+        interaction_type = "multiple_choice"
+        user_response = selected_choice
         correct_answer_buffer = ""
 
     update_bkt_param(bkt_params[skill], is_correct)
+    new_mastery = bkt_params[skill]["probMastery"]
     print("bkt_params: " + str(bkt_params))
+
+    # Log BKT update to Firebase
+    firebase_logger.log_bkt_update(
+        user_id=user_id_req,
+        session_id=session_id,
+        skill=skill,
+        old_mastery=old_mastery,
+        new_mastery=new_mastery,
+        is_correct=is_correct,
+        interaction_type=interaction_type,
+        video_id=video_id,
+        segment_index=segment_index,
+        user_response=user_response,
+    )
 
 
 def get_skill_by_knowledge(knowledge):
@@ -1455,9 +1516,8 @@ def get_code_with_blank(video_id, segment_index, code_json):
     code_block = code_json[str(segment_index)]
     print("functions_attributes_to_learn:", function_attribute)
     # get the code with blank
-    # response = openai.ChatCompletion.create(
-    response = client.chat.completions.create(
-        model="gpt-4",
+    response = openai.ChatCompletion.create(
+        model="gpt-5",
         messages=[
             {
                 "role": "system",
@@ -1478,7 +1538,6 @@ def get_code_with_blank(video_id, segment_index, code_json):
                 "content": f"functions/attributes to learn: {str(function_attribute)}, code block: {str(code_block)}",
             },
         ],
-        temperature=0.2,
     )
     code_with_blanks = response.choices[0].message.content
     c.execute(
@@ -1499,9 +1558,8 @@ def get_code_with_blank_by_step(video_id, segment_index, code_json, knowledge):
     code_lines_with_blanks = code_with_blanks.split("\n")[1:-1]
     function_attribute = get_function_attribute_by_knowledge(knowledge)
     # get the code with blank
-    # response = openai.ChatCompletion.create(
-    response = client.chat.completions.create(
-        model="gpt-4",
+    response = openai.ChatCompletion.create(
+        model="gpt-5",
         messages=[
             {
                 "role": "system",
@@ -1515,7 +1573,6 @@ def get_code_with_blank_by_step(video_id, segment_index, code_json, knowledge):
                 "content": f"knowledge to learn: {str(knowledge)}, function and attribute to learn: {str(function_attribute)}, code block: {code_lines}",
             },
         ],
-        temperature=0.2,
     )
     line_index = response.choices[0].message.content
     line_index = ast.literal_eval(line_index)
@@ -1527,6 +1584,65 @@ def get_code_with_blank_by_step(video_id, segment_index, code_json, knowledge):
     combined_code = "\n".join(selected_lines)
     combined_code_with_blank = "\n".join(selected_lines_with_blank)
     return combined_code, combined_code_with_blank
+
+
+class LogSessionStartHandler(APIHandler):
+    """Handler for logging session start to Firebase"""
+
+    @tornado.web.authenticated
+    def post(self):
+        data = self.get_json_body()
+        user_id = data.get("userId", "unknown")
+        session_id = data.get("sessionId", "unknown")
+        video_id = data.get("videoId", None)
+
+        # Log session start to Firebase
+        firebase_logger.log_session_start(
+            user_id=user_id,
+            session_id=session_id,
+            user_metadata={
+                "video_id": video_id,
+                "start_timestamp": firebase_logger.get_timestamp(),
+            },
+        )
+
+        self.finish(json.dumps({"status": "success", "message": "Session logged"}))
+
+
+class LogCodeExecutionHandler(APIHandler):
+    """Handler for logging code execution to Firebase"""
+
+    @tornado.web.authenticated
+    def post(self):
+        data = self.get_json_body()
+        user_id = data.get("userId", "unknown")
+        session_id = data.get("sessionId", "unknown")
+        code = data.get("code", "")
+        cell_type = data.get("cellType", "code")
+        execution_status = data.get("status", "success")
+        output = data.get("output", None)
+        error = data.get("error", None)
+        execution_time = data.get("executionTime", None)
+        video_id = data.get("videoId", None)
+        segment_index = data.get("segmentIndex", None)
+
+        # Log code execution to Firebase
+        firebase_logger.log_code_execution(
+            user_id=user_id,
+            session_id=session_id,
+            code=code,
+            cell_type=cell_type,
+            execution_status=execution_status,
+            output=output,
+            error=error,
+            execution_time=execution_time,
+            video_id=video_id,
+            segment_index=segment_index,
+        )
+
+        self.finish(
+            json.dumps({"status": "success", "message": "Code execution logged"})
+        )
 
 
 def setup_handlers(web_app):
@@ -1571,4 +1687,16 @@ def setup_handlers(web_app):
     # Add route for getting go on or not response
     fill_blank_pattern = url_path_join(base_url, "jlab_ext_example", "fill_blank")
     handlers = [(fill_blank_pattern, FillInBlanksHandler)]
+    web_app.add_handlers(host_pattern, handlers)
+
+    # Add route for logging session start to Firebase
+    log_session_pattern = url_path_join(
+        base_url, "jlab_ext_example", "log_session_start"
+    )
+    handlers = [(log_session_pattern, LogSessionStartHandler)]
+    web_app.add_handlers(host_pattern, handlers)
+
+    # Add route for logging code execution to Firebase
+    log_code_pattern = url_path_join(base_url, "jlab_ext_example", "log_code_execution")
+    handlers = [(log_code_pattern, LogCodeExecutionHandler)]
     web_app.add_handlers(host_pattern, handlers)

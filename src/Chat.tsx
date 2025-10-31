@@ -26,7 +26,17 @@ import {
   KernelError
 } from '@jupyterlab/notebook';
 import YouTube, { YouTubeEvent } from 'react-youtube';
-import { Button, Box, Typography } from '@mui/material';
+import {
+  Button,
+  Box,
+  Typography
+  // Dialog,
+  // DialogActions,
+  // DialogContent,
+  // DialogContentText,
+  // DialogTitle,
+  // TextField
+} from '@mui/material';
 import { ISignal, Signal } from '@lumino/signaling';
 import { Cell, CodeCell, ICellModel } from '@jupyterlab/cells';
 import Radio from '@mui/material/Radio';
@@ -45,6 +55,7 @@ import HelpIcon from '@mui/icons-material/Help';
 import ArrowForwardIosIcon from '@mui/icons-material/ArrowForwardIos';
 import Papa from 'papaparse';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
+import { UserIDDialog } from './UserIDDialog';
 
 export interface ISegment {
   start: number;
@@ -80,6 +91,11 @@ interface IStatistics {
   std: number;
 }
 
+// interface IModalProps {
+//   isOpen: boolean;
+//   onClose: (videoId: string, userId: string) => void;
+// }
+
 type DataRow = Record<string, any>;
 
 type ChatComponentProps = {
@@ -96,16 +112,78 @@ type ICellOutput = {
   output_type: string;
 };
 
+// const ModalComponent: React.FC<IModalProps> = ({ isOpen, onClose }) => {
+//   const [videoId, setVideoId] = useState<string>('video1'); // Default selection
+//   const [userId, setUserId] = useState<string>('');
+//   const [userIdError, setUserIdError] = useState<boolean>(false);
+
+//   const handleSave = () => {
+//     if (userId.trim() === '') {
+//       setUserIdError(true);
+//     } else {
+//       setUserIdError(false);
+//       onClose(videoId, userId);
+//     }
+//   };
+
+//   return (
+//     <Dialog open={isOpen} onClose={() => onClose('', '')}>
+//       <DialogTitle>Select Video Topic and Enter User ID</DialogTitle>
+//       <DialogContent>
+//         <DialogContentText>
+//           Please choose a video topic and enter your user ID.
+//         </DialogContentText>
+//         <RadioGroup value={videoId} onChange={e => setVideoId(e.target.value)}>
+//           <FormControlLabel
+//             value="nx5yhXAQLxw"
+//             control={<Radio />}
+//             label="College Major and Income"
+//           />
+//           <FormControlLabel
+//             value="Kd9BNI6QMmQ"
+//             control={<Radio />}
+//             label="Video Games"
+//           />
+//         </RadioGroup>
+//         <TextField
+//           autoFocus
+//           margin="dense"
+//           label="User ID"
+//           type="text"
+//           fullWidth
+//           value={userId}
+//           onChange={e => setUserId(e.target.value)}
+//           error={userIdError}
+//           helperText={userIdError ? 'User ID is required' : ''}
+//         />
+//       </DialogContent>
+//       <DialogActions>
+//         {/* <Button onClick={() => onClose('', '')} color="primary">
+//           Cancel
+//         </Button> */}
+//         <Button onClick={handleSave} color="primary">
+//           Save
+//         </Button>
+//       </DialogActions>
+//     </Dialog>
+//   );
+// };
+
 // Create a new React component for the Chat logic
 const ChatComponent = (props: ChatComponentProps): JSX.Element => {
   const [player, setPlayer] = useState<any | null>(null);
   const [videoId, setVideoId] = useState('');
+  const [userId, setUserId] = useState<string>('');
+  const [sessionId] = useState<string>(
+    () => `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+  );
+  const [showUserIDDialog, setShowUserIDDialog] = useState(true);
   const [segments, setSegments] = useState<ISegment[]>([]);
   const [messages, setMessages] = useState<IMessage[]>([
     {
       id: `msg-${Date.now()}`,
       message:
-        "Welcome to today's Tidy Tuesday project! First, tell me your user id and which video you want to watch (format: video id, user id):",
+        "Welcome to today's Tidy Tuesday project! Please select a video you want to watch by entering its video ID (e.g., nx5yhXAQLxw):",
       videoId: null,
       sentTime: '0 second',
       direction: 'incoming',
@@ -122,7 +200,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
   const [canGoOn, setCanGoOn] = useState(false);
   const [currentSegmentIndex, setCurrentSegmentIndex] = useState(0);
   // const [lastActivityTime, setLastActivityTime] = useState<number>(Date.now());
-  const [kernelType, setKernelType] = useState('');
+  const [kernelType, setKernelType] = useState('ir');
   const [popupStates, setPopupStates] = useState<Record<number, boolean>>({});
   const [needHelp, setNeedHelp] = useState(false);
   const currentSegmentIndexRef = useRef(currentSegmentIndex);
@@ -172,6 +250,62 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     selectedColumn in columnDescriptions
       ? columnDescriptions[selectedColumn]
       : 'Description not found';
+
+  const initializeChat = useCallback(
+    async (videoId: string, userId: string) => {
+      props.onVideoIdChange({ videoId });
+      // const kernel = props.getCurrentNotebookKernel();
+      // setKernelType(kernel.name);
+      setKernelType('ir');
+      requestAPI<any>('segments', {
+        body: JSON.stringify({
+          videoId,
+          userId,
+          sessionId: sessionId
+        }),
+        method: 'POST'
+      })
+        .then(response => {
+          setSegments(response);
+          setMessages(prevMessages => [
+            ...prevMessages,
+            {
+              id: `msg-${Date.now()}`,
+              message:
+                "The video is segmented into several video clips. While you can navigate through the parts you like, I recommend following the video progress to learn and imitate his Exploratory Data Analysis process and do the task on your own.\n\nWhile watching the video, keep asking yourself these three questions: what is he doing, why is he doing it, and how will success in what he is doing help him find a solution to the problem? Now let's get started!",
+              sentTime: 'just now',
+              direction: 'incoming',
+              sender: 'Tutorly',
+              videoId,
+              start: response[0].start,
+              end: response[0].end,
+              category: response[0].category,
+              interaction: 'plain text',
+              code: null
+            }
+          ]);
+          setIsTyping(false);
+        })
+        .catch(reason => {
+          console.error(`Error on POST /jlab_ext_example/chats .\n${reason}`);
+        });
+    },
+    [props, setSegments, setMessages, setIsTyping]
+  );
+
+  // const [isModalOpen, setIsModalOpen] = useState<boolean>(true);
+
+  // const handleModalClose = useCallback(
+  //   (selectedVideoId: string, enteredUserId: string) => {
+  //     if (selectedVideoId && enteredUserId) {
+  //       setVideoId(selectedVideoId);
+  //       setUserId(enteredUserId);
+  //       setIsModalOpen(false);
+  //       initializeChat(selectedVideoId, enteredUserId);
+  //     }
+  //   },
+  //   [initializeChat]
+  // );
 
   const handleReady = (event: YouTubeEvent<number>) => {
     setPlayer(event.target);
@@ -248,48 +382,50 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
         setCanGoOn(true);
 
         // Assuming question is a string like "openai api key, video_id, user_id"
-        const parts = question.split(',').map(s => s.trim());
-        // const apiKey = parts[0];
-        const extractedVideoId = parts[0];
-        const userId = parts.length > 1 ? parts[1] : '1'; // Fallback in case the user_id is missing
-
+        // const parts = question.split(',').map(s => s.trim());
+        // // const apiKey = parts[0];
+        // const extractedVideoId = parts[0];
+        // const extractedUserId = parts.length > 1 ? parts[1] : '1'; // Fallback in case the user_id is missing
+        // setUserId(extractedUserId);
+        const extractedVideoId = question.trim();
         setVideoId(extractedVideoId);
-        props.onVideoIdChange({ videoId: extractedVideoId }); // Emit signal
-        const kernel = props.getCurrentNotebookKernel();
-        setKernelType(kernel.name);
-        requestAPI<any>('segments', {
-          body: JSON.stringify({
-            // apiKey: apiKey,
-            videoId: extractedVideoId,
-            userId: userId
-          }),
-          method: 'POST'
-        })
-          .then(response => {
-            // const parsed = JSON.parse(response.replace(/'/g, '"'));
-            setSegments(response);
-            setMessages(prevMessages => [
-              ...prevMessages,
-              {
-                id: `msg-${Date.now()}`,
-                message:
-                  "The video is segmented into several video clips. While you can navigate through the parts you like, I recommend following the video progress to learn and imitate his Exploratory Data Analysis process and do the task on your own.\n\nWhile watching the video, keep asking yourself these three questions: what is he doing, why is he doing it, and how will success in what he is doing help him find a solution to the problem? Now let's get started!",
-                sentTime: 'just now',
-                direction: 'incoming',
-                sender: 'Tutorly',
-                videoId: extractedVideoId,
-                start: response[0].start,
-                end: response[0].end,
-                category: response[0].category,
-                interaction: 'plain text',
-                code: null
-              }
-            ]);
-            setIsTyping(false);
-          })
-          .catch(reason => {
-            console.error(`Error on POST /jlab_ext_example/chats .\n${reason}`);
-          });
+        initializeChat(extractedVideoId, userId);
+        // props.onVideoIdChange({ videoId: extractedVideoId }); // Emit signal
+        // const kernel = props.getCurrentNotebookKernel();
+        // setKernelType(kernel.name);
+        // requestAPI<any>('segments', {
+        //   body: JSON.stringify({
+        //     // apiKey: apiKey,
+        //     videoId: extractedVideoId,
+        //     userId: userId
+        //   }),
+        //   method: 'POST'
+        // })
+        //   .then(response => {
+        //     // const parsed = JSON.parse(response.replace(/'/g, '"'));
+        //     setSegments(response);
+        //     setMessages(prevMessages => [
+        //       ...prevMessages,
+        //       {
+        //         id: `msg-${Date.now()}`,
+        //         message:
+        //           "The video is segmented into several video clips. While you can navigate through the parts you like, I recommend following the video progress to learn and imitate his Exploratory Data Analysis process and do the task on your own.\n\nWhile watching the video, keep asking yourself these three questions: what is he doing, why is he doing it, and how will success in what he is doing help him find a solution to the problem? Now let's get started!",
+        //         sentTime: 'just now',
+        //         direction: 'incoming',
+        //         sender: 'Tutorly',
+        //         videoId: extractedVideoId,
+        //         start: response[0].start,
+        //         end: response[0].end,
+        //         category: response[0].category,
+        //         interaction: 'plain text',
+        //         code: null
+        //       }
+        //     ]);
+        //     setIsTyping(false);
+        //   })
+        //   .catch(reason => {
+        //     console.error(`Error on POST /jlab_ext_example/chats .\n${reason}`);
+        //   });
       } else {
         setIsTyping(true);
         const currentNotebookContent = JSON.stringify(
@@ -314,7 +450,9 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
               filledCode: '',
               selectedChoice: selectedChoice,
               videoId: videoIdRef.current,
-              segmentIndex: currentSegmentIndexRef.current
+              segmentIndex: currentSegmentIndexRef.current,
+              userId: userId,
+              sessionId: sessionId
             }),
             method: 'POST'
           })
@@ -364,7 +502,9 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
             category: category,
             segmentIndex: currentSegmentIndex,
             kernelType: kernelType,
-            selectedChoice: selectedChoice
+            selectedChoice: selectedChoice,
+            userId: userId,
+            sessionId: sessionId
           }),
           method: 'POST'
         })
@@ -465,7 +605,8 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
       props.getCurrentNotebookContent,
       props.onVideoIdChange,
       selectedChoice,
-      errorInCode
+      errorInCode,
+      initializeChat
     ]
   );
 
@@ -481,7 +622,9 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
         body: JSON.stringify({
           videoId: videoId,
           segmentIndex: currentSegmentIndex + 1,
-          category: nextSegment.category
+          category: nextSegment.category,
+          userId: userId,
+          sessionId: sessionId
         }),
         method: 'POST'
       })
@@ -578,13 +721,49 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     }
   ) {
     // const executedCellContent = args.cell.model.toJSON()['source'];
+    const executedCellContent = args.cell.model.toJSON()['source'] as string;
+    const cellType = args.cell.model.type;
     const executedCellOutput = args.cell.model.toJSON()[
       'outputs'
     ] as ICellOutput[];
-    if (executedCellOutput && executedCellOutput[0].output_type === 'error') {
-      setErrorInCode(executedCellOutput[0].traceback.join('\n'));
-      setIsReadyToSend(true);
+    // if (executedCellOutput && executedCellOutput[0].output_type === 'error') {
+    //   setErrorInCode(executedCellOutput[0].traceback.join('\n'));
+    //   setIsReadyToSend(true);
+    // Determine execution status and extract output/error
+    let executionStatus = 'success';
+    let outputText = null;
+    let errorText = null;
+
+    if (executedCellOutput && executedCellOutput[0]) {
+      if (executedCellOutput[0].output_type === 'error') {
+        executionStatus = 'error';
+        errorText = executedCellOutput[0].traceback.join('\n');
+        setErrorInCode(errorText);
+        setIsReadyToSend(true);
+      } else if (
+        executedCellOutput[0].output_type === 'stream' ||
+        executedCellOutput[0].output_type === 'execute_result'
+      ) {
+        outputText = JSON.stringify(executedCellOutput[0]);
+      }
     }
+
+    requestAPI<any>('log_code_execution', {
+      body: JSON.stringify({
+        userId: userId,
+        sessionId: sessionId,
+        code: executedCellContent,
+        cellType: cellType,
+        status: executionStatus,
+        output: outputText,
+        error: errorText,
+        videoId: videoId,
+        segmentIndex: currentSegmentIndex
+      }),
+      method: 'POST'
+    }).catch(err => {
+      console.error('Failed to log code execution:', err);
+    });
 
     if (canGoOnRef.current === false) {
       requestAPI<any>('go_on', {
@@ -755,7 +934,9 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
               filledCode: code,
               selectedChoice: '',
               videoId: videoIdRef.current,
-              segmentIndex: currentSegmentIndexRef.current
+              segmentIndex: currentSegmentIndexRef.current,
+              userId: userId,
+              sessionId: sessionId
             }),
             method: 'POST'
           })
@@ -932,9 +1113,24 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     }
   }
 
+  const handleUserIDSubmit = (
+    submittedUserId: string,
+    selectedVideoId: string
+  ) => {
+    setUserId(submittedUserId);
+    setVideoId(selectedVideoId);
+    setShowUserIDDialog(false);
+    initializeChat(selectedVideoId, submittedUserId);
+    console.log(
+      `User ID set: ${submittedUserId}, Video ID: ${selectedVideoId}, Session ID: ${sessionId}`
+    );
+  };
+
   return (
     <div style={{ position: 'relative', height: '100%', width: '100%' }}>
+      <UserIDDialog open={showUserIDDialog} onSubmit={handleUserIDSubmit} />
       <MainContainer style={{ height: '100%', width: '100%' }}>
+        {/* <ModalComponent isOpen={isModalOpen} onClose={handleModalClose} /> */}
         <ChatContainer
           id="chatContainerId"
           style={{ height: '100%', width: '100%' }}
