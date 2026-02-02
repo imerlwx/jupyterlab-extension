@@ -391,6 +391,18 @@ class UpdateSeqHandler(APIHandler):
                 with open("video_game_code.json", "r") as file:
                     # Parse the file and convert JSON data into a Python dictionary
                     all_code = json.load(file)
+            elif video_id == "EF4A4OtQprg":
+                with open("pet_names_code.json", "r") as file:
+                    # Parse the file and convert JSON data into a Python dictionary
+                    all_code = json.load(file)
+            elif video_id == "1xsbTs9-a50":
+                with open("franchise_revenue_code.json", "r") as file:
+                    # Parse the file and convert JSON data into a Python dictionary
+                    all_code = json.load(file)
+            elif video_id == "1x8Kpyndss":
+                with open("coffee_ratings_code.json", "r") as file:
+                    # Parse the file and convert JSON data into a Python dictionary
+                    all_code = json.load(file)
             elif video_id == "8jazNUpO3lQ":
                 with open("ml_code.json", "r") as file:
                     # Parse the file and convert JSON data into a Python dictionary
@@ -588,6 +600,207 @@ def initialze_database():
         {"category": "Interpret the chart", "start": 900, "end": 968},  # 9
         {"category": "Visualize the data", "start": 968, "end": 1027},  # 10
     ]
+    segments_json = json.dumps(segments_set)
+    c.execute("SELECT * FROM segments_cache WHERE video_id = ?", (video_id,))
+    if c.fetchone() is None:
+        # Insert new data if video_id doesn't exist
+        c.execute(
+            "INSERT INTO segments_cache (video_id, segments) VALUES (?, ?)",
+            (video_id, segments_json),
+        )
+
+    video_id = "EF4A4OtQprg"  # pet names
+    segments_set = [
+        {
+            "category": "Understand the dataset",
+            "start": 1,
+            "end": 157,
+        },  # 0
+        {
+            "category": "Preprocess and Visualize the data",
+            "start": 157,
+            "end": 536,
+        },  # 1
+        {
+            "category": "Interpret the chart and propose hypotheses",
+            "start": 536,
+            "end": 614,
+        },  # 2
+        {
+            "category": "Preprocess and Visualize the data",
+            "start": 614,
+            "end": 1077,
+        },  # 3
+        {
+            "category": "Interpret the chart and propose hypotheses",
+            "start": 1077,
+            "end": 1178,
+        },  # 4
+        {
+            "category": "Preprocess and Visualize the data",
+            "start": 1178,
+            "end": 1497,
+        },  # 5
+        {
+            "category": "Preprocess and Visualize the data",
+            "start": 1497,
+            "end": 1787,
+        },  # 6
+        {
+            "category": "Interpret the chart and propose hypotheses",
+            "start": 1787,
+            "end": 2540,
+        },  # 7
+        {
+            "category": "Preprocess and Visualize the data",
+            "start": 2540,
+            "end": 2697,
+        },  # 8
+        {
+            "category": "Interpret the chart and propose hypotheses",
+            "start": 2697,
+            "end": 2846,
+        },  # 9
+        {
+            "category": "Preprocess and Visualize the data",
+            "start": 2846,
+            "end": 3344,
+        },  # 10
+    ]
+
+    video_id = "1xsbTs9-a50"  # franchise revenue
+    segments_set = [
+        {
+            "category": "Understand the dataset",
+            "start": 1,
+            "end": 401,
+        },  # 0
+        {
+            "category": "Preprocess and Visualize the data",
+            "start": 401,
+            "end": 663,
+        },  # 1
+        {
+            "category": "Interpret the chart and propose hypotheses",
+            "start": 663,
+            "end": 1032,
+        },  # 2
+        {
+            "category": "Preprocess and Visualize the data",
+            "start": 1032,
+            "end": 1414,
+        },  # 3
+        {
+            "category": "Interpret the chart and propose hypotheses",
+            "start": 1414,
+            "end": 1589,
+        },  # 4
+        {
+            "category": "Preprocess and Visualize the data",
+            "start": 1589,
+            "end": 1721,
+        },  # 5
+        {
+            "category": "Interpret the chart and propose hypotheses",
+            "start": 1721,
+            "end": 1941,
+        },  # 6
+        {
+            "category": "Preprocess and Visualize the data",
+            "start": 1941,
+            "end": 2233,
+        },  # 7
+        {
+            "category": "Interpret the chart and propose hypotheses",
+            "start": 2233,
+            "end": 2441,
+        },  # 8
+        {
+            "category": "Preprocess and Visualize the data",
+            "start": 2441,
+            "end": 2700,
+        },  # 9
+        {
+            "category": "Interpret the chart and propose hypotheses",
+            "start": 2700,
+            "end": 2849,
+        },  # 10
+        {
+            "category": "Preprocess and Visualize the data",
+            "start": 2849,
+            "end": 3261,
+        },  # 11
+    ]
+
+    video_id = "1x8Kpyndss"  # coffee ratings
+    segments_set = [
+        {
+            "category": "Understand the dataset",
+            "start": 1,
+            "end": 362,
+        },  # 0
+        {
+            "category": "Preprocess and Visualize the data",
+            "start": 362,
+            "end": 664,
+        },  # 1
+        {
+            "category": "Interpret the chart and propose hypotheses",
+            "start": 664,
+            "end": 743,
+        },  # 2
+        {
+            "category": "Preprocess and Visualize the data",
+            "start": 743,
+            "end": 1022,
+        },  # 3
+        {
+            "category": "Interpret the chart and propose hypotheses",
+            "start": 1022,
+            "end": 1120,
+        },  # 4
+        {
+            "category": "Preprocess and Visualize the data",
+            "start": 1120,
+            "end": 1464,
+        },  # 5
+        {
+            "category": "Interpret the chart and propose hypotheses",
+            "start": 1464,
+            "end": 1566,
+        },  # 6
+        {
+            "category": "Preprocess and Visualize the data",
+            "start": 1566,
+            "end": 1930,
+        },  # 7
+        {
+            "category": "Interpret the chart and propose hypotheses",
+            "start": 1930,
+            "end": 2257,
+        },  # 8
+        {
+            "category": "Preprocess and Visualize the data",
+            "start": 2257,
+            "end": 2487,
+        },  # 9
+        {
+            "category": "Interpret the chart and propose hypotheses",
+            "start": 2487,
+            "end": 2687,
+        },  # 10
+        {
+            "category": "Preprocess and Visualize the data",
+            "start": 2687,
+            "end": 2873,
+        },  # 11
+        {
+            "category": "Interpret the chart and propose hypotheses",
+            "start": 2873,
+            "end": 3113,
+        },  # 12
+    ]
+
     segments_json = json.dumps(segments_set)
     c.execute("SELECT * FROM segments_cache WHERE video_id = ?", (video_id,))
     if c.fetchone() is None:
@@ -829,7 +1042,9 @@ def get_csv_from_youtube_video(video_id):
 
 def get_transcript(video_id, start=0, end=900):
     """Get the transcript file corresponding to a video from the database."""
-    data = YouTubeTranscriptApi.get_transcript(video_id)
+    ytt_api = YouTubeTranscriptApi()
+    fetched_transcript = ytt_api.fetch(video_id)
+    data = fetched_transcript.to_raw_data()  # Convert to list of dicts
     transcript = [i for i in data if i["start"] >= start and i["start"] < end]
     for item in transcript:
         del item["duration"]

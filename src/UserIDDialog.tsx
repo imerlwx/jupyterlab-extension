@@ -93,6 +93,21 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
               control={<Radio />}
               label="Video Games"
             />
+            <FormControlLabel
+              value="EF4A4OtQprg"
+              control={<Radio />}
+              label="Seattle Pet Names"
+            />
+            <FormControlLabel
+              value="1xsbTs9-a50"
+              control={<Radio />}
+              label="Franchise Revenue"
+            />
+            <FormControlLabel
+              value="1x8Kpyndss"
+              control={<Radio />}
+              label="Coffee Ratings"
+            />
           </RadioGroup>
           <TextField
             autoFocus

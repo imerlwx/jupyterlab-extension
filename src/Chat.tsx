@@ -91,11 +91,6 @@ interface IStatistics {
   std: number;
 }
 
-// interface IModalProps {
-//   isOpen: boolean;
-//   onClose: (videoId: string, userId: string) => void;
-// }
-
 type DataRow = Record<string, any>;
 
 type ChatComponentProps = {
@@ -111,63 +106,6 @@ type ICellOutput = {
   traceback: string[];
   output_type: string;
 };
-
-// const ModalComponent: React.FC<IModalProps> = ({ isOpen, onClose }) => {
-//   const [videoId, setVideoId] = useState<string>('video1'); // Default selection
-//   const [userId, setUserId] = useState<string>('');
-//   const [userIdError, setUserIdError] = useState<boolean>(false);
-
-//   const handleSave = () => {
-//     if (userId.trim() === '') {
-//       setUserIdError(true);
-//     } else {
-//       setUserIdError(false);
-//       onClose(videoId, userId);
-//     }
-//   };
-
-//   return (
-//     <Dialog open={isOpen} onClose={() => onClose('', '')}>
-//       <DialogTitle>Select Video Topic and Enter User ID</DialogTitle>
-//       <DialogContent>
-//         <DialogContentText>
-//           Please choose a video topic and enter your user ID.
-//         </DialogContentText>
-//         <RadioGroup value={videoId} onChange={e => setVideoId(e.target.value)}>
-//           <FormControlLabel
-//             value="nx5yhXAQLxw"
-//             control={<Radio />}
-//             label="College Major and Income"
-//           />
-//           <FormControlLabel
-//             value="Kd9BNI6QMmQ"
-//             control={<Radio />}
-//             label="Video Games"
-//           />
-//         </RadioGroup>
-//         <TextField
-//           autoFocus
-//           margin="dense"
-//           label="User ID"
-//           type="text"
-//           fullWidth
-//           value={userId}
-//           onChange={e => setUserId(e.target.value)}
-//           error={userIdError}
-//           helperText={userIdError ? 'User ID is required' : ''}
-//         />
-//       </DialogContent>
-//       <DialogActions>
-//         {/* <Button onClick={() => onClose('', '')} color="primary">
-//           Cancel
-//         </Button> */}
-//         <Button onClick={handleSave} color="primary">
-//           Save
-//         </Button>
-//       </DialogActions>
-//     </Dialog>
-//   );
-// };
 
 // Create a new React component for the Chat logic
 const ChatComponent = (props: ChatComponentProps): JSX.Element => {
@@ -219,33 +157,146 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
   const [checkedCode, setCheckedCode] = useState<string[]>([]);
 
   // dataset url and data attributes descriptions
-  const datasetUrl =
-    'https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2018/2018-10-16/recent-grads.csv';
-  const columnDescriptions: { [key: string]: string } = {
-    Rank: 'Rank by median earnings',
-    Major_code: 'Major code, FO1DP in ACS PUMS',
-    Major: 'Major description',
-    Major_category: 'Category of major from Carnevale et al',
-    Total: 'Total number of people with major',
-    Sample_size:
-      'Sample size (unweighted) of full-time, year-round ONLY (used for earnings)',
-    Men: 'Male graduates',
-    Women: 'Female graduates',
-    ShareWomen: 'Women as share of total',
-    Employed: 'Number employed (ESR == 1 or 2)',
-    Full_time: 'Employed 35 hours or more',
-    Part_time: 'Employed less than 35 hours',
-    Full_time_year_round:
-      'Employed at least 50 weeks (WKW == 1) and at least 35 hours (WKHP >= 35)',
-    Unemployed: 'Number unemployed (ESR == 3)',
-    Unemployment_rate: 'Unemployed / (Unemployed + Employed)',
-    Median: 'Median earnings of full-time, year-round workers',
-    P25th: '25th percentile of earnings',
-    P75th: '75th percentile of earnings',
-    College_jobs: 'Number with job requiring a college degree',
-    Non_college_jobs: 'Number with job not requiring a college degree',
-    Low_wage_jobs: 'Number in low-wage service jobs'
+  const getDatasetInfo = (videoId: string) => {
+    const datasets: {
+      [key: string]: { url: string; columns: { [key: string]: string } };
+    } = {
+      nx5yhXAQLxw: {
+        url: 'https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2018/2018-10-16/recent-grads.csv',
+        columns: {
+          Rank: 'Rank by median earnings',
+          Major_code: 'Major code, FO1DP in ACS PUMS',
+          Major: 'Major description',
+          Major_category: 'Category of major from Carnevale et al',
+          Total: 'Total number of people with major',
+          Sample_size:
+            'Sample size (unweighted) of full-time, year-round ONLY (used for earnings)',
+          Men: 'Male graduates',
+          Women: 'Female graduates',
+          ShareWomen: 'Women as share of total',
+          Employed: 'Number employed (ESR == 1 or 2)',
+          Full_time: 'Employed 35 hours or more',
+          Part_time: 'Employed less than 35 hours',
+          Full_time_year_round:
+            'Employed at least 50 weeks (WKW == 1) and at least 35 hours (WKHP >= 35)',
+          Unemployed: 'Number unemployed (ESR == 3)',
+          Unemployment_rate: 'Unemployed / (Unemployed + Employed)',
+          Median: 'Median earnings of full-time, year-round workers',
+          P25th: '25th percentile of earnings',
+          P75th: '75th percentile of earnings',
+          College_jobs: 'Number with job requiring a college degree',
+          Non_college_jobs: 'Number with job not requiring a college degree',
+          Low_wage_jobs: 'Number in low-wage service jobs'
+        }
+      },
+      EF4A4OtQprg: {
+        url: 'https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2019/2019-03-26/seattle_pets.csv',
+        columns: {
+          license_issue_date: 'Date the animal was registered with Seattle',
+          license_number: 'Unique license number',
+          animals_name: "Animal's name",
+          species: "Animal's species (dog, cat, goat, etc)",
+          primary_breed: 'Primary breed of the animal',
+          secondary_breed: 'Secondary breed if mixed',
+          zip_code: 'Zip code animal registered under'
+        }
+      },
+      '1xsbTs9-a50': {
+        url: 'https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2019/2019-07-02/media_franchises.csv',
+        columns: {
+          franchise: 'Franchise name',
+          revenue_category: 'Revenue category',
+          revenue: 'Revenue generated per category (in billions)',
+          year_created: 'Year created',
+          original_media: 'Original source of the franchise',
+          creators: 'Creators of the franchise',
+          owners: 'Current owners of the franchise'
+        }
+      },
+      '1x8Kpyndss': {
+        url: 'https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-07/coffee_ratings.csv',
+        columns: {
+          total_cup_points: 'Total rating/points (0 - 100 scale)',
+          species: 'Species of coffee bean (arabica or robusta)',
+          owner: 'Owner of the farm',
+          country_of_origin: 'Where the bean came from',
+          farm_name: 'Name of the farm',
+          lot_number: 'Lot number of the beans tested',
+          mill: 'Mill where the beans were processed',
+          ico_number: 'International Coffee Organization number',
+          company: 'Company name',
+          altitude: 'Altitude - this is a messy column',
+          region: 'Region where bean came from',
+          producer: 'Producer of the roasted bean',
+          number_of_bags: 'Number of bags tested',
+          bag_weight: 'Bag weight tested',
+          in_country_partner: 'Partner for the country',
+          harvest_year: 'When the beans were harvested (year)',
+          grading_date: 'When the beans were graded',
+          owner_1: 'Who owns the beans',
+          variety: 'Variety of the beans',
+          processing_method: 'Method for processing',
+          aroma: 'Aroma grade',
+          flavor: 'Flavor grade',
+          aftertaste: 'Aftertaste grade',
+          acidity: 'Acidity grade',
+          body: 'Body grade',
+          balance: 'Balance grade',
+          uniformity: 'Uniformity grade',
+          clean_cup: 'Clean cup grade',
+          sweetness: 'Sweetness grade',
+          cupper_points: 'Cupper Points',
+          moisture: 'Moisture Grade',
+          category_one_defects: 'Category one defects (count)',
+          quakers: 'Quakers',
+          color: 'Color of bean',
+          category_two_defects: 'Category two defects (count)',
+          expiration: 'Expiration date of the beans',
+          certification_body: 'Who certified it',
+          certification_address: 'Certification body address',
+          certification_contact: 'Certification contact',
+          unit_of_measurement: 'Unit of measurement',
+          altitude_low_meters: 'Altitude low meters',
+          altitude_high_meters: 'Altitude high meters',
+          altitude_mean_meters: 'Altitude mean meters'
+        }
+      }
+    };
+
+    return datasets[videoId] || { url: '', columns: {} };
   };
+
+  const datasetInfo = getDatasetInfo(videoId);
+  const datasetUrl = datasetInfo.url;
+  const columnDescriptions = datasetInfo.columns;
+
+  // const datasetUrl =
+  //   'https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2018/2018-10-16/recent-grads.csv';
+  // const columnDescriptions: { [key: string]: string } = {
+  //   Rank: 'Rank by median earnings',
+  //   Major_code: 'Major code, FO1DP in ACS PUMS',
+  //   Major: 'Major description',
+  //   Major_category: 'Category of major from Carnevale et al',
+  //   Total: 'Total number of people with major',
+  //   Sample_size:
+  //     'Sample size (unweighted) of full-time, year-round ONLY (used for earnings)',
+  //   Men: 'Male graduates',
+  //   Women: 'Female graduates',
+  //   ShareWomen: 'Women as share of total',
+  //   Employed: 'Number employed (ESR == 1 or 2)',
+  //   Full_time: 'Employed 35 hours or more',
+  //   Part_time: 'Employed less than 35 hours',
+  //   Full_time_year_round:
+  //     'Employed at least 50 weeks (WKW == 1) and at least 35 hours (WKHP >= 35)',
+  //   Unemployed: 'Number unemployed (ESR == 3)',
+  //   Unemployment_rate: 'Unemployed / (Unemployed + Employed)',
+  //   Median: 'Median earnings of full-time, year-round workers',
+  //   P25th: '25th percentile of earnings',
+  //   P75th: '75th percentile of earnings',
+  //   College_jobs: 'Number with job requiring a college degree',
+  //   Non_college_jobs: 'Number with job not requiring a college degree',
+  //   Low_wage_jobs: 'Number in low-wage service jobs'
+  // };
   const description =
     selectedColumn in columnDescriptions
       ? columnDescriptions[selectedColumn]
@@ -292,20 +343,6 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     },
     [props, setSegments, setMessages, setIsTyping]
   );
-
-  // const [isModalOpen, setIsModalOpen] = useState<boolean>(true);
-
-  // const handleModalClose = useCallback(
-  //   (selectedVideoId: string, enteredUserId: string) => {
-  //     if (selectedVideoId && enteredUserId) {
-  //       setVideoId(selectedVideoId);
-  //       setUserId(enteredUserId);
-  //       setIsModalOpen(false);
-  //       initializeChat(selectedVideoId, enteredUserId);
-  //     }
-  //   },
-  //   [initializeChat]
-  // );
 
   const handleReady = (event: YouTubeEvent<number>) => {
     setPlayer(event.target);
@@ -381,51 +418,9 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
         setIsTyping(true);
         setCanGoOn(true);
 
-        // Assuming question is a string like "openai api key, video_id, user_id"
-        // const parts = question.split(',').map(s => s.trim());
-        // // const apiKey = parts[0];
-        // const extractedVideoId = parts[0];
-        // const extractedUserId = parts.length > 1 ? parts[1] : '1'; // Fallback in case the user_id is missing
-        // setUserId(extractedUserId);
         const extractedVideoId = question.trim();
         setVideoId(extractedVideoId);
         initializeChat(extractedVideoId, userId);
-        // props.onVideoIdChange({ videoId: extractedVideoId }); // Emit signal
-        // const kernel = props.getCurrentNotebookKernel();
-        // setKernelType(kernel.name);
-        // requestAPI<any>('segments', {
-        //   body: JSON.stringify({
-        //     // apiKey: apiKey,
-        //     videoId: extractedVideoId,
-        //     userId: userId
-        //   }),
-        //   method: 'POST'
-        // })
-        //   .then(response => {
-        //     // const parsed = JSON.parse(response.replace(/'/g, '"'));
-        //     setSegments(response);
-        //     setMessages(prevMessages => [
-        //       ...prevMessages,
-        //       {
-        //         id: `msg-${Date.now()}`,
-        //         message:
-        //           "The video is segmented into several video clips. While you can navigate through the parts you like, I recommend following the video progress to learn and imitate his Exploratory Data Analysis process and do the task on your own.\n\nWhile watching the video, keep asking yourself these three questions: what is he doing, why is he doing it, and how will success in what he is doing help him find a solution to the problem? Now let's get started!",
-        //         sentTime: 'just now',
-        //         direction: 'incoming',
-        //         sender: 'Tutorly',
-        //         videoId: extractedVideoId,
-        //         start: response[0].start,
-        //         end: response[0].end,
-        //         category: response[0].category,
-        //         interaction: 'plain text',
-        //         code: null
-        //       }
-        //     ]);
-        //     setIsTyping(false);
-        //   })
-        //   .catch(reason => {
-        //     console.error(`Error on POST /jlab_ext_example/chats .\n${reason}`);
-        //   });
       } else {
         setIsTyping(true);
         const currentNotebookContent = JSON.stringify(
