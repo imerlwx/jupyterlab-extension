@@ -103,6 +103,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
   const [userId, setUserId] = useState<string>('');
   const [sessionId] = useState<string>(() => `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`);
   const [showUserIDDialog, setShowUserIDDialog] = useState(true);
+  const [userCondition, setUserCondition] = useState<string>('');
 
   const [player, setPlayer] = useState<any | null>(null);
   const [videoId, setVideoId] = useState('');
@@ -992,6 +993,21 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     setUserId(submittedUserId);
     setShowUserIDDialog(false);
     console.log(`User ID set: ${submittedUserId}, Session ID: ${sessionId}`);
+
+    // Fetch user's experimental condition
+    requestAPI<any>('get_condition', {
+      body: JSON.stringify({ userId: submittedUserId }),
+      method: 'POST'
+    })
+      .then(response => {
+        setUserCondition(response.condition);
+        console.log(`User assigned to condition: ${response.condition}`);
+      })
+      .catch(err => {
+        console.error('Failed to get user condition:', err);
+        // Default to full_coggen if error
+        setUserCondition('full_coggen');
+      });
   };
 
   return (
