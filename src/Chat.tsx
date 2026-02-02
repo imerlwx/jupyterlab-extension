@@ -26,7 +26,7 @@ import {
   KernelError
 } from '@jupyterlab/notebook';
 import YouTube, { YouTubeEvent } from 'react-youtube';
-import { Button, Box, Typography } from '@mui/material';
+import { Button, Box, Typography, Chip, Switch, FormGroup } from '@mui/material';
 import { ISignal, Signal } from '@lumino/signaling';
 import { Cell, CodeCell, ICellModel } from '@jupyterlab/cells';
 import Radio from '@mui/material/Radio';
@@ -104,6 +104,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
   const [sessionId] = useState<string>(() => `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`);
   const [showUserIDDialog, setShowUserIDDialog] = useState(true);
   const [userCondition, setUserCondition] = useState<string>('');
+  const [showTestingPanel, setShowTestingPanel] = useState<boolean>(false);
 
   const [player, setPlayer] = useState<any | null>(null);
   const [videoId, setVideoId] = useState('');
@@ -1010,6 +1011,29 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
       });
   };
 
+  // Handler for manually changing condition (testing only)
+  const handleConditionChange = (event: SelectChangeEvent<string>) => {
+    const newCondition = event.target.value;
+
+    // Update condition on backend
+    requestAPI<any>('set_condition', {
+      body: JSON.stringify({
+        userId: userId,
+        condition: newCondition
+      }),
+      method: 'POST'
+    })
+      .then(response => {
+        setUserCondition(newCondition);
+        console.log(`Condition manually set to: ${newCondition}`);
+        alert(`Condition changed to: ${newCondition}\n\nPlease reload the page or restart the session for full effect.`);
+      })
+      .catch(err => {
+        console.error('Failed to set condition:', err);
+        alert('Failed to change condition. Check console for details.');
+      });
+  };
+
   return (
     <div style={{ position: 'relative', height: '100%', width: '100%' }}>
       <UserIDDialog open={showUserIDDialog} onSubmit={handleUserIDSubmit} />
@@ -1018,6 +1042,82 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
           id="chatContainerId"
           style={{ height: '100%', width: '100%' }}
         >
+          {/* Condition Indicator and Testing Panel */}
+          {userCondition && (
+            <Box
+              sx={{
+                position: 'sticky',
+                top: 0,
+                zIndex: 1000,
+                backgroundColor: '#f5f5f5',
+                borderBottom: '1px solid #ddd',
+                padding: '8px 12px'
+              }}
+            >
+              {/* Condition Indicator */}
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: showTestingPanel ? 1 : 0 }}>
+                <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
+                  Condition:
+                </Typography>
+                <Chip
+                  label={userCondition.toUpperCase().replace('_', ' ')}
+                  color={
+                    userCondition === 'control' ? 'default' :
+                    userCondition === 'quiz' ? 'primary' :
+                    userCondition === 'fixed_cogapp' ? 'secondary' :
+                    'success'
+                  }
+                  size="small"
+                  sx={{ fontWeight: 'bold' }}
+                />
+                <Typography variant="caption" sx={{ color: '#666', ml: 'auto' }}>
+                  User: {userId}
+                </Typography>
+                <Button
+                  size="small"
+                  variant="text"
+                  onClick={() => setShowTestingPanel(!showTestingPanel)}
+                  sx={{ fontSize: '0.75rem' }}
+                >
+                  {showTestingPanel ? 'Hide' : 'Show'} Testing Panel
+                </Button>
+              </Box>
+
+              {/* Testing Panel (Collapsible) */}
+              {showTestingPanel && (
+                <Box
+                  sx={{
+                    backgroundColor: '#fff',
+                    border: '1px solid #ccc',
+                    borderRadius: '4px',
+                    padding: '12px',
+                    mt: 1
+                  }}
+                >
+                  <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 'bold', color: '#d32f2f' }}>
+                    🧪 Testing Controls (Development Only)
+                  </Typography>
+                  <FormControl fullWidth size="small">
+                    <InputLabel>Switch Condition</InputLabel>
+                    <Select
+                      value={userCondition}
+                      label="Switch Condition"
+                      onChange={handleConditionChange}
+                    >
+                      <MenuItem value="control">Control (No Guidance)</MenuItem>
+                      <MenuItem value="quiz">Quiz-Directed (Coming Soon)</MenuItem>
+                      <MenuItem value="fixed_cogapp">Fixed CogApp Order (Coming Soon)</MenuItem>
+                      <MenuItem value="full_coggen">Full CogGen (Current System)</MenuItem>
+                    </Select>
+                  </FormControl>
+                  <Typography variant="caption" sx={{ display: 'block', mt: 1, color: '#666' }}>
+                    ⚠️ After changing condition, reload the page or restart your session for full effect.
+                  </Typography>
+                </Box>
+              )}
+            </Box>
+          )}
+
           <MessageList
             scrollBehavior="auto"
             typingIndicator={
