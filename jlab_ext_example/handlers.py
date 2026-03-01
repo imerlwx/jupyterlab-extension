@@ -5,6 +5,7 @@ import ast
 import json
 import math
 import isodate
+import hashlib
 import datetime
 import requests
 import openai
@@ -201,6 +202,9 @@ class ChatHandler(APIHandler):
         user_id_req = data.get("userId", "unknown")
         session_id = data.get("sessionId", "unknown")
 
+        # Get user's experimental condition
+        user_condition = get_user_condition(user_id_req)
+
         # Log user question to Firebase
         if question:
             firebase_logger.log_chat_message(
@@ -213,6 +217,7 @@ class ChatHandler(APIHandler):
                 metadata={
                     "selected_choice": selected_choice,
                     "kernel_type": kernelType,
+                    "condition": user_condition,
                 },
             )
 
@@ -226,6 +231,66 @@ class ChatHandler(APIHandler):
         if chat_bot is None:
             init_bkt_params()
             initialize_chat_server(kernelType)
+
+        # ========== CONDITION 1: CONTROL (No Directed Learning) ==========
+        if user_condition == "control":
+            # For control condition: No teaching sequences, just plain Q&A with LLM
+            if notebook and question:
+                # Simple Q&A without pedagogical structure
+                context_info = f"The student is watching a data analysis video (segment {segment_index}). "
+                context_info += f"They are working in a {kernelType} notebook. "
+
+                # Get notebook context if available
+                if notebook:
+                    context_info += "Here is their current notebook:\n"
+                    for cell in notebook.get("cells", []):
+                        if cell.get("cell_type") == "code" and cell.get("source"):
+                            context_info += f"\nCode: {cell['source']}\n"
+
+                # Simple prompt for control condition
+                prompt = f"{context_info}\n\nStudent question: {question}\n\nProvide a helpful response to guide their learning."
+
+                # Get response from chatbot
+                results = chat_bot.ask({"input": prompt})
+                interaction = "plain-text"
+                need_response = True
+
+                # Log AI response
+                firebase_logger.log_chat_message(
+                    user_id=user_id_req,
+                    session_id=session_id,
+                    message_type="ai_response",
+                    content=results,
+                    video_id=video_id,
+                    segment_index=segment_index,
+                    metadata={
+                        "interaction": interaction,
+                        "need_response": need_response,
+                        "condition": user_condition,
+                    },
+                )
+
+                response_data = {
+                    "message": results,
+                    "need_response": need_response,
+                    "interaction": interaction,
+                }
+                self.finish(json.dumps(response_data))
+                return
+            else:
+                # No question asked, just acknowledge
+                results = "I'm here to help! Feel free to ask any questions as you watch the video and work on your code."
+                interaction = "plain-text"
+                need_response = True
+
+                response_data = {
+                    "message": results,
+                    "need_response": need_response,
+                    "interaction": interaction,
+                }
+                self.finish(json.dumps(response_data))
+                return
+        # ========== END CONDITION 1 ==========
 
         if notebook:
             input_data = {}
@@ -382,6 +447,16 @@ class UpdateSeqHandler(APIHandler):
         video_id = data["videoId"]
         segment_index = data["segmentIndex"]
         learning_obj = data["category"]
+        user_id = data.get("userId", "unknown")
+
+        # Check user's condition
+        user_condition = get_user_condition(user_id)
+
+        # For control condition, don't generate teaching sequences
+        if user_condition == "control":
+            self.finish(json.dumps({"status": "skipped", "condition": "control"}))
+            return
+
         if all_code == {}:
             if video_id == "nx5yhXAQLxw":
                 with open("college_major_code.json", "r") as file:
@@ -849,6 +924,15 @@ def initialze_database():
             "INSERT INTO bkt_params_cache (user_id, skills_probMastery) VALUES (?, ?)",
             (user_id, prob_mastery_json),
         )
+
+    c.execute(
+        """
+    CREATE TABLE IF NOT EXISTS user_conditions (
+        user_id TEXT PRIMARY KEY,
+        condition TEXT NOT NULL,
+        assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );"""
+    )
 
     conn.commit()
     conn.close()
@@ -1801,6 +1885,126 @@ def get_code_with_blank_by_step(video_id, segment_index, code_json, knowledge):
     return combined_code, combined_code_with_blank
 
 
+def get_user_condition(user_id):
+    """
+    Get or assign a condition for a user.
+    Uses deterministic hash-based assignment for automatic balancing.
+
+    Conditions:
+    - "control": No directed learning, just video + chat
+    - "quiz": Quiz-directed learning
+    - "fixed_cogapp": CogApp with fixed order (no student model)
+    - "full_coggen": Full system with adaptivity (default/current)
+
+    Returns: condition string
+    """
+    initialze_database()
+    conn = sqlite3.connect("cache.db")
+    c = conn.cursor()
+
+    # Check if user already has a condition assigned
+    c.execute("SELECT condition FROM user_conditions WHERE user_id = ?", (user_id,))
+    row = c.fetchone()
+
+    if row:
+        condition = row[0]
+        conn.close()
+        return condition
+
+    # Assign new condition based on hash of user_id for balancing
+    # This ensures deterministic assignment and automatic balancing
+    conditions = ["control", "quiz", "fixed_cogapp", "full_coggen"]
+    # Special prefix handling for test users (deterministic by prefix)
+    test_prefixes = {
+        "test_control": "control",
+        "test_quiz": "quiz",
+        "test_fixed": "fixed_cogapp",
+        "test_full": "full_coggen",
+    }
+    condition = None
+    for prefix, cond in test_prefixes.items():
+        if user_id.startswith(prefix):
+            condition = cond
+            break
+
+    if condition is None:
+        # Use hashlib.md5 for deterministic hashing across Python restarts
+        # (Python's built-in hash() is randomized per process since Python 3.3)
+        hash_val = int(hashlib.md5(user_id.encode()).hexdigest(), 16)
+        condition = conditions[hash_val % len(conditions)]
+
+    # Store in database
+    c.execute(
+        "INSERT INTO user_conditions (user_id, condition) VALUES (?, ?)",
+        (user_id, condition),
+    )
+    conn.commit()
+    conn.close()
+
+    print(f"Assigned condition '{condition}' to user '{user_id}'")
+    return condition
+
+
+class GetConditionHandler(APIHandler):
+    """Handler to get a user's assigned condition"""
+
+    @tornado.web.authenticated
+    def post(self):
+        data = self.get_json_body()
+        user_id = data.get("userId", "unknown")
+
+        condition = get_user_condition(user_id)
+
+        self.finish(json.dumps({"userId": user_id, "condition": condition}))
+
+
+class SetConditionHandler(APIHandler):
+    """Handler to manually set a user's condition (for testing or manual assignment)"""
+
+    @tornado.web.authenticated
+    def post(self):
+        data = self.get_json_body()
+        user_id = data.get("userId", "unknown")
+        condition = data.get("condition", "full_coggen")
+
+        # Validate condition
+        valid_conditions = ["control", "quiz", "fixed_cogapp", "full_coggen"]
+        if condition not in valid_conditions:
+            self.set_status(400)
+            self.finish(
+                json.dumps(
+                    {"error": f"Invalid condition. Must be one of: {valid_conditions}"}
+                )
+            )
+            return
+
+        conn = sqlite3.connect("cache.db")
+        c = conn.cursor()
+
+        # Insert or update condition
+        c.execute(
+            """
+            INSERT INTO user_conditions (user_id, condition)
+            VALUES (?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET condition = ?
+        """,
+            (user_id, condition, condition),
+        )
+
+        conn.commit()
+        conn.close()
+
+        self.finish(
+            json.dumps(
+                {
+                    "userId": user_id,
+                    "condition": condition,
+                    "message": "Condition set successfully",
+                }
+            )
+        )
+
+
 class LogSessionStartHandler(APIHandler):
     """Handler for logging session start to Firebase"""
 
@@ -1811,12 +2015,16 @@ class LogSessionStartHandler(APIHandler):
         session_id = data.get("sessionId", "unknown")
         video_id = data.get("videoId", None)
 
+        # Get user's condition and log it
+        condition = get_user_condition(user_id)
+
         # Log session start to Firebase
         firebase_logger.log_session_start(
             user_id=user_id,
             session_id=session_id,
             user_metadata={
                 "video_id": video_id,
+                "condition": condition,
                 "start_timestamp": firebase_logger.get_timestamp(),
             },
         )
@@ -1914,4 +2122,14 @@ def setup_handlers(web_app):
     # Add route for logging code execution to Firebase
     log_code_pattern = url_path_join(base_url, "jlab_ext_example", "log_code_execution")
     handlers = [(log_code_pattern, LogCodeExecutionHandler)]
+    web_app.add_handlers(host_pattern, handlers)
+
+    # Add route for getting user's experimental condition
+    get_condition_pattern = url_path_join(base_url, "jlab_ext_example", "get_condition")
+    handlers = [(get_condition_pattern, GetConditionHandler)]
+    web_app.add_handlers(host_pattern, handlers)
+
+    # Add route for manually setting user's condition (for testing)
+    set_condition_pattern = url_path_join(base_url, "jlab_ext_example", "set_condition")
+    handlers = [(set_condition_pattern, SetConditionHandler)]
     web_app.add_handlers(host_pattern, handlers)

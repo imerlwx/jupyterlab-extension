@@ -116,12 +116,12 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     () => `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
   );
   const [showUserIDDialog, setShowUserIDDialog] = useState(true);
+  const [userCondition, setUserCondition] = useState<string>('');
   const [segments, setSegments] = useState<ISegment[]>([]);
   const [messages, setMessages] = useState<IMessage[]>([
     {
       id: `msg-${Date.now()}`,
-      message:
-        "Welcome to today's Tidy Tuesday project! Please select a video you want to watch by entering its video ID (e.g., nx5yhXAQLxw):",
+      message: "Welcome to today's Tidy Tuesday project!",
       videoId: null,
       sentTime: '0 second',
       direction: 'incoming',
@@ -1115,9 +1115,25 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     setUserId(submittedUserId);
     setVideoId(selectedVideoId);
     setShowUserIDDialog(false);
+    console.log(`User ID set: ${submittedUserId}, Session ID: ${sessionId}`);
+
+    // Fetch user's experimental condition
+    requestAPI<any>('get_condition', {
+      body: JSON.stringify({ userId: submittedUserId }),
+      method: 'POST'
+    })
+      .then(response => {
+        setUserCondition(response.condition);
+        console.log(`User assigned to condition: ${response.condition}`);
+      })
+      .catch(err => {
+        console.error('Failed to get user condition:', err);
+        // Default to full_coggen if error
+        setUserCondition('full_coggen');
+      });
     initializeChat(selectedVideoId, submittedUserId);
     console.log(
-      `User ID set: ${submittedUserId}, Video ID: ${selectedVideoId}, Session ID: ${sessionId}`
+      `User ID set: ${submittedUserId}, Video ID: ${selectedVideoId}, Condition: ${userCondition}, Session ID: ${sessionId}`
     );
   };
 
