@@ -4,6 +4,7 @@ import re
 import ast
 import json
 import math
+import hashlib
 import isodate
 import datetime
 import requests
@@ -1694,12 +1695,27 @@ def get_user_condition(user_id):
         conn.close()
         return condition
 
-    # Assign new condition based on hash of user_id for balancing
-    # This ensures deterministic assignment and automatic balancing
+    # Assign new condition based on user_id
     conditions = ["control", "quiz", "fixed_cogapp", "full_coggen"]
-    hash_val = hash(user_id)
-    condition_index = hash_val % len(conditions)
-    condition = conditions[condition_index]
+
+    # Special prefix handling for test users (deterministic by prefix)
+    test_prefixes = {
+        "test_control": "control",
+        "test_quiz": "quiz",
+        "test_fixed": "fixed_cogapp",
+        "test_full": "full_coggen"
+    }
+    condition = None
+    for prefix, cond in test_prefixes.items():
+        if user_id.startswith(prefix):
+            condition = cond
+            break
+
+    if condition is None:
+        # Use hashlib.md5 for deterministic hashing across Python restarts
+        # (Python's built-in hash() is randomized per process since Python 3.3)
+        hash_val = int(hashlib.md5(user_id.encode()).hexdigest(), 16)
+        condition = conditions[hash_val % len(conditions)]
 
     # Store in database
     c.execute(

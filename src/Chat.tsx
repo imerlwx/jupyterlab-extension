@@ -113,7 +113,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     {
       id: `msg-${Date.now()}`,
       message:
-        "Welcome to today's Tidy Tuesday project! Please select a video you want to watch by entering its video ID (e.g., nx5yhXAQLxw):",
+        "Welcome to today's Tidy Tuesday project! Loading your video, please wait...",
       videoId: null,
       sentTime: '0 second',
       direction: 'incoming',
@@ -989,11 +989,65 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     }
   }
 
-  // Handler for when user submits their ID
-  const handleUserIDSubmit = (submittedUserId: string) => {
+  // Handler for when user submits their ID and selects a video
+  const handleUserIDSubmit = (submittedUserId: string, selectedVideoId: string) => {
     setUserId(submittedUserId);
+    setVideoId(selectedVideoId);
+    props.onVideoIdChange({ videoId: selectedVideoId });
     setShowUserIDDialog(false);
-    console.log(`User ID set: ${submittedUserId}, Session ID: ${sessionId}`);
+    console.log(`User ID set: ${submittedUserId}, Video: ${selectedVideoId}, Session ID: ${sessionId}`);
+
+    const kernel = props.getCurrentNotebookKernel();
+    setKernelType(kernel.name);
+    setIsTyping(true);
+    setCanGoOn(true);
+
+    // Log session start to backend (which will log to Firebase)
+    requestAPI<any>('log_session_start', {
+      body: JSON.stringify({
+        userId: submittedUserId,
+        sessionId: sessionId,
+        videoId: selectedVideoId
+      }),
+      method: 'POST'
+    }).catch(err => {
+      console.error('Failed to log session start:', err);
+    });
+
+    // Fetch video segments
+    requestAPI<any>('segments', {
+      body: JSON.stringify({
+        videoId: selectedVideoId,
+        userId: submittedUserId,
+        sessionId: sessionId
+      }),
+      method: 'POST'
+    })
+      .then(response => {
+        setSegments(response);
+        setMessages(prevMessages => [
+          ...prevMessages,
+          {
+            id: `msg-${Date.now()}`,
+            message:
+              "The video is segmented into several video clips. While you can navigate through the parts you like, I recommend following the video progress to learn and imitate his Exploratory Data Analysis process and do the task on your own.\n\nWhile watching the video, keep asking yourself these three questions: what is he doing, why is he doing it, and how will success in what he is doing help him find a solution to the problem? Now let's get started!",
+            sentTime: 'just now',
+            direction: 'incoming',
+            sender: 'Tutorly',
+            videoId: selectedVideoId,
+            start: response[0].start,
+            end: response[0].end,
+            category: response[0].category,
+            interaction: 'plain text',
+            code: null
+          }
+        ]);
+        setIsTyping(false);
+      })
+      .catch(reason => {
+        console.error(`Error fetching segments: ${reason}`);
+        setIsTyping(false);
+      });
 
     // Fetch user's experimental condition
     requestAPI<any>('get_condition', {
@@ -1035,89 +1089,88 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
   };
 
   return (
-    <div style={{ position: 'relative', height: '100%', width: '100%' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', width: '100%' }}>
       <UserIDDialog open={showUserIDDialog} onSubmit={handleUserIDSubmit} />
-      <MainContainer style={{ height: '100%', width: '100%' }}>
+
+      {/* Condition Indicator and Testing Panel */}
+      {userCondition && (
+        <Box
+          sx={{
+            flexShrink: 0,
+            backgroundColor: '#f5f5f5',
+            borderBottom: '1px solid #ddd',
+            padding: '8px 12px'
+          }}
+        >
+          {/* Condition Indicator */}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: showTestingPanel ? 1 : 0 }}>
+            <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
+              Condition:
+            </Typography>
+            <Chip
+              label={userCondition.toUpperCase().replace('_', ' ')}
+              color={
+                userCondition === 'control' ? 'default' :
+                userCondition === 'quiz' ? 'primary' :
+                userCondition === 'fixed_cogapp' ? 'secondary' :
+                'success'
+              }
+              size="small"
+              sx={{ fontWeight: 'bold' }}
+            />
+            <Typography variant="caption" sx={{ color: '#666', ml: 'auto' }}>
+              User: {userId}
+            </Typography>
+            <Button
+              size="small"
+              variant="text"
+              onClick={() => setShowTestingPanel(!showTestingPanel)}
+              sx={{ fontSize: '0.75rem' }}
+            >
+              {showTestingPanel ? 'Hide' : 'Show'} Testing Panel
+            </Button>
+          </Box>
+
+          {/* Testing Panel (Collapsible) */}
+          {showTestingPanel && (
+            <Box
+              sx={{
+                backgroundColor: '#fff',
+                border: '1px solid #ccc',
+                borderRadius: '4px',
+                padding: '12px',
+                mt: 1
+              }}
+            >
+              <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 'bold', color: '#d32f2f' }}>
+                🧪 Testing Controls (Development Only)
+              </Typography>
+              <FormControl fullWidth size="small">
+                <InputLabel>Switch Condition</InputLabel>
+                <Select
+                  value={userCondition}
+                  label="Switch Condition"
+                  onChange={handleConditionChange}
+                >
+                  <MenuItem value="control">Control (No Guidance)</MenuItem>
+                  <MenuItem value="quiz">Quiz-Directed (Coming Soon)</MenuItem>
+                  <MenuItem value="fixed_cogapp">Fixed CogApp Order (Coming Soon)</MenuItem>
+                  <MenuItem value="full_coggen">Full CogGen (Current System)</MenuItem>
+                </Select>
+              </FormControl>
+              <Typography variant="caption" sx={{ display: 'block', mt: 1, color: '#666' }}>
+                ⚠️ After changing condition, reload the page or restart your session for full effect.
+              </Typography>
+            </Box>
+          )}
+        </Box>
+      )}
+
+      <MainContainer style={{ flex: 1, minHeight: 0, width: '100%' }}>
         <ChatContainer
           id="chatContainerId"
           style={{ height: '100%', width: '100%' }}
         >
-          {/* Condition Indicator and Testing Panel */}
-          {userCondition && (
-            <Box
-              sx={{
-                position: 'sticky',
-                top: 0,
-                zIndex: 1000,
-                backgroundColor: '#f5f5f5',
-                borderBottom: '1px solid #ddd',
-                padding: '8px 12px'
-              }}
-            >
-              {/* Condition Indicator */}
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: showTestingPanel ? 1 : 0 }}>
-                <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
-                  Condition:
-                </Typography>
-                <Chip
-                  label={userCondition.toUpperCase().replace('_', ' ')}
-                  color={
-                    userCondition === 'control' ? 'default' :
-                    userCondition === 'quiz' ? 'primary' :
-                    userCondition === 'fixed_cogapp' ? 'secondary' :
-                    'success'
-                  }
-                  size="small"
-                  sx={{ fontWeight: 'bold' }}
-                />
-                <Typography variant="caption" sx={{ color: '#666', ml: 'auto' }}>
-                  User: {userId}
-                </Typography>
-                <Button
-                  size="small"
-                  variant="text"
-                  onClick={() => setShowTestingPanel(!showTestingPanel)}
-                  sx={{ fontSize: '0.75rem' }}
-                >
-                  {showTestingPanel ? 'Hide' : 'Show'} Testing Panel
-                </Button>
-              </Box>
-
-              {/* Testing Panel (Collapsible) */}
-              {showTestingPanel && (
-                <Box
-                  sx={{
-                    backgroundColor: '#fff',
-                    border: '1px solid #ccc',
-                    borderRadius: '4px',
-                    padding: '12px',
-                    mt: 1
-                  }}
-                >
-                  <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 'bold', color: '#d32f2f' }}>
-                    🧪 Testing Controls (Development Only)
-                  </Typography>
-                  <FormControl fullWidth size="small">
-                    <InputLabel>Switch Condition</InputLabel>
-                    <Select
-                      value={userCondition}
-                      label="Switch Condition"
-                      onChange={handleConditionChange}
-                    >
-                      <MenuItem value="control">Control (No Guidance)</MenuItem>
-                      <MenuItem value="quiz">Quiz-Directed (Coming Soon)</MenuItem>
-                      <MenuItem value="fixed_cogapp">Fixed CogApp Order (Coming Soon)</MenuItem>
-                      <MenuItem value="full_coggen">Full CogGen (Current System)</MenuItem>
-                    </Select>
-                  </FormControl>
-                  <Typography variant="caption" sx={{ display: 'block', mt: 1, color: '#666' }}>
-                    ⚠️ After changing condition, reload the page or restart your session for full effect.
-                  </Typography>
-                </Box>
-              )}
-            </Box>
-          )}
-
           <MessageList
             scrollBehavior="auto"
             typingIndicator={
