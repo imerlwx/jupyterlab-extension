@@ -8,10 +8,11 @@ This document describes the four experimental conditions implemented in the Jupy
 
 ### Condition Assignment
 Users are automatically assigned to conditions using **deterministic hash-based assignment**:
-- User ID is hashed
-- Hash modulo 4 determines condition
+- User ID is hashed using `hashlib.md5` (deterministic across restarts)
+- Hash modulo 4 determines condition (0=control, 1=quiz, 2=fixed_cogapp, 3=full_coggen)
 - Same user ID always gets same condition
 - Automatic balancing across conditions
+- **Test user override:** IDs starting with `test_control`, `test_quiz`, `test_fixed`, or `test_full` automatically get respective conditions
 
 ### Four Conditions:
 
@@ -139,20 +140,104 @@ curl -X POST http://localhost:8888/jlab_ext_example/get_condition \
 
 ---
 
-## 🔲 Condition 2: Quiz-Directed Learning (TO BE IMPLEMENTED)
+## ✅ Condition 2: Quiz-Directed Learning (IMPLEMENTED)
 
-### Planned Description
-- Chatbot provides quiz questions after each video segment
-- Uses same LLM but structured as Q&A
-- No full CogApp framework
-- Tests whether one well-implemented move is sufficient
+### Description
+- Watch videos and see segments
+- After each segment, system presents a quiz question
+- Uses **Coaching** action from Cognitive Apprenticeship framework
+- Multiple-choice questions only
+- **NO BKT student model** - questions are not adaptive
+- **NO other teaching methods** (Scaffolding, Articulation, etc.)
+- Tests whether quiz-based learning is sufficient vs full framework
 
-### Implementation Plan
-1. Modify ChatHandler to detect `condition == "quiz"`
-2. After each segment, generate multiple-choice quiz
-3. Check answer correctness
-4. Provide feedback
-5. No other teaching methods
+### Implementation Details
+
+#### Backend (`handlers.py`):
+
+**1. ChatHandler - Quiz Condition Branch:**
+- Checks `user_condition = get_user_condition(user_id)`
+- If `user_condition == "quiz"`:
+  - When `question == ""` (after video segment ends):
+    - Loads segment information and knowledge
+    - Uses `concept_action["Coaching"]` template
+    - Generates multiple-choice quiz using LLM
+    - Returns quiz as `interaction: "multiple-choice"`
+  - When user answers quiz (`selected_choice != ""`):
+    - Logs answer to Firebase
+    - Provides simple feedback
+    - Allows user to proceed to next segment
+  - When user asks a question:
+    - Provides simple Q&A (similar to control)
+
+**2. UpdateSeqHandler:**
+- Checks user's condition
+- If `quiz`: skips teaching sequence generation
+- Returns immediately with `{"status": "skipped", "condition": "quiz"}`
+
+**3. UpdateBKTHandler:**
+- Checks user's condition
+- If `quiz`: skips BKT parameter updates
+- Returns immediately with `{"status": "skipped", "condition": "quiz"}`
+
+#### Quiz Generation Process:
+
+1. Extract knowledge from current segment using `get_knowledge()`
+2. Use Coaching template: `"Propose a multiple-choice question for the student to understand the {knowledge}"`
+3. Generate question using LLM with JSON structure:
+   ```json
+   {
+     "question": "What is the main purpose of...?",
+     "choices": ["Option A", "Option B", "Option C", "Option D"],
+     "correct answer": "Option A"
+   }
+   ```
+4. Present to user as multiple-choice interaction
+5. Log answer when submitted
+
+### User Experience (Condition 2)
+
+1. **User enters ID** → System assigns "quiz" condition
+2. **User selects video** → Video plays with segments
+3. **User watches segment** → Segment ends
+4. **System presents quiz** → Multiple-choice question about segment concepts
+5. **User selects answer** → System logs answer and provides feedback
+6. **User clicks "Go on"** → Next segment starts
+7. **Repeat** for all segments
+
+### What's Logged (Firebase)
+
+All interactions logged with `condition: "quiz"`:
+- Quiz questions (type: `quiz_question`)
+- Quiz answers (type: `quiz_answer`)
+- Code executions
+- Session data
+- Video segments viewed
+- Optional chat messages if user asks questions
+
+### Testing Condition 2
+
+**Test User IDs (Prefix-based Assignment):**
+```bash
+# Users with IDs starting with "test_quiz" automatically get quiz condition
+test_quiz_001
+test_quiz_002
+test_quiz_participant_1
+```
+
+**Manual Assignment (for testing):**
+```bash
+curl -X POST http://localhost:8888/jlab_ext_example/set_condition \
+  -H "Content-Type: application/json" \
+  -d '{"userId": "my_test_user", "condition": "quiz"}'
+```
+
+**Expected Behavior:**
+- Video segments play normally
+- After each segment, a quiz question appears
+- User must select an answer before proceeding
+- No fill-in-blanks, no code scaffolding
+- Just quiz questions after each segment
 
 ---
 
@@ -196,11 +281,11 @@ curl -X POST http://localhost:8888/jlab_ext_example/get_condition \
 | Feature | Control | Quiz | Fixed CogApp | Full CogGen |
 |---------|---------|------|--------------|-------------|
 | **Video watching** | ✅ | ✅ | ✅ | ✅ |
-| **Chat available** | ✅ (simple Q&A) | ✅ (quiz only) | ✅ (structured) | ✅ (adaptive) |
-| **Teaching methods** | ❌ None | ❌ None | ✅ All 6 (fixed) | ✅ All 6 (adaptive) |
+| **Chat available** | ✅ (simple Q&A) | ✅ (limited Q&A) | ✅ (structured) | ✅ (adaptive) |
+| **Teaching methods** | ❌ None | ✅ Coaching only | ✅ All 6 (fixed) | ✅ All 6 (adaptive) |
 | **Student model (BKT)** | ❌ | ❌ | ❌ | ✅ |
 | **Fill-in-blanks** | ❌ | ❌ | ✅ | ✅ |
-| **Multiple-choice** | ❌ | ✅ | ✅ | ✅ |
+| **Multiple-choice** | ❌ | ✅ (quiz only) | ✅ | ✅ |
 | **Adaptive sequencing** | ❌ | ❌ | ❌ | ✅ |
 | **Code execution logging** | ✅ | ✅ | ✅ | ✅ |
 
@@ -244,12 +329,29 @@ prolific_004     | full_coggen    | 2025-10-22 14:33:45
 
 ### Automatic Assignment (Default)
 ```python
+import hashlib
+
 def get_user_condition(user_id):
     conditions = ["control", "quiz", "fixed_cogapp", "full_coggen"]
-    hash_val = hash(user_id)
+
+    # Special prefix handling for test users
+    test_prefixes = {
+        "test_control": "control",
+        "test_quiz": "quiz",
+        "test_fixed": "fixed_cogapp",
+        "test_full": "full_coggen"
+    }
+    for prefix, cond in test_prefixes.items():
+        if user_id.startswith(prefix):
+            return cond
+
+    # Deterministic hash using hashlib (not Python's built-in hash())
+    hash_val = int(hashlib.md5(user_id.encode()).hexdigest(), 16)
     condition_index = hash_val % 4
     return conditions[condition_index]
 ```
+
+**Note:** Uses `hashlib.md5` for deterministic hashing across Python restarts (Python's built-in `hash()` is randomized per process since Python 3.3).
 
 ### Manual Assignment (Testing/Override)
 ```python
@@ -291,7 +393,7 @@ requestAPI('get_condition', { body: JSON.stringify({ userId }) })
 ## 🚀 Next Steps
 
 1. ✅ **Condition 1 (Control)** - COMPLETE
-2. ⏳ **Condition 2 (Quiz)** - TO IMPLEMENT
+2. ✅ **Condition 2 (Quiz)** - COMPLETE
 3. ⏳ **Condition 3 (Fixed CogApp)** - TO IMPLEMENT
 4. ✅ **Condition 4 (Full CogGen)** - ALREADY EXISTS
 5. ⏳ **Testing Framework** - Create test users for each condition
