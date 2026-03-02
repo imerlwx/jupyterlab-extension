@@ -1153,7 +1153,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                   onChange={handleConditionChange}
                 >
                   <MenuItem value="control">Control (No Guidance)</MenuItem>
-                  <MenuItem value="quiz">Quiz-Directed (Coming Soon)</MenuItem>
+                  <MenuItem value="quiz">Quiz-Directed (Coaching + Reflection)</MenuItem>
                   <MenuItem value="fixed_cogapp">Fixed CogApp Order (Coming Soon)</MenuItem>
                   <MenuItem value="full_coggen">Full CogGen (Current System)</MenuItem>
                 </Select>

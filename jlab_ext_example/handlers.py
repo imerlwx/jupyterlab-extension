@@ -287,156 +287,6 @@ class ChatHandler(APIHandler):
                 return
         # ========== END CONDITION 1 ==========
 
-        # ========== CONDITION 2: QUIZ (Quiz-Directed Learning) ==========
-        if user_condition == "quiz":
-            # For quiz condition: Present a quiz question after each segment
-            # No teaching sequences, no BKT updates, just quiz questions
-
-            if question == "":
-                # After segment, present a quiz question
-                # Load code and knowledge for the current segment
-                if all_code == {}:
-                    if video_id == "nx5yhXAQLxw":
-                        with open("college_major_code.json", "r") as file:
-                            all_code = json.load(file)
-                    elif video_id == "Kd9BNI6QMmQ":
-                        with open("video_game_code.json", "r") as file:
-                            all_code = json.load(file)
-                    elif video_id == "8jazNUpO3lQ":
-                        with open("ml_code.json", "r") as file:
-                            all_code = json.load(file)
-
-                # Get segment information
-                segment_data = c.execute(
-                    "SELECT category FROM segments_cache WHERE video_id = ? AND segment_index = ?",
-                    (video_id, segment_index)
-                ).fetchone()
-
-                if segment_data:
-                    learning_obj = segment_data[0]
-                    code_block = all_code.get(str(segment_index), "")
-
-                    # Get knowledge for this segment
-                    knowledge = get_knowledge(
-                        video_id, video_type, learning_obj, segment_index, code_block
-                    )
-
-                    # Pick the first knowledge item for the quiz
-                    if isinstance(knowledge, list) and len(knowledge) > 0:
-                        quiz_knowledge = knowledge[0]
-                    else:
-                        quiz_knowledge = "the concepts covered in this segment"
-
-                    # Use Coaching action from concept_action to generate quiz
-                    coaching_template = concept_action["Coaching"][0]
-                    quiz_prompt = coaching_template["prompt"].replace("{knowledge}", quiz_knowledge)
-
-                    # Generate multiple-choice question using LLM
-                    input_data = {
-                        "pedagogy": f"Use the following structure to respond: {quiz_prompt} Please respond with the following json structure without the ```json``` title: " + '{"question": "question", "choices": ["choice", "choice", "choice", "choice"], "correct answer": "choice"}'
-                    }
-
-                    results = chat_bot.ask({"input": str(input_data)})
-                    interaction = "multiple-choice"
-                    need_response = True
-
-                    # Store correct answer for later verification (optional)
-                    try:
-                        quiz_data = json.loads(results)
-                        correct_answer_buffer = quiz_data.get("correct answer", "")
-                    except:
-                        pass
-
-                    # Log AI response
-                    firebase_logger.log_chat_message(
-                        user_id=user_id_req,
-                        session_id=session_id,
-                        message_type='quiz_question',
-                        content=results,
-                        video_id=video_id,
-                        segment_index=segment_index,
-                        metadata={
-                            'interaction': interaction,
-                            'knowledge': quiz_knowledge,
-                            'condition': user_condition
-                        }
-                    )
-
-                    response_data = {
-                        "message": results,
-                        "need_response": need_response,
-                        "interaction": interaction,
-                    }
-                    self.finish(json.dumps(response_data))
-                    return
-                else:
-                    # No segment data found, just acknowledge
-                    results = "Great! Click 'Go on' when you're ready for the next segment."
-                    interaction = "plain-text"
-                    need_response = True
-
-                    response_data = {
-                        "message": results,
-                        "need_response": need_response,
-                        "interaction": interaction,
-                    }
-                    self.finish(json.dumps(response_data))
-                    return
-
-            elif question != "":
-                # Student asked a question or answered quiz
-                if selected_choice != "":
-                    # Student answered the quiz
-                    # Log the answer
-                    firebase_logger.log_chat_message(
-                        user_id=user_id_req,
-                        session_id=session_id,
-                        message_type='quiz_answer',
-                        content=selected_choice,
-                        video_id=video_id,
-                        segment_index=segment_index,
-                        metadata={
-                            'condition': user_condition
-                        }
-                    )
-
-                    # Provide simple feedback
-                    results = "Thank you for your answer! Click 'Go on' when you're ready for the next segment."
-                    interaction = "plain-text"
-                    need_response = True
-                else:
-                    # Student asked a question
-                    input_data = {
-                        "student's question": question,
-                        "pedagogy": "Use less than three sentences briefly answer student's query.",
-                    }
-                    results = chat_bot.ask({"input": str(input_data)})
-                    interaction = "plain-text"
-                    need_response = True
-
-                    # Log AI response
-                    firebase_logger.log_chat_message(
-                        user_id=user_id_req,
-                        session_id=session_id,
-                        message_type='ai_response',
-                        content=results,
-                        video_id=video_id,
-                        segment_index=segment_index,
-                        metadata={
-                            'interaction': interaction,
-                            'condition': user_condition
-                        }
-                    )
-
-                response_data = {
-                    "message": results,
-                    "need_response": need_response,
-                    "interaction": interaction,
-                }
-                self.finish(json.dumps(response_data))
-                return
-        # ========== END CONDITION 2 ==========
-
         if notebook:
             input_data = {}
             # Default to None to handle cases where it might not get set
@@ -461,8 +311,8 @@ class ChatHandler(APIHandler):
                 interaction = move_detail["interaction"]
 
                 if selected_choice != "":
-                    # If the student selects a choice, the response is the choice
-                    input_data["student's choice"] = selected_choice
+                    # If the student selects a choice, add it as student-answer to match template parameter
+                    input_data["student-answer"] = selected_choice
 
                 # Handle interaction logic
                 if interaction == "show-code":
@@ -603,13 +453,11 @@ class UpdateSeqHandler(APIHandler):
         # Check user's condition
         user_condition = get_user_condition(user_id)
 
-        # For control and quiz conditions, don't generate teaching sequences
+        # For control condition, don't generate teaching sequences
         if user_condition == "control":
             self.finish(json.dumps({"status": "skipped", "condition": "control"}))
             return
-        elif user_condition == "quiz":
-            self.finish(json.dumps({"status": "skipped", "condition": "quiz"}))
-            return
+
         if all_code == {}:
             if video_id == "nx5yhXAQLxw":
                 with open("college_major_code.json", "r") as file:
@@ -661,15 +509,50 @@ class UpdateSeqHandler(APIHandler):
             knowledge = get_knowledge(
                 video_id, video_type, learning_obj, segment_index, code_block
             )
-            mastery_level = get_mastery_level_by_segment(knowledge, bkt_params)
-            methods = get_methods(
-                video_type, learning_obj, knowledge, mastery_level, code_block
-            )
-            if code_block == "":
-                action_set = concept_action
+
+            # For quiz condition: use fixed Coaching + Reflection sequence
+            if user_condition == "quiz":
+                # Pick first knowledge item for quiz
+                if isinstance(knowledge, list) and len(knowledge) > 0:
+                    quiz_knowledge = knowledge[0]
+                else:
+                    quiz_knowledge = "the concepts covered in this segment"
+
+                # Fixed DSL: Coaching (quiz question) + Reflection (feedback)
+                sections = [
+                    {
+                        "knowledge": quiz_knowledge,
+                        "actions": [
+                            {
+                                "method": "Coaching",
+                                "action": "Use {interaction} for the student to answer to learn the knowledge",
+                                "interaction": "multiple-choice",
+                                "prompt": "Propose a multiple-choice question for the student to answer to learn the {knowledge}, such as what pattern do they find in the chart, what could be the potential reason behind the pattern, etc. Please respond with the following json structure without the ```json``` title: {\"question\": \"question\", \"choices\": [\"choice\", \"choice\", \"choice\", \"choice\"], \"correct answer\": \"choice\"}",
+                                "parameters": ["knowledge"],
+                                "need-response": True,
+                            },
+                            {
+                                "method": "Reflection",
+                                "action": "Use {interaction} to give feedback on the student's answer",
+                                "interaction": "plain-text",
+                                "prompt": "[Use one sentence to give feedback on the {student-answer}][Use one sentence to tell the student if any additional steps could confirm their choice][Ask the student to remember the choice and see if it makes sense as they watch the rest of the video]",
+                                "parameters": ["student-answer"],
+                                "need-response": True,
+                            }
+                        ],
+                    }
+                ]
             else:
-                action_set = prog_action
-            sections = get_dsl(methods, action_set)
+                # For full_coggen and fixed_cogapp: use normal adaptive sequence
+                mastery_level = get_mastery_level_by_segment(knowledge, bkt_params)
+                methods = get_methods(
+                    video_type, learning_obj, knowledge, mastery_level, code_block
+                )
+                if code_block == "":
+                    action_set = concept_action
+                else:
+                    action_set = prog_action
+                sections = get_dsl(methods, action_set)
         CUR_SEQ = [
             dict(knowledge=section["knowledge"], **action)
             for section in sections
