@@ -542,6 +542,65 @@ class UpdateSeqHandler(APIHandler):
                         ],
                     }
                 ]
+            # For fixed_cogapp condition: use fixed method progression based on segment index
+            elif user_condition == "fixed_cogapp":
+                # Pick first knowledge item
+                if isinstance(knowledge, list) and len(knowledge) > 0:
+                    fixed_knowledge = knowledge[0]
+                else:
+                    fixed_knowledge = "the concepts covered in this segment"
+
+                # Determine teaching method based on segment index
+                # Segments 1-2: Modeling
+                # Segments 3-4: Scaffolding
+                # Segments 5-6: Coaching
+                # Segments 7-8: Articulation
+                # Segments 9-10: Reflection
+                # Segments 11+: Exploration (fallback to Articulation if not available)
+                if segment_index in [1, 2]:
+                    method = "Modeling"
+                elif segment_index in [3, 4]:
+                    method = "Scaffolding"
+                elif segment_index in [5, 6]:
+                    method = "Coaching"
+                elif segment_index in [7, 8]:
+                    method = "Articulation"
+                elif segment_index in [9, 10]:
+                    method = "Reflection"
+                elif segment_index >= 11:
+                    method = "Exploration"  # Note: Exploration not yet in action sets, will fallback
+                else:
+                    method = "Modeling"  # Default for segment 0 or others
+
+                # Determine action set based on code presence
+                # "Preprocess and Visualize the data" → prog_action (has code)
+                # "Interpret the chart" → concept_action (no code)
+                if code_block == "":
+                    action_set = concept_action
+                else:
+                    action_set = prog_action
+
+                # Get actions for this method
+                if method in action_set:
+                    actions = action_set[method]
+                else:
+                    # Fallback: if method not in action_set, use Articulation or first available
+                    if "Articulation" in action_set:
+                        actions = action_set["Articulation"]
+                        print(f"Warning: {method} not in action_set, falling back to Articulation")
+                    else:
+                        # Use first available method as last resort
+                        fallback_method = list(action_set.keys())[0]
+                        actions = action_set[fallback_method]
+                        print(f"Warning: {method} not in action_set, falling back to {fallback_method}")
+
+                # Create fixed DSL with single method
+                sections = [
+                    {
+                        "knowledge": fixed_knowledge,
+                        "actions": actions
+                    }
+                ]
             else:
                 # For full_coggen and fixed_cogapp: use normal adaptive sequence
                 mastery_level = get_mastery_level_by_segment(knowledge, bkt_params)
@@ -588,9 +647,9 @@ class UpdateBKTHandler(APIHandler):
         user_id_req = data.get("userId", "unknown")
         session_id = data.get("sessionId", "unknown")
 
-        # Check user's condition - skip BKT for control and quiz conditions
+        # Check user's condition - skip BKT for control, quiz, and fixed_cogapp conditions
         user_condition = get_user_condition(user_id_req)
-        if user_condition in ["control", "quiz"]:
+        if user_condition in ["control", "quiz", "fixed_cogapp"]:
             self.finish(json.dumps({"status": "skipped", "condition": user_condition}))
             return
 
