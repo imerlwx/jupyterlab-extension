@@ -537,7 +537,7 @@ class UpdateSeqHandler(APIHandler):
                                 "interaction": "plain-text",
                                 "prompt": "[Use one sentence to give feedback on the {student-answer}][Use one sentence to tell the student if any additional steps could confirm their choice][Ask the student to remember the choice and see if it makes sense as they watch the rest of the video]",
                                 "parameters": ["student-answer"],
-                                "need-response": True,
+                                "need-response": False,
                             }
                         ],
                     }
