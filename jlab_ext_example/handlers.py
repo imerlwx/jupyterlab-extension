@@ -86,6 +86,15 @@ prog_action = {
             "interaction": "show-code",
             "prompt": "[Use one sentence to let the student compare his answer with the standard {code-block}][Use one sentence to encourage the student to execute the complete code block to verify his understanding]",
             "parameters": ["code-block"],
+            "need-response": False,
+        }
+    ],
+    "Exploration": [
+        {
+            "action": "Encourage the student to independently apply the {knowledge} to a novel task using {interaction}",
+            "interaction": "plain-text",
+            "prompt": "[Use one sentence to pose a related but new task that requires the student to adapt the {knowledge} to a different context, such as applying the same function to a different column or dataset][Encourage the student to try writing the code in the notebook on their own]",
+            "parameters": ["knowledge"],
             "need-response": True,
         }
     ],
@@ -126,6 +135,15 @@ concept_action = {
             "interaction": "plain-text",
             "prompt": "[Use one sentence to give feedback on the {student-answer}][Use one sentence to tell the student if any additional steps could confirm his choice][Ask the student to remember the choice and see if it makes sense as he watch the rest of the video]",
             "parameters": ["student-answer"],
+            "need-response": False,
+        }
+    ],
+    "Exploration": [
+        {
+            "action": "Encourage the student to independently extend their understanding of {knowledge} by forming and investigating their own analytical questions using {interaction}",
+            "interaction": "plain-text",
+            "prompt": "[Use one sentence to prompt the student to think about how the {knowledge} could apply to a different dataset or lead to a different conclusion][Ask the student to formulate their own question or hypothesis and briefly explain their reasoning]",
+            "parameters": ["knowledge"],
             "need-response": True,
         }
     ],
@@ -189,7 +207,7 @@ class SegmentHandler(APIHandler):
 class ChatHandler(APIHandler):
     @tornado.web.authenticated
     def post(self):
-        global CUR_SEQ, all_code, chat_bot, code_line_buffer, correct_answer_buffer, knowledge_buffer
+        global CUR_SEQ, all_code, chat_bot, code_line_buffer, correct_answer_buffer, knowledge_buffer, video_type
 
         # Existing video_id logic
         data = self.get_json_body()
@@ -520,15 +538,106 @@ class UpdateSeqHandler(APIHandler):
             knowledge = get_knowledge(
                 video_id, video_type, learning_obj, segment_index, code_block
             )
-            mastery_level = get_mastery_level_by_segment(knowledge, bkt_params)
-            methods = get_methods(
-                video_type, learning_obj, knowledge, mastery_level, code_block
-            )
-            if code_block == "":
-                action_set = concept_action
+            # For quiz condition: use fixed Coaching + Reflection sequence
+            if user_condition == "quiz":
+                # Pick first knowledge item for quiz
+                if isinstance(knowledge, list) and len(knowledge) > 0:
+                    quiz_knowledge = knowledge[0]
+                else:
+                    quiz_knowledge = "the concepts covered in this segment"
+
+                # Fixed DSL: Coaching (quiz question) + Reflection (feedback)
+                sections = [
+                    {
+                        "knowledge": quiz_knowledge,
+                        "actions": [
+                            {
+                                "method": "Coaching",
+                                "action": "Use {interaction} for the student to answer to learn the knowledge",
+                                "interaction": "multiple-choice",
+                                "prompt": 'Propose a multiple-choice question for the student to answer to learn the {knowledge}, such as what pattern do they find in the chart, what could be the potential reason behind the pattern, etc. Please respond with the following json structure without the ```json``` title: {"question": "question", "choices": ["choice", "choice", "choice", "choice"], "correct answer": "choice"}',
+                                "parameters": ["knowledge"],
+                                "need-response": True,
+                            },
+                            {
+                                "method": "Reflection",
+                                "action": "Use {interaction} to give feedback on the student's answer",
+                                "interaction": "plain-text",
+                                "prompt": "[Use one sentence to give feedback on the {student-answer}][Use one sentence to tell the student if any additional steps could confirm their choice][Ask the student to remember the choice and see if it makes sense as they watch the rest of the video]",
+                                "parameters": ["student-answer"],
+                                "need-response": False,
+                            },
+                        ],
+                    }
+                ]
+            # For fixed_cogapp condition: use fixed method progression based on segment index
+            elif user_condition == "fixed_cogapp":
+                # Pick first knowledge item
+                if isinstance(knowledge, list) and len(knowledge) > 0:
+                    fixed_knowledge = knowledge[0]
+                else:
+                    fixed_knowledge = "the concepts covered in this segment"
+
+                # Determine teaching method based on segment index
+                # Segments 1-2: Scaffolding
+                # Segments 3-4: Coaching
+                # Segments 5-6: Articulation
+                # Segments 7-8: Reflection
+                # Segments 9+: Exploration
+                if segment_index in [1, 2]:
+                    method = "Scaffolding"
+                elif segment_index in [3, 4]:
+                    method = "Coaching"
+                elif segment_index in [5, 6]:
+                    method = "Articulation"
+                elif segment_index in [7, 8]:
+                    method = "Reflection"
+                elif segment_index >= 9:
+                    method = "Exploration"  # Note: Exploration not yet in action sets, will fallback
+                else:
+                    method = "Scaffolding"  # Default for segment 0 or others
+
+                # Determine action set based on code presence
+                # "Preprocess and Visualize the data" → prog_action (has code)
+                # "Interpret the chart" → concept_action (no code)
+                if code_block == "":
+                    action_set = concept_action
+                else:
+                    action_set = prog_action
+
+                # Get actions for this method
+                if method in action_set:
+                    actions = action_set[method]
+                else:
+                    # Fallback: if method not in action_set, use Articulation or first available
+                    if "Articulation" in action_set:
+                        actions = action_set["Articulation"]
+                        print(
+                            f"Warning: {method} not in action_set, falling back to Articulation"
+                        )
+                    else:
+                        # Use first available method as last resort
+                        fallback_method = list(action_set.keys())[0]
+                        actions = action_set[fallback_method]
+                        print(
+                            f"Warning: {method} not in action_set, falling back to {fallback_method}"
+                        )
+
+                # Create fixed DSL with single method
+                sections = [{"knowledge": fixed_knowledge, "actions": actions}]
             else:
-                action_set = prog_action
-            sections = get_dsl(methods, action_set)
+                # For full_coggen and fixed_cogapp: use normal adaptive sequence
+                mastery_level = get_mastery_level_by_segment(knowledge, bkt_params)
+                methods = get_methods(
+                    video_type, learning_obj, knowledge, mastery_level, code_block
+                )
+                if code_block == "":
+                    action_set = concept_action
+                else:
+                    action_set = prog_action
+                sections = get_dsl(methods, action_set)
+            #     action_set = prog_action
+            # sections = get_dsl(methods, action_set)
         CUR_SEQ = [
             dict(knowledge=section["knowledge"], **action)
             for section in sections
@@ -563,6 +672,11 @@ class UpdateBKTHandler(APIHandler):
         segment_index = data.get("segmentIndex", 0)
         user_id_req = data.get("userId", "unknown")
         session_id = data.get("sessionId", "unknown")
+        # Check user's condition - skip BKT for control, quiz, and fixed_cogapp conditions
+        user_condition = get_user_condition(user_id_req)
+        if user_condition in ["control", "quiz", "fixed_cogapp"]:
+            self.finish(json.dumps({"status": "skipped", "condition": user_condition}))
+            return
         skill = get_skill_by_knowledge(knowledge_buffer)
         if video_id != "" and skill != "":
             update_bkt_params(
@@ -742,6 +856,14 @@ def initialze_database():
             "end": 3344,
         },  # 10
     ]
+    segments_json = json.dumps(segments_set)
+    c.execute("SELECT * FROM segments_cache WHERE video_id = ?", (video_id,))
+    if c.fetchone() is None:
+        # Insert new data if video_id doesn't exist
+        c.execute(
+            "INSERT INTO segments_cache (video_id, segments) VALUES (?, ?)",
+            (video_id, segments_json),
+        )
 
     video_id = "1xsbTs9-a50"  # franchise revenue
     segments_set = [
@@ -806,6 +928,14 @@ def initialze_database():
             "end": 3261,
         },  # 11
     ]
+    segments_json = json.dumps(segments_set)
+    c.execute("SELECT * FROM segments_cache WHERE video_id = ?", (video_id,))
+    if c.fetchone() is None:
+        # Insert new data if video_id doesn't exist
+        c.execute(
+            "INSERT INTO segments_cache (video_id, segments) VALUES (?, ?)",
+            (video_id, segments_json),
+        )
 
     video_id = "1x8Kpyndss"  # coffee ratings
     segments_set = [
@@ -875,7 +1005,6 @@ def initialze_database():
             "end": 3113,
         },  # 12
     ]
-
     segments_json = json.dumps(segments_set)
     c.execute("SELECT * FROM segments_cache WHERE video_id = ?", (video_id,))
     if c.fetchone() is None:
@@ -1434,7 +1563,7 @@ def get_knowledge(video_id, video_type, learning_obj, segment_index, code_block)
 
     start_time = segment["start"]
     end_time = segment["end"]
-    _, segment_transcript = get_transcript("nx5yhXAQLxw", start_time, end_time)
+    _, segment_transcript = get_transcript(video_id, start_time, end_time)
     if end_time - start_time > 150:
         num = 5
     elif end_time - start_time < 50:

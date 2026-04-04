@@ -23,7 +23,7 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
   onSubmit
 }) => {
   const [userId, setUserId] = useState('');
-  const [videoId, setVideoId] = useState('nx5yhXAQLxw');
+  const [videoId, setVideoId] = useState('');
   const [error, setError] = useState('');
 
   const handleSubmit = () => {
