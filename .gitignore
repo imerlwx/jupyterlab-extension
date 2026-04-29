@@ -132,3 +132,5 @@ dmypy.json
 *.db
 firebase-credentials.json
 .zshrc
+
+*.png

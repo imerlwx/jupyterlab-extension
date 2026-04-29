@@ -75,6 +75,9 @@ interface IMessage {
   category: string | null;
   interaction: string | null;
   code: string | null;
+  posttestQuestionnaireId?: number;
+  posttestUrl?: string;
+  posttestConfirmed?: boolean;
 }
 
 interface ICellOutputType {
@@ -109,6 +112,21 @@ type ICellOutput = {
 
 // Create a new React component for the Chat logic
 const ChatComponent = (props: ChatComponentProps): JSX.Element => {
+  const USE_RANDOM_VIDEO_ASSIGNMENT = true;
+  const VIDEO_LABELS: Record<string, string> = {
+    EF4A4OtQprg: 'Seattle Pet Names',
+    '1xsbTs9-a50': 'Franchise Revenue',
+    '-1x8Kpyndss': 'Coffee Ratings'
+  };
+
+  const PRETEST_QUALTRICS_URL =
+    'https://your-qualtrics-pretest-link.example.com';
+  const POSTTEST_QUALTRICS_URLS: Record<number, string> = {
+    1: 'https://your-qualtrics-posttest-1-link.example.com',
+    2: 'https://your-qualtrics-posttest-2-link.example.com',
+    3: 'https://your-qualtrics-posttest-3-link.example.com'
+  };
+
   const [player, setPlayer] = useState<any | null>(null);
   const [videoId, setVideoId] = useState('');
   const [userId, setUserId] = useState<string>('');
@@ -155,6 +173,11 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
   const [histogramData, setHistogramData] = useState<any[]>([]);
   const [codes, setCodes] = useState<{ [messageId: string]: string }>({});
   const [checkedCode, setCheckedCode] = useState<string[]>([]);
+  const [posttestPromptedVideos, setPosttestPromptedVideos] = useState<
+    Record<string, boolean>
+  >({});
+  const [lastSegmentWatched, setLastSegmentWatched] = useState(false);
+  const [videoFinished, setVideoFinished] = useState(false);
 
   // dataset url and data attributes descriptions
   const getDatasetInfo = (videoId: string) => {
@@ -213,7 +236,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
           owners: 'Current owners of the franchise'
         }
       },
-      '1x8Kpyndss': {
+      '-1x8Kpyndss': {
         url: 'https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-07-07/coffee_ratings.csv',
         columns: {
           total_cup_points: 'Total rating/points (0 - 100 scale)',
@@ -429,7 +452,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
         const currentTime = player ? Math.round(player.getCurrentTime()) : 0;
 
         let category = '';
-        if (currentSegmentIndex < segments.length - 1) {
+        if (currentSegmentIndex < segments.length) {
           category = segments[currentSegmentIndex].category;
         } else if (currentSegmentIndex < segments.length + 2) {
           category = 'Self-exploration';
@@ -686,6 +709,26 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
         }
       ]);
     }
+  };
+
+  const handleFinishVideo = () => {
+    if (videoFinished) {
+      return;
+    }
+    setVideoFinished(true);
+    requestAPI<any>('mark_video_finished', {
+      body: JSON.stringify({
+        userId: userId,
+        videoId: videoId
+      }),
+      method: 'POST'
+    })
+      .then(() => {
+        void maybePromptPosttest(videoId);
+      })
+      .catch(err => {
+        console.error('Failed to record finished video:', err);
+      });
   };
 
   useEffect(() => {
@@ -1108,12 +1151,51 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     }
   }
 
-  const handleUserIDSubmit = (
+  const handleUserIDSubmit = async (
     submittedUserId: string,
     selectedVideoId: string
   ) => {
+    let finalVideoId = selectedVideoId;
+    if (USE_RANDOM_VIDEO_ASSIGNMENT) {
+      try {
+        const assignment = await requestAPI<any>('get_assigned_video', {
+          body: JSON.stringify({ userId: submittedUserId }),
+          method: 'POST'
+        });
+        if (assignment.studyCompleted || !assignment.videoId) {
+          setUserId(submittedUserId);
+          setVideoId('');
+          setShowUserIDDialog(false);
+          setMessages(prevMessages => [
+            ...prevMessages,
+            {
+              id: `msg-${Date.now()}`,
+              message:
+                'You have completed all assigned video sessions and post-tests. Thank you for participating!',
+              sentTime: 'just now',
+              direction: 'incoming',
+              sender: 'Tutorly',
+              videoId: null,
+              start: null,
+              end: null,
+              category: 'Study Complete',
+              interaction: 'plain text',
+              code: null
+            }
+          ]);
+          return;
+        }
+        finalVideoId = assignment.videoId;
+      } catch (err) {
+        console.error('Failed to get assigned video from backend:', err);
+        return;
+      }
+    }
+
     setUserId(submittedUserId);
-    setVideoId(selectedVideoId);
+    setVideoId(finalVideoId);
+    setLastSegmentWatched(false);
+    setVideoFinished(false);
     setShowUserIDDialog(false);
     console.log(`User ID set: ${submittedUserId}, Session ID: ${sessionId}`);
 
@@ -1131,15 +1213,163 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
         // Default to full_coggen if error
         setUserCondition('full_coggen');
       });
-    initializeChat(selectedVideoId, submittedUserId);
+    initializeChat(finalVideoId, submittedUserId);
     console.log(
-      `User ID set: ${submittedUserId}, Video ID: ${selectedVideoId}, Condition: ${userCondition}, Session ID: ${sessionId}`
+      `User ID set: ${submittedUserId}, Video ID: ${finalVideoId}, Condition: ${userCondition}, Session ID: ${sessionId}`
     );
+  };
+
+  const handleCheckPretestStatus = async (
+    submittedUserId: string
+  ): Promise<boolean> => {
+    const response = await requestAPI<any>('get_pretest_status', {
+      body: JSON.stringify({ userId: submittedUserId }),
+      method: 'POST'
+    });
+    return !!response.pretestCompleted;
+  };
+
+  const handleMarkPretestComplete = async (
+    submittedUserId: string
+  ): Promise<void> => {
+    await requestAPI<any>('mark_pretest_complete', {
+      body: JSON.stringify({ userId: submittedUserId }),
+      method: 'POST'
+    });
+  };
+
+  const handleGetStudyProgress = async (submittedUserId: string) => {
+    return requestAPI<any>('get_study_progress', {
+      body: JSON.stringify({ userId: submittedUserId }),
+      method: 'POST'
+    });
+  };
+
+  const handleMarkPendingPosttestComplete = async (
+    submittedUserId: string,
+    completedVideoId: string
+  ) => {
+    await requestAPI<any>('mark_posttest_complete', {
+      body: JSON.stringify({
+        userId: submittedUserId,
+        videoId: completedVideoId
+      }),
+      method: 'POST'
+    });
+  };
+
+  const handleMarkPosttestComplete = async (
+    submittedUserId: string,
+    completedVideoId: string,
+    messageId: string
+  ): Promise<void> => {
+    await requestAPI<any>('mark_posttest_complete', {
+      body: JSON.stringify({
+        userId: submittedUserId,
+        videoId: completedVideoId
+      }),
+      method: 'POST'
+    });
+
+    setMessages(prevMessages =>
+      prevMessages.map(msg =>
+        msg.id === messageId ? { ...msg, posttestConfirmed: true } : msg
+      )
+    );
+
+    setMessages(prevMessages => [
+      ...prevMessages,
+      {
+        id: `msg-${Date.now()}`,
+        message:
+          'Thanks! Your post-test completion has been recorded. You can continue with your next assigned video session when ready.',
+        sentTime: 'just now',
+        direction: 'incoming',
+        sender: 'Tutorly',
+        videoId: null,
+        start: null,
+        end: null,
+        category: null,
+        interaction: 'plain text',
+        code: null
+      }
+    ]);
+  };
+
+  const maybePromptPosttest = async (completedVideoId: string) => {
+    if (
+      !userId ||
+      !completedVideoId ||
+      posttestPromptedVideos[completedVideoId]
+    ) {
+      return;
+    }
+
+    try {
+      const response = await requestAPI<any>('get_next_posttest', {
+        body: JSON.stringify({
+          userId: userId,
+          videoId: completedVideoId
+        }),
+        method: 'POST'
+      });
+
+      setPosttestPromptedVideos(prev => ({
+        ...prev,
+        [completedVideoId]: true
+      }));
+
+      if (!response.available || !response.nextQuestionnaireId) {
+        return;
+      }
+
+      const questionnaireId = Number(response.nextQuestionnaireId);
+      const questionnaireUrl = POSTTEST_QUALTRICS_URLS[questionnaireId] || '';
+      if (!questionnaireUrl) {
+        console.error(
+          `No post-test URL configured for questionnaire ${questionnaireId}`
+        );
+        return;
+      }
+
+      setMessages(prevMessages => [
+        ...prevMessages,
+        {
+          id: `msg-${Date.now()}`,
+          message: `You have finished this video learning session. Please complete post-test #${response.orderPosition}.`,
+          sentTime: 'just now',
+          direction: 'incoming',
+          sender: 'Tutorly',
+          videoId: null,
+          start: null,
+          end: null,
+          category: 'Post-test',
+          interaction: 'post-test',
+          code: null,
+          posttestQuestionnaireId: questionnaireId,
+          posttestUrl: questionnaireUrl,
+          posttestConfirmed: false
+        }
+      ]);
+    } catch (error) {
+      console.error('Failed to retrieve post-test assignment:', error);
+    }
   };
 
   return (
     <div style={{ position: 'relative', height: '100%', width: '100%' }}>
-      <UserIDDialog open={showUserIDDialog} onSubmit={handleUserIDSubmit} />
+      <UserIDDialog
+        open={showUserIDDialog}
+        pretestUrl={PRETEST_QUALTRICS_URL}
+        posttestUrls={POSTTEST_QUALTRICS_URLS}
+        videoLabels={VIDEO_LABELS}
+        videoSelectionMode={USE_RANDOM_VIDEO_ASSIGNMENT ? 'assigned' : 'manual'}
+        onSubmit={handleUserIDSubmit}
+        onCheckPretestStatus={handleCheckPretestStatus}
+        onMarkPretestComplete={handleMarkPretestComplete}
+        onGetStudyProgress={handleGetStudyProgress}
+        onMarkPendingPosttestComplete={handleMarkPendingPosttestComplete}
+      />
       <MainContainer style={{ height: '100%', width: '100%' }}>
         {/* <ModalComponent isOpen={isModalOpen} onClose={handleModalClose} /> */}
         <ChatContainer
@@ -1229,6 +1459,51 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                         handleSend={handleSend}
                       />
                     )}
+                    {message.interaction === 'post-test' &&
+                      message.posttestUrl && (
+                        <Box
+                          sx={{
+                            width: '85%',
+                            padding: 2,
+                            marginBottom: '10px',
+                            boxSizing: 'border-box',
+                            border: '1px solid #d8d8d8',
+                            borderRadius: 1,
+                            backgroundColor: '#fafafa'
+                          }}
+                        >
+                          <Typography variant="body2" sx={{ mb: 1.5 }}>
+                            Open the assigned questionnaire and submit it before
+                            starting your next video.
+                          </Typography>
+                          <Button
+                            variant="outlined"
+                            size="small"
+                            sx={{ mr: 1 }}
+                            onClick={() =>
+                              window.open(message.posttestUrl, '_blank')
+                            }
+                          >
+                            Open Post-test
+                          </Button>
+                          <Button
+                            variant="contained"
+                            size="small"
+                            disabled={!!message.posttestConfirmed}
+                            onClick={() => {
+                              void handleMarkPosttestComplete(
+                                userId,
+                                videoId,
+                                message.id
+                              );
+                            }}
+                          >
+                            {message.posttestConfirmed
+                              ? 'Post-test Recorded'
+                              : 'I Completed the Post-test'}
+                          </Button>
+                        </Box>
+                      )}
                     {message.code && (
                       <div style={{ width: '61.8%', marginBottom: '8px' }}>
                         {message.interaction === 'fill-in-blanks' ? (
@@ -1390,6 +1665,17 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                               }}
                               onReady={handleReady}
                               onEnd={event => {
+                                const lastSegment =
+                                  segments.length > 0
+                                    ? segments[segments.length - 1]
+                                    : null;
+                                const isLastSegmentVideo =
+                                  !!lastSegment &&
+                                  message.start === lastSegment.start &&
+                                  message.end === lastSegment.end;
+                                if (isLastSegmentVideo) {
+                                  setLastSegmentWatched(true);
+                                }
                                 if (
                                   message.category !== 'Introduction' &&
                                   !isAlredaySend
@@ -1423,7 +1709,14 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
           color="primary"
           onClick={() => {
             setIsAlredaySend(false);
-            handleGoOn();
+            const isOnLastSegment =
+              segments.length > 0 &&
+              currentSegmentIndex === segments.length - 1;
+            if (isOnLastSegment) {
+              handleFinishVideo();
+            } else {
+              handleGoOn();
+            }
           }}
           style={{
             position: 'absolute',
@@ -1431,9 +1724,26 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
             right: 10,
             zIndex: 19
           }}
-          disabled={!canGoOn || isTyping || videoId === ''} // Disable the input when isTyping is true
+          disabled={(() => {
+            const isOnLastSegment =
+              segments.length > 0 &&
+              currentSegmentIndex === segments.length - 1;
+            if (!isOnLastSegment) {
+              return !canGoOn || isTyping || videoId === '';
+            }
+            const dslReady = userCondition === 'control' ? true : canGoOn;
+            return (
+              !lastSegmentWatched ||
+              !dslReady ||
+              isTyping ||
+              videoId === '' ||
+              videoFinished
+            );
+          })()} // Disable the input when isTyping is true
         >
-          Go on
+          {segments.length > 0 && currentSegmentIndex === segments.length - 1
+            ? 'I have finished this video'
+            : 'Go on'}
         </Button>
       </MainContainer>
     </div>

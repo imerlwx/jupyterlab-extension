@@ -24,7 +24,13 @@ from BCEmbedding import RerankerModel
 from jlab_ext_example import firebase_logger
 
 # init reranker model
-model = RerankerModel(model_name_or_path="maidalun1020/bce-reranker-base_v1")
+# model = RerankerModel(model_name_or_path="maidalun1020/bce-reranker-base_v1")
+_reranker_model = None
+def _get_reranker():
+    global _reranker_model
+    if _reranker_model is None:
+        _reranker_model = RerankerModel(model_name_or_path="maidalun1020/bce-reranker-base_v1")
+    return _reranker_model
 
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
@@ -41,6 +47,20 @@ youtube = (
 )
 DATA_URL = "https://api.github.com/repos/rfordatascience/tidytuesday/contents/data/"
 CODE_URL = "https://api.github.com/repos/dgrtwo/data-screencasts/contents/"
+STUDY_VIDEO_IDS = ["EF4A4OtQprg", "1xsbTs9-a50", "-1x8Kpyndss"]
+LEGACY_VIDEO_ID_MAP = {
+    "1x8Kpyndss": "-1x8Kpyndss",
+}
+
+
+def normalize_video_id(video_id):
+    if not video_id:
+        return video_id
+    return LEGACY_VIDEO_ID_MAP.get(video_id, video_id)
+
+
+def normalize_video_id_list(video_ids):
+    return [normalize_video_id(video_id) for video_id in video_ids]
 
 # Global state variables
 bkt_params = {}
@@ -492,7 +512,7 @@ class UpdateSeqHandler(APIHandler):
                 with open("franchise_revenue_code.json", "r") as file:
                     # Parse the file and convert JSON data into a Python dictionary
                     all_code = json.load(file)
-            elif video_id == "1x8Kpyndss":
+            elif video_id == "-1x8Kpyndss":
                 with open("coffee_ratings_code.json", "r") as file:
                     # Parse the file and convert JSON data into a Python dictionary
                     all_code = json.load(file)
@@ -937,7 +957,7 @@ def initialze_database():
             (video_id, segments_json),
         )
 
-    video_id = "1x8Kpyndss"  # coffee ratings
+    video_id = "-1x8Kpyndss"  # coffee ratings
     segments_set = [
         {
             "category": "Understand the dataset",
@@ -1062,6 +1082,37 @@ def initialze_database():
         assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );"""
     )
+
+    c.execute(
+        """
+    CREATE TABLE IF NOT EXISTS questionnaire_progress (
+        user_id TEXT PRIMARY KEY,
+        pretest_completed INTEGER NOT NULL DEFAULT 0,
+        pretest_completed_at TIMESTAMP
+    );"""
+    )
+
+    # Migrate questionnaire_progress for post-test tracking if columns are missing.
+    c.execute("PRAGMA table_info(questionnaire_progress)")
+    existing_columns = {row[1] for row in c.fetchall()}
+    if "latin_order" not in existing_columns:
+        c.execute("ALTER TABLE questionnaire_progress ADD COLUMN latin_order TEXT")
+    if "posttest_index" not in existing_columns:
+        c.execute(
+            "ALTER TABLE questionnaire_progress ADD COLUMN posttest_index INTEGER NOT NULL DEFAULT 0"
+        )
+    if "completed_videos" not in existing_columns:
+        c.execute(
+            "ALTER TABLE questionnaire_progress ADD COLUMN completed_videos TEXT NOT NULL DEFAULT '[]'"
+        )
+    if "finished_videos" not in existing_columns:
+        c.execute(
+            "ALTER TABLE questionnaire_progress ADD COLUMN finished_videos TEXT NOT NULL DEFAULT '[]'"
+        )
+    if "assigned_video_id" not in existing_columns:
+        c.execute(
+            "ALTER TABLE questionnaire_progress ADD COLUMN assigned_video_id TEXT"
+        )
 
     conn.commit()
     conn.close()
@@ -1778,7 +1829,8 @@ def get_mastery_level_by_segment(list_of_knowledge, bkt_params):
     mastery_level = []
     for knowledge in list_of_knowledge:
         skill = get_skill_by_knowledge(knowledge)
-        rerank_results = model.rerank(skill, bkt_params.keys())
+        # rerank_results = model.rerank(skill, bkt_params.keys())
+        rerank_results = _get_reranker().rerank(skill, bkt_params.keys())
 
         if skill == "":
             # if the knowledge does not contain a skill
@@ -2074,6 +2126,356 @@ def get_user_condition(user_id):
     return condition
 
 
+def get_pretest_status(user_id):
+    """Get pre-test completion status for a user."""
+    initialze_database()
+    conn = sqlite3.connect("cache.db")
+    c = conn.cursor()
+
+    c.execute(
+        "SELECT latin_order FROM questionnaire_progress WHERE user_id = ?",
+        (user_id,),
+    )
+    if c.fetchone() is None:
+        order = get_latin_square_order(user_id)
+        c.execute(
+            """
+            INSERT INTO questionnaire_progress (
+                user_id,
+                pretest_completed,
+                pretest_completed_at,
+                latin_order,
+                posttest_index,
+                completed_videos,
+                finished_videos,
+                assigned_video_id
+            )
+            VALUES (?, 0, NULL, ?, 0, '[]', '[]', ?)
+            """,
+            (user_id, json.dumps(order), get_video_assignment_order(user_id)[0]),
+        )
+        conn.commit()
+
+    c.execute(
+        "SELECT pretest_completed, pretest_completed_at FROM questionnaire_progress WHERE user_id = ?",
+        (user_id,),
+    )
+    row = c.fetchone()
+    conn.close()
+
+    if row is None:
+        return {"pretestCompleted": False, "pretestCompletedAt": None}
+
+    return {
+        "pretestCompleted": bool(row[0]),
+        "pretestCompletedAt": row[1],
+    }
+
+
+def mark_pretest_complete(user_id):
+    """Mark pre-test as completed for a user."""
+    initialze_database()
+    conn = sqlite3.connect("cache.db")
+    c = conn.cursor()
+    completed_at = datetime.datetime.utcnow().isoformat()
+    order = get_latin_square_order(user_id)
+    c.execute(
+        """
+        INSERT INTO questionnaire_progress (
+            user_id,
+            pretest_completed,
+            pretest_completed_at,
+            latin_order,
+            posttest_index,
+            completed_videos,
+            finished_videos,
+            assigned_video_id
+        )
+        VALUES (?, 1, ?, ?, 0, '[]', '[]', ?)
+        ON CONFLICT(user_id)
+        DO UPDATE SET
+            pretest_completed = 1,
+            pretest_completed_at = excluded.pretest_completed_at,
+            latin_order = COALESCE(questionnaire_progress.latin_order, excluded.latin_order),
+            posttest_index = COALESCE(questionnaire_progress.posttest_index, 0),
+            completed_videos = COALESCE(questionnaire_progress.completed_videos, '[]'),
+            finished_videos = COALESCE(questionnaire_progress.finished_videos, '[]'),
+            assigned_video_id = COALESCE(questionnaire_progress.assigned_video_id, excluded.assigned_video_id)
+        """,
+        (
+            user_id,
+            completed_at,
+            json.dumps(order),
+            get_video_assignment_order(user_id)[0],
+        ),
+    )
+    conn.commit()
+    conn.close()
+    return {"pretestCompleted": True, "pretestCompletedAt": completed_at}
+
+
+def get_latin_square_order(user_id):
+    """Assign one of 3 Latin-square orders deterministically for the 3 post-tests."""
+    base_order = [1, 2, 3]
+    hash_val = int(hashlib.md5(user_id.encode()).hexdigest(), 16)
+    shift = hash_val % len(base_order)
+    return base_order[shift:] + base_order[:shift]
+
+
+def get_video_assignment_order(user_id):
+    """Assign one of 3 video orders deterministically for counterbalancing."""
+    hash_val = int(hashlib.md5(user_id.encode()).hexdigest(), 16)
+    shift = hash_val % len(STUDY_VIDEO_IDS)
+    return STUDY_VIDEO_IDS[shift:] + STUDY_VIDEO_IDS[:shift]
+
+
+def get_or_create_questionnaire_progress(user_id):
+    """Load questionnaire progress and initialize a row if missing."""
+    initialze_database()
+    conn = sqlite3.connect("cache.db")
+    c = conn.cursor()
+    c.execute(
+        """
+        SELECT pretest_completed, pretest_completed_at, latin_order, posttest_index, completed_videos, finished_videos, assigned_video_id
+        FROM questionnaire_progress
+        WHERE user_id = ?
+        """,
+        (user_id,),
+    )
+    row = c.fetchone()
+
+    if row is None:
+        latin_order = get_latin_square_order(user_id)
+        c.execute(
+            """
+            INSERT INTO questionnaire_progress (
+                user_id,
+                pretest_completed,
+                pretest_completed_at,
+                latin_order,
+                posttest_index,
+                completed_videos,
+                finished_videos,
+                assigned_video_id
+            )
+            VALUES (?, 0, NULL, ?, 0, '[]', '[]', ?)
+            """,
+            (user_id, json.dumps(latin_order), get_video_assignment_order(user_id)[0]),
+        )
+        conn.commit()
+        progress = {
+            "pretest_completed": False,
+            "pretest_completed_at": None,
+            "latin_order": latin_order,
+            "posttest_index": 0,
+            "completed_videos": [],
+            "finished_videos": [],
+            "assigned_video_id": get_video_assignment_order(user_id)[0],
+        }
+    else:
+        latin_order = (
+            ast.literal_eval(row[2]) if row[2] else get_latin_square_order(user_id)
+        )
+        raw_completed_videos = ast.literal_eval(row[4]) if row[4] else []
+        raw_finished_videos = ast.literal_eval(row[5]) if row[5] else []
+        completed_videos = normalize_video_id_list(raw_completed_videos)
+        finished_videos = normalize_video_id_list(raw_finished_videos)
+        assigned_video_id = normalize_video_id(row[6])
+        if not finished_videos and completed_videos:
+            # Backfill legacy rows where only completed_videos existed.
+            finished_videos = completed_videos.copy()
+
+        if (
+            completed_videos != raw_completed_videos
+            or finished_videos != raw_finished_videos
+            or assigned_video_id != row[6]
+        ):
+            c.execute(
+                """
+                UPDATE questionnaire_progress
+                SET completed_videos = ?, finished_videos = ?, assigned_video_id = ?
+                WHERE user_id = ?
+                """,
+                (
+                    json.dumps(completed_videos),
+                    json.dumps(finished_videos),
+                    assigned_video_id,
+                    user_id,
+                ),
+            )
+            conn.commit()
+
+        progress = {
+            "pretest_completed": bool(row[0]),
+            "pretest_completed_at": row[1],
+            "latin_order": latin_order,
+            "posttest_index": row[3] or 0,
+            "completed_videos": completed_videos,
+            "finished_videos": finished_videos,
+            "assigned_video_id": assigned_video_id,
+        }
+
+    conn.close()
+    return progress
+
+
+def get_assigned_video_for_user(user_id):
+    """Get the next uncompleted assigned video for a user."""
+    progress = get_or_create_questionnaire_progress(user_id)
+    video_order = get_video_assignment_order(user_id)
+    completed_videos = set(progress["completed_videos"])
+
+    next_video_id = next(
+        (video for video in video_order if video not in completed_videos), None
+    )
+    study_completed = next_video_id is None
+
+    conn = sqlite3.connect("cache.db")
+    c = conn.cursor()
+    c.execute(
+        "UPDATE questionnaire_progress SET assigned_video_id = ? WHERE user_id = ?",
+        (next_video_id, user_id),
+    )
+    conn.commit()
+    conn.close()
+
+    return {
+        "videoId": next_video_id,
+        "studyCompleted": study_completed,
+        "videoOrder": video_order,
+        "completedVideos": list(completed_videos),
+    }
+
+
+def mark_video_finished(user_id, video_id):
+    """Mark that a user has finished watching a full video session."""
+    video_id = normalize_video_id(video_id)
+    progress = get_or_create_questionnaire_progress(user_id)
+    finished_videos = progress["finished_videos"]
+
+    if video_id and video_id not in finished_videos:
+        finished_videos.append(video_id)
+
+    conn = sqlite3.connect("cache.db")
+    c = conn.cursor()
+    c.execute(
+        "UPDATE questionnaire_progress SET finished_videos = ? WHERE user_id = ?",
+        (json.dumps(finished_videos), user_id),
+    )
+    conn.commit()
+    conn.close()
+
+    return {"finishedVideos": finished_videos}
+
+
+def get_study_progress(user_id):
+    """Get current study progress for dialog display and resume actions."""
+    progress = get_or_create_questionnaire_progress(user_id)
+    video_order = get_video_assignment_order(user_id)
+    finished_videos = progress["finished_videos"]
+    completed_videos = progress["completed_videos"]
+    pending_video_id = next(
+        (video for video in finished_videos if video not in completed_videos), None
+    )
+    has_pending_posttest = (
+        pending_video_id is not None and progress["posttest_index"] < 3
+    )
+    pending_posttest_id = (
+        progress["latin_order"][progress["posttest_index"]]
+        if has_pending_posttest
+        else None
+    )
+
+    return {
+        "pretestCompleted": progress["pretest_completed"],
+        "videoOrder": video_order,
+        "finishedVideos": finished_videos,
+        "completedVideos": completed_videos,
+        "posttestIndex": progress["posttest_index"],
+        "latinOrder": progress["latin_order"],
+        "pendingPosttest": {
+            "available": has_pending_posttest,
+            "questionnaireId": pending_posttest_id,
+            "videoId": pending_video_id,
+        },
+        "studyCompleted": progress["posttest_index"] >= 3,
+    }
+
+
+def get_next_posttest_for_user(user_id, video_id):
+    """Return the next post-test for a finished video session (if applicable)."""
+    video_id = normalize_video_id(video_id)
+    progress = get_or_create_questionnaire_progress(user_id)
+    completed_videos = progress["completed_videos"]
+
+    if video_id in completed_videos:
+        return {
+            "available": False,
+            "alreadyCompletedVideo": True,
+            "completedCount": len(completed_videos),
+            "nextQuestionnaireId": None,
+            "orderPosition": None,
+        }
+
+    if progress["posttest_index"] >= 3:
+        return {
+            "available": False,
+            "alreadyCompletedVideo": False,
+            "completedCount": len(completed_videos),
+            "nextQuestionnaireId": None,
+            "orderPosition": None,
+        }
+
+    questionnaire_id = progress["latin_order"][progress["posttest_index"]]
+    return {
+        "available": True,
+        "alreadyCompletedVideo": False,
+        "completedCount": len(completed_videos),
+        "nextQuestionnaireId": questionnaire_id,
+        "orderPosition": progress["posttest_index"] + 1,
+    }
+
+
+def mark_posttest_complete(user_id, video_id):
+    """Mark a video as completed and advance post-test position once."""
+    video_id = normalize_video_id(video_id)
+    progress = get_or_create_questionnaire_progress(user_id)
+    completed_videos = progress["completed_videos"]
+    finished_videos = progress["finished_videos"]
+
+    if video_id and video_id not in finished_videos:
+        finished_videos.append(video_id)
+
+    if video_id not in completed_videos:
+        completed_videos.append(video_id)
+        next_index = min(progress["posttest_index"] + 1, 3)
+    else:
+        next_index = progress["posttest_index"]
+
+    conn = sqlite3.connect("cache.db")
+    c = conn.cursor()
+    c.execute(
+        """
+        UPDATE questionnaire_progress
+        SET posttest_index = ?, completed_videos = ?, finished_videos = ?
+        WHERE user_id = ?
+        """,
+        (
+            next_index,
+            json.dumps(completed_videos),
+            json.dumps(finished_videos),
+            user_id,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    return {
+        "posttestIndex": next_index,
+        "completedVideos": completed_videos,
+    }
+
+
 class GetConditionHandler(APIHandler):
     """Handler to get a user's assigned condition"""
 
@@ -2129,6 +2531,141 @@ class SetConditionHandler(APIHandler):
                     "userId": user_id,
                     "condition": condition,
                     "message": "Condition set successfully",
+                }
+            )
+        )
+
+
+class GetPretestStatusHandler(APIHandler):
+    """Handler to get a user's pre-test completion status"""
+
+    @tornado.web.authenticated
+    def post(self):
+        data = self.get_json_body()
+        user_id = data.get("userId", "unknown")
+
+        status = get_pretest_status(user_id)
+        self.finish(
+            json.dumps(
+                {
+                    "userId": user_id,
+                    "pretestCompleted": status["pretestCompleted"],
+                    "pretestCompletedAt": status["pretestCompletedAt"],
+                }
+            )
+        )
+
+
+class MarkPretestCompleteHandler(APIHandler):
+    """Handler to mark a user's pre-test as complete"""
+
+    @tornado.web.authenticated
+    def post(self):
+        data = self.get_json_body()
+        user_id = data.get("userId", "unknown")
+
+        status = mark_pretest_complete(user_id)
+        self.finish(
+            json.dumps(
+                {
+                    "userId": user_id,
+                    "pretestCompleted": status["pretestCompleted"],
+                    "pretestCompletedAt": status["pretestCompletedAt"],
+                    "message": "Pre-test completion recorded",
+                }
+            )
+        )
+
+
+class GetAssignedVideoHandler(APIHandler):
+    """Handler to get user's backend-assigned video id"""
+
+    @tornado.web.authenticated
+    def post(self):
+        data = self.get_json_body()
+        user_id = data.get("userId", "unknown")
+        assignment = get_assigned_video_for_user(user_id)
+        self.finish(
+            json.dumps(
+                {
+                    "userId": user_id,
+                    **assignment,
+                }
+            )
+        )
+
+
+class MarkVideoFinishedHandler(APIHandler):
+    """Handler to mark a full video learning session as finished"""
+
+    @tornado.web.authenticated
+    def post(self):
+        data = self.get_json_body()
+        user_id = data.get("userId", "unknown")
+        video_id = data.get("videoId", "")
+
+        status = mark_video_finished(user_id, video_id)
+        self.finish(
+            json.dumps(
+                {
+                    "userId": user_id,
+                    "videoId": video_id,
+                    "message": "Video completion recorded",
+                    **status,
+                }
+            )
+        )
+
+
+class GetStudyProgressHandler(APIHandler):
+    """Handler to retrieve study progress for UserIDDialog"""
+
+    @tornado.web.authenticated
+    def post(self):
+        data = self.get_json_body()
+        user_id = data.get("userId", "unknown")
+        status = get_study_progress(user_id)
+        self.finish(json.dumps({"userId": user_id, **status}))
+
+
+class GetNextPosttestHandler(APIHandler):
+    """Handler to get the next post-test after finishing a video session"""
+
+    @tornado.web.authenticated
+    def post(self):
+        data = self.get_json_body()
+        user_id = data.get("userId", "unknown")
+        video_id = data.get("videoId", "")
+
+        status = get_next_posttest_for_user(user_id, video_id)
+        self.finish(
+            json.dumps(
+                {
+                    "userId": user_id,
+                    "videoId": video_id,
+                    **status,
+                }
+            )
+        )
+
+
+class MarkPosttestCompleteHandler(APIHandler):
+    """Handler to mark post-test completion for a finished video session"""
+
+    @tornado.web.authenticated
+    def post(self):
+        data = self.get_json_body()
+        user_id = data.get("userId", "unknown")
+        video_id = data.get("videoId", "")
+
+        status = mark_posttest_complete(user_id, video_id)
+        self.finish(
+            json.dumps(
+                {
+                    "userId": user_id,
+                    "videoId": video_id,
+                    "message": "Post-test completion recorded",
+                    **status,
                 }
             )
         )
@@ -2261,4 +2798,53 @@ def setup_handlers(web_app):
     # Add route for manually setting user's condition (for testing)
     set_condition_pattern = url_path_join(base_url, "jlab_ext_example", "set_condition")
     handlers = [(set_condition_pattern, SetConditionHandler)]
+    web_app.add_handlers(host_pattern, handlers)
+
+    # Add route for checking pre-test completion status
+    get_pretest_status_pattern = url_path_join(
+        base_url, "jlab_ext_example", "get_pretest_status"
+    )
+    handlers = [(get_pretest_status_pattern, GetPretestStatusHandler)]
+    web_app.add_handlers(host_pattern, handlers)
+
+    # Add route for marking pre-test completion
+    mark_pretest_complete_pattern = url_path_join(
+        base_url, "jlab_ext_example", "mark_pretest_complete"
+    )
+    handlers = [(mark_pretest_complete_pattern, MarkPretestCompleteHandler)]
+    web_app.add_handlers(host_pattern, handlers)
+
+    # Add route for backend-assigned study video id
+    get_assigned_video_pattern = url_path_join(
+        base_url, "jlab_ext_example", "get_assigned_video"
+    )
+    handlers = [(get_assigned_video_pattern, GetAssignedVideoHandler)]
+    web_app.add_handlers(host_pattern, handlers)
+
+    # Add route for marking video completion before post-test
+    mark_video_finished_pattern = url_path_join(
+        base_url, "jlab_ext_example", "mark_video_finished"
+    )
+    handlers = [(mark_video_finished_pattern, MarkVideoFinishedHandler)]
+    web_app.add_handlers(host_pattern, handlers)
+
+    # Add route for study progress summary in UserIDDialog
+    get_study_progress_pattern = url_path_join(
+        base_url, "jlab_ext_example", "get_study_progress"
+    )
+    handlers = [(get_study_progress_pattern, GetStudyProgressHandler)]
+    web_app.add_handlers(host_pattern, handlers)
+
+    # Add route for retrieving next post-test assignment
+    get_next_posttest_pattern = url_path_join(
+        base_url, "jlab_ext_example", "get_next_posttest"
+    )
+    handlers = [(get_next_posttest_pattern, GetNextPosttestHandler)]
+    web_app.add_handlers(host_pattern, handlers)
+
+    # Add route for marking post-test completion
+    mark_posttest_complete_pattern = url_path_join(
+        base_url, "jlab_ext_example", "mark_posttest_complete"
+    )
+    handlers = [(mark_posttest_complete_pattern, MarkPosttestCompleteHandler)]
     web_app.add_handlers(host_pattern, handlers)
