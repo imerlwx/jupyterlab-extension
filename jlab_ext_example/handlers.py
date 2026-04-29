@@ -23,8 +23,12 @@ from langchain.memory import ConversationBufferMemory
 from BCEmbedding import RerankerModel
 from jlab_ext_example import firebase_logger
 
-# init reranker model
-model = RerankerModel(model_name_or_path="maidalun1020/bce-reranker-base_v1")
+_reranker_model = None
+def _get_reranker():
+    global _reranker_model
+    if _reranker_model is None:
+        _reranker_model = RerankerModel(model_name_or_path="maidalun1020/bce-reranker-base_v1")
+    return _reranker_model
 
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
@@ -1778,7 +1782,7 @@ def get_mastery_level_by_segment(list_of_knowledge, bkt_params):
     mastery_level = []
     for knowledge in list_of_knowledge:
         skill = get_skill_by_knowledge(knowledge)
-        rerank_results = model.rerank(skill, bkt_params.keys())
+        rerank_results = _get_reranker().rerank(skill, bkt_params.keys())
 
         if skill == "":
             # if the knowledge does not contain a skill
