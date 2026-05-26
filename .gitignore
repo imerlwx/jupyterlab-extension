@@ -134,3 +134,5 @@ firebase-credentials.json
 .zshrc
 
 *.png
+
+.claude

@@ -73,12 +73,21 @@ code_line_buffer = ""
 correct_answer_buffer = ""
 knowledge_buffer = ""
 prog_action = {
+    "Modeling": [
+        {
+            "action": "Introduce the overall task for this segment in plain text so the student gets the big picture before line-level work",
+            "interaction": "plain-text",
+            "prompt": "[Use one or two sentences to introduce the overall task described by {knowledge}, covering the goal of this segment and the key approach. Do not reference any specific code line.]",
+            "parameters": ["knowledge"],
+            "need-response": True,
+        }
+    ],
     "Scaffolding": [
         {
             "action": "Demonstrate the current task and provide explanations of the concepts underlying the current step of the task using {interaction}",
-            "interaction": "plain-text",
-            "prompt": "[Use one sentence to explain the {knowledge} at this step, such as what effect we want to achieve, why we do it, and what function we use to do it]",
-            "parameters": ["knowledge"],
+            "interaction": "annotated-code",
+            "prompt": "[Use one sentence to explain the {knowledge} as it applies to the corresponding {code-line}, covering what effect we want to achieve, why we do it, and what function we use]",
+            "parameters": ["knowledge", "code-line"],
             "need-response": True,
         }
     ],
@@ -93,9 +102,9 @@ prog_action = {
     ],
     "Articulation": [
         {
-            "action": "Use {interaction} to allow students articulate their understanding of knowledge",
-            "interaction": "plain-text",
-            "prompt": "[Use one sentence to ask the student to explain their understanding and reasoning about {knowledge}, such as articulate why make this kinds of visualization rather than others]",
+            "action": "Use {interaction} to let the student predict and articulate their reasoning about a specific code line",
+            "interaction": "multiple-choice",
+            "prompt": "Propose a multiple-choice question (with exactly four plausible options, only one correct) that asks the student to predict the rationale or behavior tied to {knowledge}, focusing on why this code choice is made.",
             "parameters": ["knowledge"],
             "need-response": True,
         }
@@ -122,11 +131,20 @@ prog_action = {
 
 
 concept_action = {
+    "Modeling": [
+        {
+            "action": "Introduce the overall analytical task for this segment in plain text so the student gets the big picture before deeper questions",
+            "interaction": "plain-text",
+            "prompt": "[Use one or two sentences to introduce the overall task described by {knowledge}, covering what we are trying to understand or compare and the key approach. Do not reference any specific code line.]",
+            "parameters": ["knowledge"],
+            "need-response": True,
+        }
+    ],
     "Scaffolding": [
         {
-            "action": "Provide structured guidance through {interaction} as the student works on the task to learn the {knowledge}",
-            "interaction": "plain-text",
-            "prompt": "[Use no more than three sentences to guide the student step by step on how to learn and apply the {knowledge}, the student has made the visualizaiton]",
+            "action": "Provide a small guided-question step through {interaction} that walks the student toward understanding {knowledge}",
+            "interaction": "multiple-choice",
+            "prompt": "Propose a short, easy multiple-choice comprehension question (4 options, one correct) that focuses the student on a single observable feature of the chart relevant to {knowledge}. Keep it light — this is a guided step, not a deep test.",
             "parameters": ["knowledge"],
             "need-response": True,
         }
@@ -134,8 +152,8 @@ concept_action = {
     "Articulation": [
         {
             "action": "Encourage students to use {interaction} to verbally explain their thought process and reasoning behind their observations and conclusions",
-            "interaction": "plain-text",
-            "prompt": "[Use one sentence to ask the student to explain their understanding and reasoning about {knowledge}, such as articulate what patterns does he found in the chart]",
+            "interaction": "structured-text",
+            "prompt": "Design a structured-text writing prompt that asks the student to articulate their reasoning about {knowledge}. Produce exactly three slot labels that are SPECIFIC TO THIS QUESTION (not generic templates); each slot should be a short noun phrase the student can fill in. The intro and the slots must read coherently together so that filling in every slot answers the intro question. Respond as JSON without ```json``` fences with this exact shape: {\"intro\": \"the question to think about, in one short sentence\", \"slots\": [\"<slot 1 specific to the question>\", \"<slot 2 specific to the question>\", \"<slot 3 specific to the question>\"]} Example: for a chart-interpretation question, slots might be [\"What I observe about <subject>\", \"A plausible reason\", \"Another factor that could explain it\"]. Do not reuse these example slots verbatim — tailor them to the actual question.",
             "parameters": ["knowledge"],
             "need-response": True,
         }
@@ -151,10 +169,10 @@ concept_action = {
     ],
     "Reflection": [
         {
-            "action": "Encourage students to use {interaction} to self-evaluate their performance, identifying strengths and areas for improvement",
-            "interaction": "plain-text",
-            "prompt": "[Use one sentence to give feedback on the {student-answer}][Use one sentence to tell the student if any additional steps could confirm his choice][Ask the student to remember the choice and see if it makes sense as he watch the rest of the video]",
-            "parameters": ["student-answer"],
+            "action": "Show the student a side-by-side comparison of their answer with an expert interpretation using {interaction}",
+            "interaction": "compare-with-expert",
+            "prompt": "Given the student's answer: {student-answer}\nProduce a comparison with an expert interpretation of {knowledge}. Respond as JSON without ```json``` fences: {\"expertAnswer\": \"two to three sentences of the expert interpretation, mirroring the student's structure when possible\", \"similarity\": \"one sentence on what the student got right\", \"difference\": \"one sentence on what the student missed or could refine\", \"suggestion\": \"one sentence with a concrete next step\"}",
+            "parameters": ["student-answer", "knowledge"],
             "need-response": False,
         }
     ],
@@ -237,6 +255,7 @@ class ChatHandler(APIHandler):
         segment_index = data["segmentIndex"]
         kernelType = data["kernelType"]
         selected_choice = data["selectedChoice"]
+        articulation_answer = data.get("articulationAnswer", "")
         user_id_req = data.get("userId", "unknown")
         session_id = data.get("sessionId", "unknown")
 
@@ -357,23 +376,76 @@ class ChatHandler(APIHandler):
                     # If the student selects a choice, the response is the choice
                     input_data["student's choice"] = selected_choice
 
+                # Substitute {student-answer} placeholder with the student's
+                # actual articulation text (preferred) or MC choice fallback.
+                if "student-answer" in parameters:
+                    student_answer_value = (
+                        articulation_answer or selected_choice or "(no answer provided)"
+                    )
+                    pedagogy = pedagogy.replace(
+                        "{student-answer}", student_answer_value
+                    )
+                    input_data["pedagogy"] = (
+                        "Use the following structure to respond: " + pedagogy
+                    )
+                    input_data["student's answer"] = student_answer_value
+
                 # Handle interaction logic
                 if interaction == "show-code":
                     input_data["requirement"] = (
                         "Don't include the 'code-block' in the response"
                     )
                     results = chat_bot.ask({"input": str(input_data)})
-                    results = results + "\n" + all_code[str(segment_index)]
+                    # Some segments (e.g., "Understand the dataset") have no
+                    # code block. Skip the append rather than KeyError-ing.
+                    code_block_text = all_code.get(str(segment_index))
+                    if code_block_text:
+                        results = results + "\n" + code_block_text
                 elif interaction == "drop-down":
                     results = pedagogy
                 elif interaction == "multiple-choice":
                     input_data["pedagogy"] = (
                         input_data["pedagogy"]
-                        + ' Please respond with the following json structure without the ```json``` title: {"question": "question", "choices": ["choice", "choice", "choice"], "correct answer": "choice"}'
+                        + ' Please respond with the following json structure without the ```json``` title: {"question": "question", "choices": ["choice", "choice", "choice", "choice"], "correct answer": "choice", "rationale": "one sentence explaining why the correct answer is right"}'
                     )
                     # results = conversation({"input": str(input_data)})["text"]
                     results = chat_bot.ask({"input": str(input_data)})
                     correct_answer_buffer = json.loads(results)["correct answer"]
+                elif interaction == "structured-text":
+                    # Generates a writing prompt + slot labels for the student.
+                    # The full JSON is returned as the message body and parsed by
+                    # the frontend renderer.
+                    results = chat_bot.ask({"input": str(input_data)})
+                elif interaction == "compare-with-expert":
+                    # Generates expert interpretation + comparison fields. We
+                    # also echo the student's answer into the JSON so the
+                    # frontend can render the side-by-side without separate
+                    # lookups.
+                    raw = chat_bot.ask({"input": str(input_data)})
+                    try:
+                        payload = json.loads(raw)
+                    except Exception:
+                        payload = {"expertAnswer": raw}
+                    payload["studentAnswer"] = (
+                        articulation_answer or selected_choice or ""
+                    )
+                    results = json.dumps(payload)
+                elif interaction == "annotated-code":
+                    code_line, _ = get_code_with_blank_by_step(
+                        video_id, segment_index, all_code, move_detail["knowledge"]
+                    )
+                    input_data["code-line"] = code_line
+                    input_data["requirement"] = (
+                        "Don't include the 'code-line' in the response; explain it in one sentence."
+                    )
+                    results = chat_bot.ask({"input": str(input_data)})
+                    results = (
+                        results
+                        + "\n"
+                        + "```R"
+                        + code_line
+                        + "```"
+                    )
                 elif interaction == "fill-in-blanks":
                     # results = conversation({"input": str(input_data)})["text"]
                     code_line, code_line_with_blanks = get_code_with_blank_by_step(
@@ -543,6 +615,14 @@ class UpdateSeqHandler(APIHandler):
                     "knowledge": "Understand the attribute meanings and metrics of the dataset, and generate hypothesis on the data",
                     "actions": [
                         {
+                            "method": "Modeling",
+                            "action": "Let the student execute the completed full code block",
+                            "prompt": "Generate a similar sentence like this: 'The relevant library and dataset can be imported and loaded using the following code. Try to understand the code like the video does. Then, move on to the next video to learn how to look at the dataset.'",
+                            "interaction": "show-code",
+                            "parameters": ["code-block"],
+                            "need-response": True,
+                        },
+                        {
                             "method": "Exploration",
                             "action": "Have the student illustrate his findings by explore the dataset",
                             "prompt": "Exploring and understanding the dataset and its attributes is the first step to doing exploratory data analysis. Now please try exploring the data on your own! Select a column below and look at a description and distribution just like Dave! If you have any hypothesis, please share with me.",
@@ -658,6 +738,32 @@ class UpdateSeqHandler(APIHandler):
                 sections = get_dsl(methods, action_set)
             #     action_set = prog_action
             # sections = get_dsl(methods, action_set)
+
+            # Final guard: Declarative knowledge always uses Modeling, regardless
+            # of which planner path produced the sections (covers fixed_cogapp).
+            # Only applies to branches that defined action_set (quiz / fixed_cogapp
+            # / full_coggen); the Load/Understand branches above don't need it.
+            if "action_set" in locals() and "Modeling" in action_set:
+                modeling_template = action_set["Modeling"]
+                for section in sections:
+                    k = section.get("knowledge", "")
+                    if (
+                        isinstance(k, str)
+                        and k.strip().lower().startswith("declarative knowledge")
+                    ):
+                        section["actions"] = [
+                            {
+                                "method": "Modeling",
+                                "action": d["action"].replace(
+                                    "{interaction}", d["interaction"]
+                                ),
+                                "prompt": d["prompt"].replace("{knowledge}", k),
+                                "interaction": d["interaction"],
+                                "need-response": d["need-response"],
+                                "parameters": d["parameters"],
+                            }
+                            for d in modeling_template
+                        ]
         CUR_SEQ = [
             dict(knowledge=section["knowledge"], **action)
             for section in sections
@@ -1155,7 +1261,7 @@ class CustomChatBotWithMemory:
     def ask(self, user_input):
         prompt = self._generate_prompt()
         response = openai.ChatCompletion.create(
-            model="gpt-5",
+            model="gpt-5.4-mini",
             messages=[
                 {
                     "role": "system",
@@ -1345,7 +1451,7 @@ def get_segments(video_id):
 def get_summary_by_LO(transcript, learning_goal):
     """Get the summary of a transcript by learning goal."""
     response = openai.ChatCompletion.create(
-        model="gpt-5",
+        model="gpt-5.4-mini",
         messages=[
             {
                 "role": "system",
@@ -1395,7 +1501,7 @@ def get_start_sentence(summary_list, transcript):
             result_string = transcript
 
         response = openai.ChatCompletion.create(
-            model="gpt-5",
+            model="gpt-5.4-mini",
             messages=[
                 {
                     "role": "system",
@@ -1424,7 +1530,7 @@ def get_start_sentence(summary_list, transcript):
 def get_timestamp(transcript_with_time, start_sentence_list):
     """Returns the start timestamp of each sentence in the start sentence list."""
     response = openai.ChatCompletion.create(
-        model="gpt-5",
+        model="gpt-5.4-mini",
         messages=[
             {
                 "role": "system",
@@ -1623,7 +1729,7 @@ def get_knowledge(video_id, video_type, learning_obj, segment_index, code_block)
         num = 4
     if code_block != "":
         response = openai.ChatCompletion.create(
-            model="gpt-5",
+            model="gpt-5.4-mini",
             messages=[
                 {
                     "role": "system",
@@ -1651,7 +1757,7 @@ def get_knowledge(video_id, video_type, learning_obj, segment_index, code_block)
         )
     else:
         response = openai.ChatCompletion.create(
-            model="gpt-5",
+            model="gpt-5.4-mini",
             messages=[
                 {
                     "role": "system",
@@ -1696,7 +1802,7 @@ def get_methods(video_type, learning_obj, knowledge, mastery_level, code_block):
     else:
         video_content = "programming-related"
     response = openai.ChatCompletion.create(
-        model="gpt-5",
+        model="gpt-5.5",
         messages=[
             {
                 "role": "system",
@@ -1719,7 +1825,7 @@ def get_methods(video_type, learning_obj, knowledge, mastery_level, code_block):
                                 2.1 Increasing complexity for concept-related video:
                                 Choose one method from Scaffolding, Coaching, or Articulation to teach each knowledge.
                                 If the student's mastery level of the corresponding knowledge exceeds 0.5, Scaffolding should fade out.
-                                Coaching should be followed by Reflection. Reflection should only be used after Coaching.
+                                Whenever you assign Articulation to a knowledge, you must immediately follow it with Reflection on that same knowledge, so the student gets feedback on every open-text answer. Reflection should only be used after Articulation (never after Coaching).
 
                                 2.2 Increasing complexity for programming-related video:
                                 For each declarative knowledge, choose between Scaffolding and Articulation.
@@ -1759,6 +1865,15 @@ def get_dsl(methods, action_set):
     for method_entry in methods:
         knowledge = method_entry["knowledge"]
         action_entries = method_entry["method"]
+
+        # Always teach Declarative knowledge with Modeling (segment-level overview),
+        # regardless of what the planner returned, since it isn't tied to one code line.
+        if (
+            isinstance(knowledge, str)
+            and knowledge.strip().lower().startswith("declarative knowledge")
+            and "Modeling" in action_set
+        ):
+            action_entries = ["Modeling"]
 
         # Prepare the actions list based on the teaching methods provided
         actions = []
@@ -1829,17 +1944,35 @@ def get_mastery_level_by_segment(list_of_knowledge, bkt_params):
     mastery_level = []
     for knowledge in list_of_knowledge:
         skill = get_skill_by_knowledge(knowledge)
-        # rerank_results = model.rerank(skill, bkt_params.keys())
-        rerank_results = _get_reranker().rerank(skill, bkt_params.keys())
 
         if skill == "":
             # if the knowledge does not contain a skill
             mastery_level.append(0.5)
-        elif rerank_results["rerank_scores"][0] >= 0.55:
+            continue
+
+        # Empty bkt_params means there's nothing to rerank against — bootstrap
+        # this skill with defaults so we don't call rerank on an empty list.
+        if not bkt_params:
+            bkt_params[skill] = {
+                "probMastery": 0.1,
+                "probTransit": 0.1,
+                "probSlip": 0.1,
+                "probGuess": 0.1,
+            }
+            mastery_level.append(0.1)
+            continue
+
+        rerank_results = _get_reranker().rerank(skill, list(bkt_params.keys()))
+        top_match = rerank_results["rerank_passages"][0]
+
+        if rerank_results["rerank_scores"][0] >= 0.55:
             # if the skill is very similar to a skill in the bkt_params
-            # use the bkt_params of that skill and update the skill name
-            bkt_params[skill] = bkt_params[rerank_results["rerank_passages"][0]]
-            del bkt_params[rerank_results["rerank_passages"][0]]
+            # use the bkt_params of that skill and update the skill name.
+            # Skip the rename when the names are identical, otherwise we'd
+            # delete the entry we just aliased and KeyError on access.
+            if skill != top_match:
+                bkt_params[skill] = bkt_params[top_match]
+                del bkt_params[top_match]
             mastery_level.append(bkt_params[skill]["probMastery"])
         else:
             # if the skill is not similar to any skill in the bkt_params
@@ -1904,6 +2037,9 @@ def get_skill_by_knowledge(knowledge):
     # Using re.findall to get all substrings between & characters
     substrings = re.findall(pattern, knowledge)
 
+    # Strip whitespace so empty/whitespace-only markers don't yield junk
+    # skills like " to ".
+    substrings = [s.strip() for s in substrings if s.strip()]
     if len(substrings) > 1:
         skill = substrings[1] + " to " + substrings[0]
     elif len(substrings) == 1:
@@ -1997,7 +2133,7 @@ def get_code_with_blank(video_id, segment_index, code_json):
     print("functions_attributes_to_learn:", function_attribute)
     # get the code with blank
     response = openai.ChatCompletion.create(
-        model="gpt-5",
+        model="gpt-5.4-mini",
         messages=[
             {
                 "role": "system",
@@ -2039,7 +2175,7 @@ def get_code_with_blank_by_step(video_id, segment_index, code_json, knowledge):
     function_attribute = get_function_attribute_by_knowledge(knowledge)
     # get the code with blank
     response = openai.ChatCompletion.create(
-        model="gpt-5",
+        model="gpt-5.4-mini",
         messages=[
             {
                 "role": "system",

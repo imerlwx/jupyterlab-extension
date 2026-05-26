@@ -8,7 +8,7 @@ import React, {
 } from 'react';
 // import ReactMarkdown from 'react-markdown';
 import { requestAPI } from './handler';
-import '@chatscope/chat-ui-kit-styles/dist/default/styles.min.css';
+// import '@chatscope/chat-ui-kit-styles/dist/default/styles.min.css';
 import {
   MainContainer,
   ChatContainer,
@@ -166,6 +166,9 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
   const [isAlredaySend, setIsAlredaySend] = useState(false);
   const [errorInCode, setErrorInCode] = useState('');
   const [selectedChoice, setSelectedChoice] = useState('');
+  const [answeredQuestions, setAnsweredQuestions] = useState<
+    Record<string, string>
+  >({});
   const [data, setData] = useState<DataRow[]>([]);
   const [selectedColumn, setSelectedColumn] = useState<string>('');
   const [statistics, setStatistics] = useState<IStatistics | null>(null);
@@ -358,6 +361,23 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
               code: null
             }
           ]);
+          // Build CUR_SEQ for segment 0 too — handleGoOn only runs when
+          // advancing, so without this the first segment has no teaching
+          // sequence and onEnd lands on the empty-CUR_SEQ fallback.
+          requestAPI<any>('update_seq', {
+            body: JSON.stringify({
+              videoId,
+              segmentIndex: 0,
+              category: response[0].category,
+              userId,
+              sessionId: sessionId
+            }),
+            method: 'POST'
+          }).catch(reason => {
+            console.error(
+              `Error on POST /jlab_ext_example/update_seq (segment 0).\n${reason}`
+            );
+          });
           setIsTyping(false);
         })
         .catch(reason => {
@@ -414,24 +434,32 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
   }
 
   const handleSend = useCallback(
-    async (question: string) => {
+    async (
+      question: string,
+      opts?: { articulationAnswer?: string; displayText?: string }
+    ) => {
       question = stripHTMLTags(question);
+      const articulationAnswer = opts?.articulationAnswer ?? '';
+      const displayText = opts?.displayText;
       if (errorInCode === '' && needHelp === false) {
-        const newMessage: IMessage = {
-          id: `msg-${Date.now()}`,
-          message: question,
-          sentTime: 'just now',
-          direction: 'outgoing',
-          sender: 'user',
-          videoId: null,
-          start: null,
-          end: null,
-          category: null,
-          interaction: 'plain text',
-          code: null
-        };
+        const outgoingText = displayText ?? question;
+        if (outgoingText) {
+          const newMessage: IMessage = {
+            id: `msg-${Date.now()}`,
+            message: outgoingText,
+            sentTime: 'just now',
+            direction: 'outgoing',
+            sender: 'user',
+            videoId: null,
+            start: null,
+            end: null,
+            category: null,
+            interaction: 'plain text',
+            code: null
+          };
 
-        setMessages(prevMessages => [...prevMessages, newMessage]);
+          setMessages(prevMessages => [...prevMessages, newMessage]);
+        }
       } else {
         setErrorInCode('');
         setNeedHelp(false);
@@ -521,6 +549,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
             segmentIndex: currentSegmentIndex,
             kernelType: kernelType,
             selectedChoice: selectedChoice,
+            articulationAnswer: articulationAnswer,
             userId: userId,
             sessionId: sessionId
           }),
@@ -839,7 +868,21 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
       parseCSV(response.data, parsedData => {
         if (parsedData.length > 0) {
           const columns = Object.keys(parsedData[0]);
-          setColumnNames(columns);
+          // Only keep columns that are numeric for at least half their rows,
+          // so the dropdown hides categorical / text columns the histogram
+          // and statistics block can't visualize.
+          const sampleSize = Math.min(parsedData.length, 50);
+          const numericColumns = columns.filter(col => {
+            let numericCount = 0;
+            for (let i = 0; i < sampleSize; i++) {
+              const v = parsedData[i][col];
+              if (v !== '' && v != null && !isNaN(parseFloat(v as string))) {
+                numericCount++;
+              }
+            }
+            return numericCount / sampleSize >= 0.5;
+          });
+          setColumnNames(numericColumns);
           setData(parsedData);
         }
       });
@@ -864,6 +907,16 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
       const columnData: number[] = data
         .map(row => parseFloat(row[selectedColumn]))
         .filter(value => !isNaN(value));
+
+      // Categorical / text column: nothing numeric to summarize. Clear state
+      // so the UI shows a friendly note instead of crashing on undefined
+      // median.toFixed.
+      if (columnData.length === 0) {
+        setStatistics(null);
+        setHistogramData([]);
+        return;
+      }
+
       const mean =
         columnData.reduce((acc, val) => acc + val, 0) / columnData.length;
       const sortedColumnData = [...columnData].sort((a, b) => a - b);
@@ -950,6 +1003,10 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
   }) => {
     const [isDropdownOpen, setDropdownOpen] = useState<boolean>(false);
     const [commonChoices, setCommonChoices] = useState<string[]>([]);
+    const [dropdownPos, setDropdownPos] = useState<{
+      x: number;
+      y: number;
+    } | null>(null);
 
     const videoIdRef = useRef(videoId);
     const currentSegmentIndexRef = useRef(currentSegmentIndex);
@@ -1016,8 +1073,20 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     }, [videoId, currentSegmentIndex]); // Dependencies on videoId and currentSegmentIndex to refetch when they change
 
     const handleCodeClick = (e: React.MouseEvent<HTMLDivElement>) => {
-      const selection: string = window.getSelection()?.toString() || '';
-      if (selection === '___') {
+      const selection = window.getSelection();
+      const selText: string = selection?.toString() || '';
+      if (selText === '___') {
+        // Anchor the dropdown to the actual blank's bounding rect, so it
+        // appears directly below the clicked ___ rather than off to the side.
+        let rect: DOMRect | null = null;
+        if (selection && selection.rangeCount > 0) {
+          rect = selection.getRangeAt(0).getBoundingClientRect();
+        }
+        if (rect && rect.width > 0) {
+          setDropdownPos({ x: rect.left, y: rect.bottom + 4 });
+        } else {
+          setDropdownPos({ x: e.clientX, y: e.clientY + 12 });
+        }
         setDropdownOpen(true);
       } else {
         setDropdownOpen(false);
@@ -1030,30 +1099,46 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     };
 
     return (
-      <div style={{ display: 'flex', alignItems: 'flex-start' }}>
-        <div onClick={handleCodeClick} style={{ flex: 1 }}>
+      <div style={{ position: 'relative' }}>
+        <div onClick={handleCodeClick}>
           <SyntaxHighlighter language="r" style={docco}>
             {code}
           </SyntaxHighlighter>
         </div>
-        {isDropdownOpen && (
+        {isDropdownOpen && dropdownPos && (
           <div
             style={{
-              marginLeft: '20px',
+              position: 'fixed',
+              left: dropdownPos.x,
+              top: dropdownPos.y,
               background: 'white',
-              padding: '10px',
-              borderRadius: '5px',
-              boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+              padding: '6px 0',
+              borderRadius: '6px',
+              border: '1px solid #e1e4e8',
+              boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
               zIndex: 1000,
-              position: 'sticky',
-              top: 0 // Adjust this to change the vertical alignment
+              minWidth: '140px',
+              maxHeight: '220px',
+              overflowY: 'auto'
             }}
+            onMouseDown={e => e.preventDefault()} // keep selection alive
           >
             {commonChoices.map((choice, index) => (
               <div
                 key={index}
                 onClick={() => replaceBlankWithSelection(choice)}
-                style={{ padding: '5px', cursor: 'pointer' }}
+                style={{
+                  padding: '6px 12px',
+                  cursor: 'pointer',
+                  fontFamily: 'monospace',
+                  fontSize: '0.85rem'
+                }}
+                onMouseEnter={e =>
+                  (e.currentTarget.style.background = '#f0f3f7')
+                }
+                onMouseLeave={e =>
+                  (e.currentTarget.style.background = 'transparent')
+                }
               >
                 {choice}
               </div>
@@ -1061,6 +1146,202 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
           </div>
         )}
       </div>
+    );
+  };
+
+  // Structured-text articulation input: a guided multi-slot textarea form.
+  interface IStructuredTextInputProps {
+    messageId: string;
+    intro: string;
+    slots: string[];
+    onSubmit: (combined: string) => void;
+    isSubmitted: boolean;
+    submittedValue?: string;
+  }
+
+  const StructuredTextInput: React.FC<IStructuredTextInputProps> = ({
+    intro,
+    slots,
+    onSubmit,
+    isSubmitted,
+    submittedValue
+  }) => {
+    const [values, setValues] = useState<string[]>(() => slots.map(() => ''));
+    const allEmpty = values.every(v => !v.trim());
+    return (
+      <Box
+        sx={{
+          width: '85%',
+          padding: '14px 16px',
+          marginBottom: '10px',
+          boxSizing: 'border-box',
+          backgroundColor: '#f7f9fc',
+          border: '1px solid #e1e4e8',
+          borderRadius: '10px',
+          boxShadow: '0 1px 2px rgba(0,0,0,0.04)'
+        }}
+      >
+        {intro && (
+          <Typography
+            sx={{
+              fontWeight: 600,
+              color: '#24292f',
+              marginBottom: '10px',
+              fontSize: '0.9rem'
+            }}
+          >
+            {intro}
+          </Typography>
+        )}
+        {slots.map((slot, idx) => (
+          <Box key={idx} sx={{ marginBottom: '8px' }}>
+            <Typography
+              sx={{
+                fontSize: '0.78rem',
+                color: '#57606a',
+                marginBottom: '2px',
+                fontWeight: 500
+              }}
+            >
+              {slot}
+            </Typography>
+            <textarea
+              value={isSubmitted ? '' : values[idx]}
+              onChange={e =>
+                setValues(v =>
+                  v.map((x, i) => (i === idx ? e.target.value : x))
+                )
+              }
+              disabled={isSubmitted}
+              placeholder="Write your thoughts here…"
+              rows={2}
+              style={{
+                width: '100%',
+                resize: 'vertical',
+                padding: '6px 8px',
+                fontFamily: 'inherit',
+                fontSize: '0.85rem',
+                border: '1px solid #d0d7de',
+                borderRadius: '6px',
+                background: isSubmitted ? '#f6f8fa' : 'white',
+                boxSizing: 'border-box'
+              }}
+            />
+          </Box>
+        ))}
+        <Button
+          variant="contained"
+          color="primary"
+          onClick={() => {
+            if (isSubmitted || allEmpty) {
+              return;
+            }
+            const combined = slots
+              .map((s, i) => `${s}: ${values[i].trim()}`)
+              .filter((line, i) => values[i].trim() !== '')
+              .join('\n\n');
+            onSubmit(combined);
+          }}
+          disabled={isSubmitted || allEmpty}
+          sx={{
+            padding: '6px 14px',
+            fontSize: '0.8rem',
+            marginTop: '6px',
+            textTransform: 'none',
+            borderRadius: '6px'
+          }}
+        >
+          {isSubmitted ? 'Submitted' : 'Submit'}
+        </Button>
+        {isSubmitted && submittedValue && (
+          <Box
+            sx={{
+              marginTop: '10px',
+              padding: '10px 12px',
+              borderRadius: '8px',
+              backgroundColor: '#eef2f7',
+              fontSize: '0.85rem',
+              whiteSpace: 'pre-wrap'
+            }}
+          >
+            {submittedValue}
+          </Box>
+        )}
+      </Box>
+    );
+  };
+
+  // Side-by-side comparison of the student's answer vs the expert's, plus
+  // similarity / difference / suggestion lines below.
+  interface ICompareWithExpertProps {
+    studentAnswer: string;
+    expertAnswer: string;
+    similarity?: string;
+    difference?: string;
+    suggestion?: string;
+  }
+
+  const CompareWithExpert: React.FC<ICompareWithExpertProps> = ({
+    expertAnswer,
+    similarity,
+    difference,
+    suggestion
+  }) => {
+    return (
+      <Box
+        sx={{
+          width: '85%',
+          padding: '14px 16px',
+          marginBottom: '10px',
+          boxSizing: 'border-box',
+          backgroundColor: '#f7f9fc',
+          border: '1px solid #e1e4e8',
+          borderRadius: '10px',
+          boxShadow: '0 1px 2px rgba(0,0,0,0.04)'
+        }}
+      >
+        <div
+          style={{
+            padding: '10px 12px',
+            borderRadius: '8px',
+            background: '#e6f4ea',
+            border: '1px solid #b7e1c1',
+            fontSize: '0.85rem',
+            whiteSpace: 'pre-wrap',
+            lineHeight: 1.4
+          }}
+        >
+          <div
+            style={{
+              fontWeight: 600,
+              marginBottom: '4px',
+              color: '#2f6a3b'
+            }}
+          >
+            Expert interpretation
+          </div>
+          {expertAnswer || '(unavailable)'}
+        </div>
+        {(similarity || difference || suggestion) && (
+          <Box sx={{ marginTop: '10px', fontSize: '0.85rem' }}>
+            {similarity && (
+              <div style={{ marginBottom: '4px' }}>
+                <strong>What you got right:</strong> {similarity}
+              </div>
+            )}
+            {difference && (
+              <div style={{ marginBottom: '4px' }}>
+                <strong>What to refine:</strong> {difference}
+              </div>
+            )}
+            {suggestion && (
+              <div>
+                <strong>Try next:</strong> {suggestion}
+              </div>
+            )}
+          </Box>
+        )}
+      </Box>
     );
   };
 
@@ -1077,20 +1358,30 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     const handleMouseLeave = () => setIsHovering(false);
 
     const containerStyle: CSSProperties = {
-      display: 'flex',
-      cursor: 'pointer'
-    };
-
-    const messageStyle: CSSProperties = {
-      flex: '0 1 85%', // flex shorthand for: flex-grow, flex-shrink, flex-basis
-      marginRight: 'auto',
+      position: 'relative',
+      display: 'block',
+      cursor: 'pointer',
       marginBottom: '5px'
     };
 
+    const messageStyle: CSSProperties = {
+      display: 'inline-block',
+      maxWidth: '100%'
+    };
+
     const actionBarStyle: CSSProperties = {
-      flex: '0 1 15%', // The action bar will take the remaining space
-      display: isHovering ? 'flex' : 'none', // Only show the action bar when hovering
-      justifyContent: 'flex-end' // Align buttons to the right
+      position: 'absolute',
+      right: '4px',
+      top: '50%',
+      transform: 'translateY(-50%)',
+      display: isHovering ? 'flex' : 'none',
+      gap: '2px',
+      padding: '2px 4px',
+      background: 'rgba(255,255,255,0.92)',
+      border: '1px solid #e1e4e8',
+      borderRadius: '14px',
+      boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
+      zIndex: 2
     };
 
     // Render based on message direction
@@ -1392,12 +1683,23 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                 message => message.message && message.message.trim() !== ''
               )
               .map((message, i) => {
-                // Parse the message if it's a multiple-choice question
+                // Parse JSON-bearing messages safely
                 const isMultipleChoice =
                   message.interaction === 'multiple-choice';
-                const parsedMessage = isMultipleChoice
-                  ? JSON.parse(message.message)
-                  : null;
+                const isStructuredText =
+                  message.interaction === 'structured-text';
+                const isCompareWithExpert =
+                  message.interaction === 'compare-with-expert';
+                const needsJsonParse =
+                  isMultipleChoice || isStructuredText || isCompareWithExpert;
+                let parsedMessage: any = null;
+                if (needsJsonParse) {
+                  try {
+                    parsedMessage = JSON.parse(message.message);
+                  } catch (err) {
+                    parsedMessage = null;
+                  }
+                }
 
                 return (
                   <>
@@ -1406,52 +1708,173 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                     )}
                     {isMultipleChoice && parsedMessage ? (
                       // Render the multiple-choice question
-                      <Box
-                        sx={{
-                          width: '85%',
-                          padding: 2,
-                          marginBottom: '10px',
-                          boxSizing: 'border-box'
-                        }}
-                      >
-                        <FormControl component="fieldset" variant="standard">
-                          <FormLabel component="legend">
-                            {parsedMessage.question}
-                          </FormLabel>
-                          <RadioGroup
-                            aria-label="multiple-choice-question"
-                            name={`multiple-choice-${i}`}
-                            value={selectedChoice}
-                            onChange={handleRadioChange}
-                          >
-                            {parsedMessage.choices.map(
-                              (choice: string, index: number) => (
-                                <FormControlLabel
-                                  key={index}
-                                  value={choice}
-                                  control={<Radio />}
-                                  label={choice}
-                                />
-                              )
-                            )}
-                          </RadioGroup>
-                          <Button
-                            variant="contained"
-                            color="primary"
-                            onClick={() => {
-                              handleSend('');
-                            }}
-                            disabled={!selectedChoice}
+                      (() => {
+                        const answered = answeredQuestions[message.id];
+                        const isAnswered = !!answered;
+                        const correctAnswer: string | undefined =
+                          parsedMessage['correct answer'] ||
+                          parsedMessage.correctAnswer;
+                        const rationale: string | undefined =
+                          parsedMessage.rationale;
+                        const isCorrect =
+                          isAnswered &&
+                          !!correctAnswer &&
+                          answered === correctAnswer;
+                        return (
+                          <Box
                             sx={{
-                              padding: '4px 10px', // Reduces padding
-                              fontSize: '0.75rem', // Reduces font size
-                              marginTop: '8px'
+                              width: '85%',
+                              padding: '14px 16px',
+                              marginBottom: '10px',
+                              boxSizing: 'border-box',
+                              backgroundColor: '#f7f9fc',
+                              border: '1px solid #e1e4e8',
+                              borderRadius: '10px',
+                              boxShadow: '0 1px 2px rgba(0,0,0,0.04)'
                             }}
                           >
-                            Submit
-                          </Button>
-                        </FormControl>
-                      </Box>
+                            <FormControl
+                              component="fieldset"
+                              variant="standard"
+                              disabled={isAnswered}
+                              sx={{ width: '100%' }}
+                            >
+                              <FormLabel
+                                component="legend"
+                                sx={{
+                                  fontWeight: 600,
+                                  color: '#24292f',
+                                  marginBottom: '8px',
+                                  '&.Mui-disabled': { color: '#24292f' }
+                                }}
+                              >
+                                {parsedMessage.question}
+                              </FormLabel>
+                              <RadioGroup
+                                aria-label="multiple-choice-question"
+                                name={`multiple-choice-${i}`}
+                                value={isAnswered ? answered : selectedChoice}
+                                onChange={handleRadioChange}
+                              >
+                                {parsedMessage.choices.map(
+                                  (choice: string, index: number) => (
+                                    <FormControlLabel
+                                      key={index}
+                                      value={choice}
+                                      control={<Radio size="small" />}
+                                      label={choice}
+                                      sx={{
+                                        marginY: '2px',
+                                        paddingX: '6px',
+                                        borderRadius: '6px',
+                                        backgroundColor: !isAnswered
+                                          ? 'transparent'
+                                          : correctAnswer &&
+                                              choice === correctAnswer
+                                            ? '#e6f4ea'
+                                            : choice === answered
+                                              ? '#fdecea'
+                                              : 'transparent',
+                                        '&:hover': {
+                                          backgroundColor: isAnswered
+                                            ? undefined
+                                            : '#eef2f7'
+                                        }
+                                      }}
+                                    />
+                                  )
+                                )}
+                              </RadioGroup>
+                              <Button
+                                variant="contained"
+                                color="primary"
+                                onClick={() => {
+                                  if (!selectedChoice || isAnswered) {
+                                    return;
+                                  }
+                                  setAnsweredQuestions(prev => ({
+                                    ...prev,
+                                    [message.id]: selectedChoice
+                                  }));
+                                  handleSend('');
+                                }}
+                                disabled={!selectedChoice || isAnswered}
+                                sx={{
+                                  padding: '6px 14px',
+                                  fontSize: '0.8rem',
+                                  marginTop: '10px',
+                                  alignSelf: 'flex-start',
+                                  textTransform: 'none',
+                                  borderRadius: '6px'
+                                }}
+                              >
+                                {isAnswered ? 'Submitted' : 'Submit'}
+                              </Button>
+                              {isAnswered && (correctAnswer || rationale) && (
+                                <Box
+                                  sx={{
+                                    marginTop: '10px',
+                                    padding: '10px 12px',
+                                    borderRadius: '8px',
+                                    backgroundColor: isCorrect
+                                      ? '#e6f4ea'
+                                      : '#fff4e5',
+                                    border: `1px solid ${
+                                      isCorrect ? '#b7e1c1' : '#ffd9a8'
+                                    }`,
+                                    fontSize: '0.85rem',
+                                    color: '#24292f'
+                                  }}
+                                >
+                                  {correctAnswer && (
+                                    <div
+                                      style={{
+                                        fontWeight: 600,
+                                        marginBottom: rationale ? '4px' : 0
+                                      }}
+                                    >
+                                      {isCorrect
+                                        ? 'Correct!'
+                                        : `Correct answer: ${correctAnswer}`}
+                                    </div>
+                                  )}
+                                  {rationale && <div>{rationale}</div>}
+                                </Box>
+                              )}
+                            </FormControl>
+                          </Box>
+                        );
+                      })()
+                    ) : isStructuredText && parsedMessage ? (
+                      <StructuredTextInput
+                        messageId={message.id}
+                        intro={parsedMessage.intro || ''}
+                        slots={
+                          Array.isArray(parsedMessage.slots)
+                            ? parsedMessage.slots
+                            : []
+                        }
+                        isSubmitted={!!answeredQuestions[message.id]}
+                        submittedValue={answeredQuestions[message.id]}
+                        onSubmit={combined => {
+                          setAnsweredQuestions(prev => ({
+                            ...prev,
+                            [message.id]: combined
+                          }));
+                          // Keep the answer visible only inside the locked
+                          // input box. Do not echo it as a chat bubble; the
+                          // Reflection that follows will reference it.
+                          handleSend('', { articulationAnswer: combined });
+                        }}
+                      />
+                    ) : isCompareWithExpert && parsedMessage ? (
+                      <CompareWithExpert
+                        studentAnswer={parsedMessage.studentAnswer || ''}
+                        expertAnswer={parsedMessage.expertAnswer || ''}
+                        similarity={parsedMessage.similarity}
+                        difference={parsedMessage.difference}
+                        suggestion={parsedMessage.suggestion}
+                      />
                     ) : (
                       <MessageComponent
                         key={message.id} // Make sure each message has a unique key
@@ -1579,6 +2002,27 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                             ))}
                           </Select>
                         </FormControl>
+                        {selectedColumn && !statistics && (
+                          <Box
+                            sx={{
+                              p: 1,
+                              mb: 2,
+                              width: '80%',
+                              backgroundColor: 'grey.100',
+                              borderRadius: '4px',
+                              fontSize: '0.85rem',
+                              color: 'text.secondary'
+                            }}
+                          >
+                            <Typography variant="body2">
+                              <strong>{selectedColumn}</strong> looks like a
+                              categorical / text column, so numeric statistics
+                              and a histogram aren't available. Try a numeric
+                              column (e.g., counts or revenues) to see the
+                              summary and distribution.
+                            </Typography>
+                          </Box>
+                        )}
                         {statistics && (
                           <Box
                             sx={{
@@ -1696,7 +2140,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
           <MessageInput
             placeholder="Type message here"
             attachButton={false}
-            onSend={handleSend}
+            onSend={text => handleSend(text)}
             style={{
               maxHeight: '100px',
               overflowY: 'auto'
