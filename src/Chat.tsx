@@ -44,14 +44,14 @@ import RadioGroup from '@mui/material/RadioGroup';
 import FormControlLabel from '@mui/material/FormControlLabel';
 import FormControl from '@mui/material/FormControl';
 import FormLabel from '@mui/material/FormLabel';
-import SyntaxHighlighter from 'react-syntax-highlighter';
-import { docco } from 'react-syntax-highlighter/dist/esm/styles/hljs';
+// react-syntax-highlighter is no longer used: code blocks now render as
+// flat <pre> with our own monospace styling so blanks and per-line ask
+// buttons can be real React components.
 import axios from 'axios';
 import InputLabel from '@mui/material/InputLabel';
 import MenuItem from '@mui/material/MenuItem';
+import Menu from '@mui/material/Menu';
 import Select, { SelectChangeEvent } from '@mui/material/Select';
-import IconButton from '@mui/material/IconButton';
-import HelpIcon from '@mui/icons-material/Help';
 import ArrowForwardIosIcon from '@mui/icons-material/ArrowForwardIos';
 import Papa from 'papaparse';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
@@ -154,6 +154,15 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
   const [isTyping, setIsTyping] = useState(false);
   // const [inputValue, setInputValue] = useState('');
   const [canGoOn, setCanGoOn] = useState(false);
+  // Tracks the latest incoming message's need_response flag.
+  //   false → it's a read-only message; the docked button shows "Next
+  //           message" enabled, and the student clicks when ready.
+  //   true  → the message has an interaction widget; the button is
+  //           disabled until the widget's own submission auto-advances.
+  //   null  → between sends, waiting for the server to respond.
+  const [lastNeedResponse, setLastNeedResponse] = useState<boolean | null>(
+    null
+  );
   const [currentSegmentIndex, setCurrentSegmentIndex] = useState(0);
   // const [lastActivityTime, setLastActivityTime] = useState<number>(Date.now());
   const [kernelType, setKernelType] = useState('ir');
@@ -162,6 +171,10 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
   const currentSegmentIndexRef = useRef(currentSegmentIndex);
   const videoIdRef = useRef(videoId);
   const canGoOnRef = useRef(canGoOn);
+  // Mirror userId in a ref so callbacks captured by handleSend / initializeChat
+  // (whose closures don't include userId) can still read the fresh value
+  // after handleUserIDSubmit has setUserId'd.
+  const userIdRef = useRef<string>('');
   const [isReadyToSend, setIsReadyToSend] = useState(false);
   const [isAlredaySend, setIsAlredaySend] = useState(false);
   const [errorInCode, setErrorInCode] = useState('');
@@ -373,11 +386,26 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
               sessionId: sessionId
             }),
             method: 'POST'
-          }).catch(reason => {
-            console.error(
-              `Error on POST /jlab_ext_example/update_seq (segment 0).\n${reason}`
-            );
-          });
+          })
+            .then(() => {
+              // Test-mode shortcut: skip the watch-the-video wait and
+              // fire the first chat message immediately so the
+              // "Next message" button becomes usable right away.
+              // We sync the refs synchronously here because handleSend's
+              // closure (captured at first render with empty state) reads
+              // userId/videoId from these refs.
+              if (userId.startsWith('test_')) {
+                userIdRef.current = userId;
+                videoIdRef.current = videoId;
+                setIsAlredaySend(true);
+                setTimeout(() => handleSend(''), 150);
+              }
+            })
+            .catch(reason => {
+              console.error(
+                `Error on POST /jlab_ext_example/update_seq (segment 0).\n${reason}`
+              );
+            });
           setIsTyping(false);
         })
         .catch(reason => {
@@ -465,15 +493,29 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
         setNeedHelp(false);
       }
 
-      if (videoId === '') {
+      // Use videoIdRef rather than the closure variable so the
+      // test-mode auto-fire (which can race with setVideoId's state
+      // propagation) doesn't mistake an already-set videoId for an
+      // empty one and re-trigger initializeChat with a blank string.
+      const currentVideoId = videoIdRef.current || videoId;
+      if (currentVideoId === '') {
         setIsTyping(true);
         setCanGoOn(true);
 
         const extractedVideoId = question.trim();
+        if (!extractedVideoId) {
+          // No videoId in state and nothing to extract from the input —
+          // ignore this stray send rather than firing initializeChat with
+          // an empty string (which crashes /segments downstream).
+          setIsTyping(false);
+          return;
+        }
         setVideoId(extractedVideoId);
         initializeChat(extractedVideoId, userId);
       } else {
         setIsTyping(true);
+        // Disable the docked button while a response is in flight.
+        setLastNeedResponse(null);
         const currentNotebookContent = JSON.stringify(
           props.getCurrentNotebookContent()
         );
@@ -488,6 +530,14 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
           category = 'Conclusion';
         }
 
+        // Use ref values for userId/videoId/segmentIndex so that callers
+        // who invoke handleSend via a setTimeout (test-mode auto-fire,
+        // for example) see the post-handleUserIDSubmit values rather than
+        // the empty initial closure values.
+        const effectiveUserId = userIdRef.current || userId;
+        const effectiveVideoId = videoIdRef.current || videoId;
+        const effectiveSegIdx = currentSegmentIndexRef.current;
+
         // Update bkt when student has typed something in the chatbox
         if (selectedChoice !== '') {
           requestAPI<any>('update_bkt', {
@@ -495,9 +545,9 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
               initialCode: '',
               filledCode: '',
               selectedChoice: selectedChoice,
-              videoId: videoIdRef.current,
-              segmentIndex: currentSegmentIndexRef.current,
-              userId: userId,
+              videoId: effectiveVideoId,
+              segmentIndex: effectiveSegIdx,
+              userId: effectiveUserId,
               sessionId: sessionId
             }),
             method: 'POST'
@@ -512,28 +562,26 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
             });
         }
 
-        if (category === 'Self-exploration') {
-          setCanGoOn(false);
-        } else if (category === 'Introduction') {
-          setCanGoOn(true);
-        } else {
-          if (canGoOn === false) {
-            requestAPI<any>('go_on', {
-              body: JSON.stringify({
-                videoId: videoId,
-                segmentIndex: currentSegmentIndex
-              }),
-              method: 'POST'
+        // Go-On is now gated purely by whether CUR_SEQ is empty (which is
+        // what /go_on checks). No per-category overrides: a segment can
+        // only be advanced past once all its teaching methods have fired.
+        if (canGoOnRef.current === false) {
+          requestAPI<any>('go_on', {
+            body: JSON.stringify({
+              videoId: effectiveVideoId,
+              segmentIndex: effectiveSegIdx,
+              userId: effectiveUserId
+            }),
+            method: 'POST'
+          })
+            .then(response => {
+              setCanGoOn(response.toLowerCase() === 'yes');
             })
-              .then(response => {
-                setCanGoOn(response.toLowerCase() === 'yes');
-              })
-              .catch(reason => {
-                console.error(
-                  `Error on POST /jlab_ext_example/go_on .\n${reason}`
-                );
-              });
-          }
+            .catch(reason => {
+              console.error(
+                `Error on POST /jlab_ext_example/go_on .\n${reason}`
+              );
+            });
         }
 
         // Define a regex to extract code blocks enclosed in triple backticks
@@ -544,13 +592,13 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
           body: JSON.stringify({
             notebook: currentNotebookContent,
             question: question,
-            videoId: videoId,
+            videoId: effectiveVideoId,
             category: category,
-            segmentIndex: currentSegmentIndex,
+            segmentIndex: effectiveSegIdx,
             kernelType: kernelType,
             selectedChoice: selectedChoice,
             articulationAnswer: articulationAnswer,
-            userId: userId,
+            userId: effectiveUserId,
             sessionId: sessionId
           }),
           method: 'POST'
@@ -631,13 +679,15 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
             ]);
             setIsTyping(false);
             setSelectedChoice('');
-            // New logic to check for 'need_response'
-            if (!response.need_response) {
-              setTimeout(() => {
-                handleSend('');
-              }, 0);
-            }
-            // setCode('');
+            // Record whether the user must click "Next message" themselves
+            // (need_response=false → wait for click) or whether the next
+            // chat call will be triggered by an interactive widget's
+            // submission (need_response=true → button stays disabled).
+            setLastNeedResponse(
+              response.need_response === undefined
+                ? null
+                : !!response.need_response
+            );
           })
           .catch(reason => {
             console.error(`Error on POST /jlab_ext_example/chats .\n${reason}`);
@@ -677,6 +727,17 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
       })
         .then(() => {
           console.log('Update sequence successful.');
+          // Test-mode shortcut: bypass the video-watch step and fire
+          // the first chat message of the new segment immediately so
+          // the "Next message" button becomes usable without waiting.
+          // Sync refs synchronously — handleSend reads from them.
+          if (userId.startsWith('test_')) {
+            userIdRef.current = userId;
+            videoIdRef.current = videoId;
+            currentSegmentIndexRef.current = currentSegmentIndex + 1;
+            setIsAlredaySend(true);
+            setTimeout(() => handleSend(''), 150);
+          }
         })
         .catch(reason => {
           console.error(
@@ -764,7 +825,8 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     currentSegmentIndexRef.current = currentSegmentIndex;
     videoIdRef.current = videoId;
     canGoOnRef.current = canGoOn;
-  }, [currentSegmentIndex, videoId, canGoOn]);
+    userIdRef.current = userId;
+  }, [currentSegmentIndex, videoId, canGoOn, userId]);
 
   useEffect(() => {
     // This effect runs when videoId changes
@@ -815,17 +877,26 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
       }
     }
 
+    // onCellExecuted is connected once in a useEffect with [] deps, so its
+    // closure permanently captures the first-render state. Read live
+    // values from refs so we never POST with stale empty userId/videoId
+    // (which would route the request to the "unknown" session and corrupt
+    // both the log and the /go_on signal).
+    const liveUserId = userIdRef.current || userId;
+    const liveVideoId = videoIdRef.current || videoId;
+    const liveSegIdx = currentSegmentIndexRef.current;
+
     requestAPI<any>('log_code_execution', {
       body: JSON.stringify({
-        userId: userId,
+        userId: liveUserId,
         sessionId: sessionId,
         code: executedCellContent,
         cellType: cellType,
         status: executionStatus,
         output: outputText,
         error: errorText,
-        videoId: videoId,
-        segmentIndex: currentSegmentIndex
+        videoId: liveVideoId,
+        segmentIndex: liveSegIdx
       }),
       method: 'POST'
     }).catch(err => {
@@ -835,8 +906,9 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     if (canGoOnRef.current === false) {
       requestAPI<any>('go_on', {
         body: JSON.stringify({
-          videoId: videoIdRef.current,
-          segmentIndex: currentSegmentIndexRef.current
+          videoId: liveVideoId,
+          segmentIndex: liveSegIdx,
+          userId: liveUserId
         }),
         method: 'POST'
       })
@@ -876,7 +948,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
             let numericCount = 0;
             for (let i = 0; i < sampleSize; i++) {
               const v = parsedData[i][col];
-              if (v !== '' && v != null && !isNaN(parseFloat(v as string))) {
+              if (v !== '' && v !== null && !isNaN(parseFloat(v as string))) {
                 numericCount++;
               }
             }
@@ -1001,11 +1073,13 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     currentSegmentIndex,
     onReadyToSend
   }) => {
-    const [isDropdownOpen, setDropdownOpen] = useState<boolean>(false);
     const [commonChoices, setCommonChoices] = useState<string[]>([]);
-    const [dropdownPos, setDropdownPos] = useState<{
-      x: number;
-      y: number;
+    // Open menu state: which blank's button is currently anchoring the menu.
+    // `el` is used as the MUI Menu's anchorEl so the menu sits right under
+    // the clicked button.
+    const [menuAnchor, setMenuAnchor] = useState<{
+      el: HTMLElement;
+      blankIdx: number;
     } | null>(null);
 
     const videoIdRef = useRef(videoId);
@@ -1072,80 +1146,106 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
       }
     }, [videoId, currentSegmentIndex]); // Dependencies on videoId and currentSegmentIndex to refetch when they change
 
-    const handleCodeClick = (e: React.MouseEvent<HTMLDivElement>) => {
-      const selection = window.getSelection();
-      const selText: string = selection?.toString() || '';
-      if (selText === '___') {
-        // Anchor the dropdown to the actual blank's bounding rect, so it
-        // appears directly below the clicked ___ rather than off to the side.
-        let rect: DOMRect | null = null;
-        if (selection && selection.rangeCount > 0) {
-          rect = selection.getRangeAt(0).getBoundingClientRect();
-        }
-        if (rect && rect.width > 0) {
-          setDropdownPos({ x: rect.left, y: rect.bottom + 4 });
-        } else {
-          setDropdownPos({ x: e.clientX, y: e.clientY + 12 });
-        }
-        setDropdownOpen(true);
-      } else {
-        setDropdownOpen(false);
+    const handleSelectChoice = (choice: string) => {
+      if (menuAnchor === null) {
+        return;
       }
+      const targetIdx = menuAnchor.blankIdx;
+      let count = -1;
+      const newCode = code.replace(/___/g, match => {
+        count++;
+        return count === targetIdx ? choice : match;
+      });
+      onCodeChange(newCode);
+      setMenuAnchor(null);
     };
 
-    const replaceBlankWithSelection = (choice: string) => {
-      onCodeChange(code.replace('___', choice));
-      setDropdownOpen(false); // Close the dropdown after selection
-    };
+    // Split the code on the placeholder. The capturing group keeps the
+    // placeholders themselves in the array so we can render each one as
+    // an interactive button without losing positions in the surrounding
+    // monospace text.
+    const parts = code.split(/(___)/);
+    let blankCounter = -1;
 
     return (
-      <div style={{ position: 'relative' }}>
-        <div onClick={handleCodeClick}>
-          <SyntaxHighlighter language="r" style={docco}>
-            {code}
-          </SyntaxHighlighter>
-        </div>
-        {isDropdownOpen && dropdownPos && (
-          <div
-            style={{
-              position: 'fixed',
-              left: dropdownPos.x,
-              top: dropdownPos.y,
-              background: 'white',
-              padding: '6px 0',
-              borderRadius: '6px',
-              border: '1px solid #e1e4e8',
-              boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-              zIndex: 1000,
-              minWidth: '140px',
-              maxHeight: '220px',
-              overflowY: 'auto'
-            }}
-            onMouseDown={e => e.preventDefault()} // keep selection alive
-          >
-            {commonChoices.map((choice, index) => (
-              <div
+      <>
+        <pre
+          style={{
+            margin: 0,
+            padding: '12px 14px',
+            background: '#f6f8fa',
+            border: '1px solid #e1e4e8',
+            borderRadius: '6px',
+            fontFamily:
+              'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+            fontSize: '0.85rem',
+            lineHeight: 1.6,
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+            color: '#24292f'
+          }}
+        >
+          {parts.map((part, i) => {
+            if (part === '___') {
+              blankCounter += 1;
+              const myIdx = blankCounter;
+              return (
+                <Button
+                  key={`b-${i}`}
+                  size="small"
+                  variant="outlined"
+                  onClick={e =>
+                    setMenuAnchor({
+                      el: e.currentTarget,
+                      blankIdx: myIdx
+                    })
+                  }
+                  sx={{
+                    minWidth: 0,
+                    padding: '0 6px',
+                    margin: '0 2px',
+                    fontFamily: 'inherit',
+                    fontSize: 'inherit',
+                    lineHeight: 1.2,
+                    textTransform: 'none',
+                    color: '#0969da',
+                    borderColor: '#0969da',
+                    background: 'white',
+                    '&:hover': { background: '#ddf4ff' }
+                  }}
+                >
+                  ___
+                </Button>
+              );
+            }
+            return <span key={`t-${i}`}>{part}</span>;
+          })}
+        </pre>
+        <Menu
+          anchorEl={menuAnchor?.el ?? null}
+          open={menuAnchor !== null}
+          onClose={() => setMenuAnchor(null)}
+          MenuListProps={{ dense: true }}
+        >
+          {commonChoices.length === 0 ? (
+            <MenuItem disabled>(loading choices…)</MenuItem>
+          ) : (
+            commonChoices.map((choice, index) => (
+              <MenuItem
                 key={index}
-                onClick={() => replaceBlankWithSelection(choice)}
-                style={{
-                  padding: '6px 12px',
-                  cursor: 'pointer',
-                  fontFamily: 'monospace',
+                onClick={() => handleSelectChoice(choice)}
+                sx={{
+                  fontFamily:
+                    'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
                   fontSize: '0.85rem'
                 }}
-                onMouseEnter={e =>
-                  (e.currentTarget.style.background = '#f0f3f7')
-                }
-                onMouseLeave={e =>
-                  (e.currentTarget.style.background = 'transparent')
-                }
               >
                 {choice}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+              </MenuItem>
+            ))
+          )}
+        </Menu>
+      </>
     );
   };
 
@@ -1271,11 +1371,15 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     );
   };
 
-  // Side-by-side comparison of the student's answer vs the expert's, plus
-  // similarity / difference / suggestion lines below.
+  // Compare-with-expert Reflection card. The Articulation that precedes
+  // this is now a single open question, so the expert answer + one
+  // feedback line is enough — much lighter than the prior 3-field
+  // similarity/difference/suggestion layout. Older payloads with the
+  // 3-field shape still render (backward-compat).
   interface ICompareWithExpertProps {
     studentAnswer: string;
     expertAnswer: string;
+    feedback?: string;
     similarity?: string;
     difference?: string;
     suggestion?: string;
@@ -1283,10 +1387,12 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
 
   const CompareWithExpert: React.FC<ICompareWithExpertProps> = ({
     expertAnswer,
+    feedback,
     similarity,
     difference,
     suggestion
   }) => {
+    const hasLegacyFields = !!(similarity || difference || suggestion);
     return (
       <Box
         sx={{
@@ -1322,7 +1428,23 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
           </div>
           {expertAnswer || '(unavailable)'}
         </div>
-        {(similarity || difference || suggestion) && (
+        {feedback && (
+          <Box
+            sx={{
+              marginTop: '10px',
+              padding: '8px 10px',
+              borderRadius: '6px',
+              background: '#fff8e1',
+              border: '1px solid #ffe3a3',
+              fontSize: '0.85rem',
+              color: '#24292f',
+              lineHeight: 1.4
+            }}
+          >
+            <strong>Feedback:</strong> {feedback}
+          </Box>
+        )}
+        {!feedback && hasLegacyFields && (
           <Box sx={{ marginTop: '10px', fontSize: '0.85rem' }}>
             {similarity && (
               <div style={{ marginBottom: '4px' }}>
@@ -1345,86 +1467,241 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     );
   };
 
+  // "Expert reading" card used by the Modeling move. Surfaces the hidden
+  // interpretation process the video tutor doesn't narrate: where the
+  // expert looks, what they compare, and what they notice. The conclusion
+  // ("What this tells us") starts hidden so the student has a moment to
+  // mentally fill it in from what they just saw in the video before
+  // confirming. Modeling does NOT update BKT — this is teaching, not
+  // assessment.
+  interface IExpertReadingProps {
+    whereToLook: string;
+    whatToCompare: string;
+    whatToNotice: string;
+  }
+
+  const ExpertReading: React.FC<IExpertReadingProps> = ({
+    whereToLook,
+    whatToCompare,
+    whatToNotice
+  }) => {
+    const [revealed, setRevealed] = useState<boolean>(false);
+    const rowStyle: CSSProperties = {
+      display: 'flex',
+      gap: '8px',
+      alignItems: 'flex-start',
+      marginBottom: '10px'
+    };
+    const iconStyle: CSSProperties = {
+      fontSize: '1rem',
+      lineHeight: '1.2',
+      flex: '0 0 auto',
+      width: '20px',
+      textAlign: 'center'
+    };
+    const labelStyle: CSSProperties = {
+      fontSize: '0.72rem',
+      color: '#57606a',
+      fontWeight: 600,
+      textTransform: 'uppercase',
+      letterSpacing: '0.04em',
+      marginBottom: '2px'
+    };
+    const bodyStyle: CSSProperties = {
+      fontSize: '0.85rem',
+      color: '#24292f',
+      lineHeight: 1.4
+    };
+    return (
+      <Box
+        sx={{
+          width: '85%',
+          padding: '14px 16px',
+          marginBottom: '10px',
+          boxSizing: 'border-box',
+          backgroundColor: '#f7f9fc',
+          border: '1px solid #e1e4e8',
+          borderRadius: '10px',
+          boxShadow: '0 1px 2px rgba(0,0,0,0.04)'
+        }}
+      >
+        <Typography
+          sx={{
+            fontWeight: 600,
+            color: '#24292f',
+            marginBottom: '12px',
+            fontSize: '0.9rem'
+          }}
+        >
+          How the expert reads this
+        </Typography>
+        <div style={rowStyle}>
+          <span style={iconStyle}>👁</span>
+          <div style={{ flex: 1 }}>
+            <div style={labelStyle}>Where to look</div>
+            <div style={bodyStyle}>{whereToLook || '(unavailable)'}</div>
+          </div>
+        </div>
+        <div style={rowStyle}>
+          <span style={iconStyle}>⚖</span>
+          <div style={{ flex: 1 }}>
+            <div style={labelStyle}>What to compare</div>
+            <div style={bodyStyle}>{whatToCompare || '(unavailable)'}</div>
+          </div>
+        </div>
+        <div style={{ ...rowStyle, marginBottom: 0 }}>
+          <span style={iconStyle}>💡</span>
+          <div style={{ flex: 1 }}>
+            <div style={labelStyle}>What this tells us</div>
+            {revealed ? (
+              <div
+                style={{
+                  ...bodyStyle,
+                  padding: '8px 10px',
+                  background: '#e6f4ea',
+                  border: '1px solid #b7e1c1',
+                  borderRadius: '6px'
+                }}
+              >
+                {whatToNotice || '(unavailable)'}
+              </div>
+            ) : (
+              <Button
+                variant="outlined"
+                size="small"
+                onClick={() => setRevealed(true)}
+                sx={{
+                  textTransform: 'none',
+                  fontSize: '0.78rem',
+                  padding: '2px 12px',
+                  borderRadius: '6px',
+                  color: '#0969da',
+                  borderColor: '#0969da',
+                  '&:hover': { background: '#ddf4ff' }
+                }}
+              >
+                Reveal
+              </Button>
+            )}
+          </div>
+        </div>
+      </Box>
+    );
+  };
+
+  // "Task intent" card used by the Modeling move in programming segments.
+  // Frames the segment's goal and rationale before any practice — the
+  // video shows the code but doesn't motivate why the chart type or
+  // function chain was chosen, so this card makes that intention explicit.
+  // No BKT update fires — Modeling is teaching, not assessment.
+  interface ITaskIntentProps {
+    taskGoal: string;
+    approach: string;
+    rationale: string;
+  }
+
+  const TaskIntent: React.FC<ITaskIntentProps> = ({
+    taskGoal,
+    approach,
+    rationale
+  }) => {
+    const rowStyle: CSSProperties = {
+      display: 'flex',
+      gap: '8px',
+      alignItems: 'flex-start',
+      marginBottom: '10px'
+    };
+    const iconStyle: CSSProperties = {
+      fontSize: '1rem',
+      lineHeight: '1.2',
+      flex: '0 0 auto',
+      width: '20px',
+      textAlign: 'center'
+    };
+    const labelStyle: CSSProperties = {
+      fontSize: '0.72rem',
+      color: '#57606a',
+      fontWeight: 600,
+      textTransform: 'uppercase',
+      letterSpacing: '0.04em',
+      marginBottom: '2px'
+    };
+    const bodyStyle: CSSProperties = {
+      fontSize: '0.85rem',
+      color: '#24292f',
+      lineHeight: 1.4
+    };
+    return (
+      <Box
+        sx={{
+          width: '85%',
+          padding: '14px 16px',
+          marginBottom: '10px',
+          boxSizing: 'border-box',
+          backgroundColor: '#f7f9fc',
+          border: '1px solid #e1e4e8',
+          borderRadius: '10px',
+          boxShadow: '0 1px 2px rgba(0,0,0,0.04)'
+        }}
+      >
+        <Typography
+          sx={{
+            fontWeight: 600,
+            color: '#24292f',
+            marginBottom: '12px',
+            fontSize: '0.9rem'
+          }}
+        >
+          What we&rsquo;re doing in this clip
+        </Typography>
+        <div style={rowStyle}>
+          <span style={iconStyle}>🎯</span>
+          <div style={{ flex: 1 }}>
+            <div style={labelStyle}>The task</div>
+            <div style={bodyStyle}>{taskGoal || '(unavailable)'}</div>
+          </div>
+        </div>
+        <div style={rowStyle}>
+          <span style={iconStyle}>🛠</span>
+          <div style={{ flex: 1 }}>
+            <div style={labelStyle}>The approach</div>
+            <div style={bodyStyle}>{approach || '(unavailable)'}</div>
+          </div>
+        </div>
+        <div style={{ ...rowStyle, marginBottom: 0 }}>
+          <span style={iconStyle}>💡</span>
+          <div style={{ flex: 1 }}>
+            <div style={labelStyle}>Why this approach</div>
+            <div style={bodyStyle}>{rationale || '(unavailable)'}</div>
+          </div>
+        </div>
+      </Box>
+    );
+  };
+
   // Props for the MessageComponent
   interface IMessageComponentProps {
     message: IMessage;
     handleSend: (text: string) => void; // Assuming handleSend takes a string argument and returns void
   }
 
-  function MessageComponent({ message, handleSend }: IMessageComponentProps) {
-    const [isHovering, setIsHovering] = React.useState(false);
-
-    const handleMouseEnter = () => setIsHovering(true);
-    const handleMouseLeave = () => setIsHovering(false);
-
-    const containerStyle: CSSProperties = {
-      position: 'relative',
-      display: 'block',
-      cursor: 'pointer',
-      marginBottom: '5px'
-    };
-
-    const messageStyle: CSSProperties = {
-      display: 'inline-block',
-      maxWidth: '100%'
-    };
-
-    const actionBarStyle: CSSProperties = {
-      position: 'absolute',
-      right: '4px',
-      top: '50%',
-      transform: 'translateY(-50%)',
-      display: isHovering ? 'flex' : 'none',
-      gap: '2px',
-      padding: '2px 4px',
-      background: 'rgba(255,255,255,0.92)',
-      border: '1px solid #e1e4e8',
-      borderRadius: '14px',
-      boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
-      zIndex: 2
-    };
-
-    // Render based on message direction
+  function MessageComponent({ message }: IMessageComponentProps) {
+    // The hover-only "continue" and "explain more" buttons used to live
+    // here. They've moved to a single docked action bar next to "Go on"
+    // at the bottom of the chat panel, so MessageComponent just renders
+    // the bubble with no overlay chrome.
     if (message.direction === 'incoming') {
       return (
-        <div
-          className="message-container"
-          style={containerStyle}
-          onMouseEnter={handleMouseEnter}
-          onMouseLeave={handleMouseLeave}
-        >
-          <div className="message-content" style={messageStyle}>
-            <Message
-              key={message.sentTime}
-              model={{
-                message: message.message,
-                direction: message.direction,
-                sender: message.sender,
-                sentTime: message.sentTime,
-                position: 'single'
-              }}
-            />
-          </div>
-          <div className="message-actions" style={actionBarStyle}>
-            <IconButton
-              title="continue"
-              onClick={() => handleSend('')}
-              size="small"
-            >
-              <ArrowForwardIosIcon />
-            </IconButton>
-            <IconButton
-              title="explain more"
-              onClick={() => {
-                setNeedHelp(true);
-                handleSend('explain this in more detail: ' + message.message);
-              }}
-              size="small"
-            >
-              <HelpIcon />
-            </IconButton>
-          </div>
-        </div>
+        <Message
+          key={message.sentTime}
+          model={{
+            message: message.message,
+            direction: message.direction,
+            sender: message.sender,
+            sentTime: message.sentTime,
+            position: 'single'
+          }}
+        />
       );
     } else {
       return (
@@ -1690,8 +1967,15 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                   message.interaction === 'structured-text';
                 const isCompareWithExpert =
                   message.interaction === 'compare-with-expert';
+                const isExpertReading =
+                  message.interaction === 'expert-reading';
+                const isTaskIntent = message.interaction === 'task-intent';
                 const needsJsonParse =
-                  isMultipleChoice || isStructuredText || isCompareWithExpert;
+                  isMultipleChoice ||
+                  isStructuredText ||
+                  isCompareWithExpert ||
+                  isExpertReading ||
+                  isTaskIntent;
                 let parsedMessage: any = null;
                 if (needsJsonParse) {
                   try {
@@ -1770,7 +2054,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                                         backgroundColor: !isAnswered
                                           ? 'transparent'
                                           : correctAnswer &&
-                                              choice === correctAnswer
+                                            choice === correctAnswer
                                             ? '#e6f4ea'
                                             : choice === answered
                                               ? '#fdecea'
@@ -1819,9 +2103,8 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                                     backgroundColor: isCorrect
                                       ? '#e6f4ea'
                                       : '#fff4e5',
-                                    border: `1px solid ${
-                                      isCorrect ? '#b7e1c1' : '#ffd9a8'
-                                    }`,
+                                    border: `1px solid ${isCorrect ? '#b7e1c1' : '#ffd9a8'
+                                      }`,
                                     fontSize: '0.85rem',
                                     color: '#24292f'
                                   }}
@@ -1871,9 +2154,22 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                       <CompareWithExpert
                         studentAnswer={parsedMessage.studentAnswer || ''}
                         expertAnswer={parsedMessage.expertAnswer || ''}
+                        feedback={parsedMessage.feedback}
                         similarity={parsedMessage.similarity}
                         difference={parsedMessage.difference}
                         suggestion={parsedMessage.suggestion}
+                      />
+                    ) : isExpertReading && parsedMessage ? (
+                      <ExpertReading
+                        whereToLook={parsedMessage.where_to_look || ''}
+                        whatToCompare={parsedMessage.what_to_compare || ''}
+                        whatToNotice={parsedMessage.what_to_notice || ''}
+                      />
+                    ) : isTaskIntent && parsedMessage ? (
+                      <TaskIntent
+                        taskGoal={parsedMessage.task_goal || ''}
+                        approach={parsedMessage.approach || ''}
+                        rationale={parsedMessage.rationale || ''}
                       />
                     ) : (
                       <MessageComponent
@@ -1945,47 +2241,106 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                             onReadyToSend={handleCodeBlockReadyToSend}
                           />
                         ) : (
-                          <SyntaxHighlighter
-                            language="r"
-                            style={docco}
-                            wrapLines={true}
-                            lineProps={lineNumber => ({
-                              style: {
-                                wordWrap: 'break-word',
-                                whiteSpace: 'pre-wrap'
-                              },
-                              children: (
-                                <React.Fragment>
+                          <pre
+                            style={{
+                              margin: 0,
+                              padding: '12px 14px',
+                              background: '#f6f8fa',
+                              border: '1px solid #e1e4e8',
+                              borderRadius: '6px',
+                              fontFamily:
+                                'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+                              fontSize: '0.85rem',
+                              lineHeight: 1.6,
+                              whiteSpace: 'pre-wrap',
+                              wordBreak: 'break-word',
+                              color: '#24292f'
+                            }}
+                          >
+                            {(message.code || '')
+                              .split('\n')
+                              .map((line, lineIdx, arr) => (
+                                <div
+                                  key={lineIdx}
+                                  style={{
+                                    display: 'flex',
+                                    alignItems: 'flex-start'
+                                  }}
+                                >
                                   <span
-                                    onClick={() =>
-                                      handleSend(
-                                        // eslint-disable-next-line prettier/prettier
-                                        message.code!.split('\n')[lineNumber - 1]
-                                      )
-                                    }
                                     style={{
-                                      cursor: 'pointer',
-                                      marginLeft: '10px'
+                                      flex: 1,
+                                      whiteSpace: 'pre-wrap',
+                                      wordBreak: 'break-word'
                                     }}
                                   >
-                                    ❓
+                                    {line || ' '}
                                   </span>
-                                </React.Fragment>
-                              )
-                            })}
-                          >
-                            {message.code}
-                          </SyntaxHighlighter>
+                                  {line.trim() !== '' && (
+                                    <span
+                                      onClick={() => handleSend(line)}
+                                      title="Ask about this line"
+                                      style={{
+                                        cursor: 'pointer',
+                                        marginLeft: '8px',
+                                        opacity: 0.55,
+                                        userSelect: 'none'
+                                      }}
+                                      onMouseEnter={e =>
+                                        (e.currentTarget.style.opacity = '1')
+                                      }
+                                      onMouseLeave={e =>
+                                        (e.currentTarget.style.opacity = '0.55')
+                                      }
+                                    >
+                                      ❓
+                                    </span>
+                                  )}
+                                </div>
+                              ))}
+                          </pre>
                         )}
                       </div>
                     )}
                     {message.interaction === 'drop-down' && (
-                      <div>
-                        <FormControl
-                          sx={{ minWidth: 120, mt: 2, mb: 2 }}
-                          size="small"
+                      <Box
+                        sx={{
+                          width: '85%',
+                          padding: '14px 16px',
+                          marginBottom: '10px',
+                          boxSizing: 'border-box',
+                          backgroundColor: '#f7f9fc',
+                          border: '1px solid #e1e4e8',
+                          borderRadius: '10px',
+                          boxShadow: '0 1px 2px rgba(0,0,0,0.04)'
+                        }}
+                      >
+                        <Typography
+                          sx={{
+                            fontWeight: 600,
+                            color: '#24292f',
+                            marginBottom: '8px',
+                            fontSize: '0.9rem'
+                          }}
                         >
-                          <InputLabel id="demo-simple-select-label">
+                          Explore the dataset
+                        </Typography>
+                        <Typography
+                          sx={{
+                            color: '#57606a',
+                            fontSize: '0.8rem',
+                            marginBottom: '10px'
+                          }}
+                        >
+                          Pick a numeric column to see its description, summary
+                          statistics, and distribution.
+                        </Typography>
+                        <FormControl
+                          sx={{ minWidth: 200, mb: selectedColumn ? 2 : 0 }}
+                          size="small"
+                          fullWidth
+                        >
+                          <InputLabel id="column-select-label">
                             Column
                           </InputLabel>
                           <Select
@@ -1994,9 +2349,18 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                             value={selectedColumn}
                             label="Column"
                             onChange={handleChange}
+                            sx={{
+                              backgroundColor: 'white',
+                              borderRadius: '6px',
+                              fontSize: '0.85rem'
+                            }}
                           >
                             {columnNames.map(columnName => (
-                              <MenuItem key={columnName} value={columnName}>
+                              <MenuItem
+                                key={columnName}
+                                value={columnName}
+                                sx={{ fontSize: '0.85rem' }}
+                              >
                                 {columnName}
                               </MenuItem>
                             ))}
@@ -2005,67 +2369,151 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                         {selectedColumn && !statistics && (
                           <Box
                             sx={{
-                              p: 1,
-                              mb: 2,
-                              width: '80%',
-                              backgroundColor: 'grey.100',
-                              borderRadius: '4px',
+                              padding: '10px 12px',
+                              borderRadius: '8px',
+                              backgroundColor: '#fff4e5',
+                              border: '1px solid #ffd9a8',
                               fontSize: '0.85rem',
-                              color: 'text.secondary'
+                              color: '#24292f',
+                              marginTop: '4px'
                             }}
                           >
-                            <Typography variant="body2">
-                              <strong>{selectedColumn}</strong> looks like a
-                              categorical / text column, so numeric statistics
-                              and a histogram aren't available. Try a numeric
-                              column (e.g., counts or revenues) to see the
-                              summary and distribution.
-                            </Typography>
+                            <strong>{selectedColumn}</strong> looks like a
+                            categorical / text column, so numeric statistics
+                            and a histogram aren&rsquo;t available. Try a
+                            numeric column (e.g., counts or revenues) to see
+                            the summary and distribution.
                           </Box>
                         )}
                         {statistics && (
                           <Box
                             sx={{
-                              display: 'flex', // Use flex display to align items in a row
-                              alignItems: 'center', // Align items vertically
-                              p: 1,
-                              backgroundColor: 'grey.200',
-                              borderRadius: '4px',
-                              width: '80%',
-                              mb: 2
+                              padding: '12px 14px',
+                              borderRadius: '8px',
+                              backgroundColor: 'white',
+                              border: '1px solid #e1e4e8',
+                              marginTop: '4px'
                             }}
                           >
-                            <Box sx={{ flex: 1 }}>
-                              <Typography variant="h6">Statistics</Typography>
-                              <Typography>
-                                Description: {description}
-                              </Typography>
-                              <Typography>
-                                Mean: {statistics.mean.toFixed(2)}
-                              </Typography>
-                              <Typography>
-                                Median: {statistics.median.toFixed(2)}
-                              </Typography>
-                              <Typography>
-                                Standard Deviation: {statistics.std.toFixed(2)}
-                              </Typography>
-                            </Box>
-                            <Box sx={{ flex: 0 }}>
-                              <BarChart
-                                width={350}
-                                height={140}
-                                data={histogramData}
+                            <Typography
+                              sx={{
+                                fontWeight: 600,
+                                fontSize: '0.85rem',
+                                color: '#24292f',
+                                marginBottom: '8px'
+                              }}
+                            >
+                              {selectedColumn}
+                            </Typography>
+                            {description && (
+                              <Typography
+                                sx={{
+                                  fontSize: '0.8rem',
+                                  color: '#57606a',
+                                  marginBottom: '10px',
+                                  lineHeight: 1.4
+                                }}
                               >
-                                <CartesianGrid strokeDasharray="3 3" />
-                                <XAxis dataKey="name" />
-                                <YAxis />
+                                {description}
+                              </Typography>
+                            )}
+                            <Box
+                              sx={{
+                                display: 'flex',
+                                flexWrap: 'wrap',
+                                gap: '8px',
+                                marginBottom: '12px'
+                              }}
+                            >
+                              {[
+                                { label: 'Mean', value: statistics.mean },
+                                { label: 'Median', value: statistics.median },
+                                { label: 'Std Dev', value: statistics.std }
+                              ].map(stat => (
+                                <Box
+                                  key={stat.label}
+                                  sx={{
+                                    flex: '1 1 80px',
+                                    padding: '8px 10px',
+                                    borderRadius: '6px',
+                                    backgroundColor: '#f7f9fc',
+                                    border: '1px solid #e1e4e8'
+                                  }}
+                                >
+                                  <Typography
+                                    sx={{
+                                      fontSize: '0.7rem',
+                                      color: '#57606a',
+                                      fontWeight: 500,
+                                      textTransform: 'uppercase',
+                                      letterSpacing: '0.03em'
+                                    }}
+                                  >
+                                    {stat.label}
+                                  </Typography>
+                                  <Typography
+                                    sx={{
+                                      fontSize: '1rem',
+                                      fontWeight: 600,
+                                      color: '#24292f',
+                                      fontFamily:
+                                        'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
+                                    }}
+                                  >
+                                    {stat.value.toFixed(2)}
+                                  </Typography>
+                                </Box>
+                              ))}
+                            </Box>
+                            <Box
+                              sx={{
+                                width: '100%',
+                                overflow: 'hidden'
+                              }}
+                            >
+                              <Typography
+                                sx={{
+                                  fontSize: '0.75rem',
+                                  fontWeight: 500,
+                                  color: '#57606a',
+                                  marginBottom: '4px'
+                                }}
+                              >
+                                Distribution
+                              </Typography>
+                              <BarChart
+                                width={340}
+                                height={150}
+                                data={histogramData}
+                                margin={{
+                                  top: 4,
+                                  right: 8,
+                                  bottom: 4,
+                                  left: 0
+                                }}
+                              >
+                                <CartesianGrid
+                                  strokeDasharray="3 3"
+                                  stroke="#e1e4e8"
+                                />
+                                <XAxis
+                                  dataKey="name"
+                                  tick={{ fontSize: 10, fill: '#57606a' }}
+                                />
+                                <YAxis
+                                  tick={{ fontSize: 10, fill: '#57606a' }}
+                                />
                                 <Tooltip />
-                                <Bar dataKey="value" fill="#8884d8" />
+                                <Bar
+                                  dataKey="value"
+                                  fill="#0969da"
+                                  radius={[4, 4, 0, 0]}
+                                />
                               </BarChart>
                             </Box>
                           </Box>
                         )}
-                      </div>
+                      </Box>
                     )}
                     {message.videoId && (
                       <div
@@ -2148,47 +2596,96 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
             disabled={isTyping} // Disable the input when isTyping is true
           />
         </ChatContainer>
-        <Button
-          variant="contained"
-          color="primary"
-          onClick={() => {
-            setIsAlredaySend(false);
-            const isOnLastSegment =
-              segments.length > 0 &&
-              currentSegmentIndex === segments.length - 1;
-            if (isOnLastSegment) {
-              handleFinishVideo();
+        {(() => {
+          const isOnLastSegment =
+            segments.length > 0 && currentSegmentIndex === segments.length - 1;
+          // Single morphing button. While the segment still has pending
+          // teaching messages (canGoOn=false), it acts as "Next message"
+          // and is enabled only when the latest message was read-only
+          // (need_response=false). When the segment's CUR_SEQ is empty
+          // (canGoOn=true), it becomes the "Go on to next clip" button
+          // (or the "I have finished this video" final-segment variant).
+          const inSegment = !canGoOn;
+          const nextEnabled =
+            inSegment &&
+            lastNeedResponse === false &&
+            !isTyping &&
+            videoId !== '';
+          const goOnEnabled = !isOnLastSegment
+            ? canGoOn && !isTyping && videoId !== ''
+            : (() => {
+              const dslReady = userCondition === 'control' ? true : canGoOn;
+              return (
+                lastSegmentWatched &&
+                dslReady &&
+                !isTyping &&
+                videoId !== '' &&
+                !videoFinished
+              );
+            })();
+          const enabled = inSegment ? nextEnabled : goOnEnabled;
+          const label = inSegment
+            ? 'Next message'
+            : isOnLastSegment
+              ? 'I have finished this video'
+              : 'Go on to next clip';
+          const onClick = () => {
+            if (inSegment) {
+              handleSend('');
             } else {
-              handleGoOn();
+              setIsAlredaySend(false);
+              if (isOnLastSegment) {
+                handleFinishVideo();
+              } else {
+                handleGoOn();
+              }
             }
-          }}
-          style={{
-            position: 'absolute',
-            bottom: 60, // Adjust as needed
-            right: 10,
-            zIndex: 19
-          }}
-          disabled={(() => {
-            const isOnLastSegment =
-              segments.length > 0 &&
-              currentSegmentIndex === segments.length - 1;
-            if (!isOnLastSegment) {
-              return !canGoOn || isTyping || videoId === '';
-            }
-            const dslReady = userCondition === 'control' ? true : canGoOn;
-            return (
-              !lastSegmentWatched ||
-              !dslReady ||
-              isTyping ||
-              videoId === '' ||
-              videoFinished
-            );
-          })()} // Disable the input when isTyping is true
-        >
-          {segments.length > 0 && currentSegmentIndex === segments.length - 1
-            ? 'I have finished this video'
-            : 'Go on'}
-        </Button>
+          };
+          return (
+            <Box
+              sx={{
+                position: 'absolute',
+                bottom: 60,
+                right: 10,
+                zIndex: 19,
+                display: 'flex',
+                padding: '6px 8px',
+                background: 'rgba(255,255,255,0.96)',
+                border: '1px solid #e1e4e8',
+                borderRadius: '999px',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+                backdropFilter: 'blur(4px)'
+              }}
+            >
+              <Button
+                variant="contained"
+                onClick={onClick}
+                disabled={!enabled}
+                size="small"
+                endIcon={<ArrowForwardIosIcon style={{ fontSize: 12 }} />}
+                sx={{
+                  textTransform: 'none',
+                  fontSize: '0.82rem',
+                  fontWeight: 600,
+                  padding: '4px 16px',
+                  borderRadius: '999px',
+                  background: '#0969da',
+                  boxShadow: 'none',
+                  '&:hover': {
+                    background: '#0860c4',
+                    boxShadow: 'none'
+                  },
+                  '&.Mui-disabled': {
+                    background: '#cfd5dc',
+                    color: 'white'
+                  }
+                }}
+              >
+                {label}
+              </Button>
+            </Box>
+          );
+        })()}
       </MainContainer>
     </div>
   );

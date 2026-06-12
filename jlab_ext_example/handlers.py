@@ -8,7 +8,8 @@ import isodate
 import hashlib
 import datetime
 import requests
-import openai
+from google import genai
+from google.genai import types as genai_types
 import sqlite3
 import pandas as pd
 from io import StringIO
@@ -20,24 +21,92 @@ from youtube_transcript_api import YouTubeTranscriptApi
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from langchain.memory import ConversationBufferMemory
-from BCEmbedding import RerankerModel
+# from BCEmbedding import RerankerModel
 from jlab_ext_example import firebase_logger
 
 # init reranker model
 # model = RerankerModel(model_name_or_path="maidalun1020/bce-reranker-base_v1")
-_reranker_model = None
-def _get_reranker():
-    global _reranker_model
-    if _reranker_model is None:
-        _reranker_model = RerankerModel(model_name_or_path="maidalun1020/bce-reranker-base_v1")
-    return _reranker_model
+# _reranker_model = None
+# def _get_reranker():
+#     global _reranker_model
+#     if _reranker_model is None:
+#         _reranker_model = RerankerModel(model_name_or_path="maidalun1020/bce-reranker-base_v1")
+#     return _reranker_model
 
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-if OPENAI_API_KEY:
-    openai.api_key = OPENAI_API_KEY
-else:
-    print("⚠️  OPENAI_API_KEY is not set. OpenAI features will not work.")
+
+
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") or os.environ.get("OPENAI_API_KEY")
+# google-genai's Client picks up GEMINI_API_KEY (or GOOGLE_API_KEY) from the
+# environment automatically, but we pass it explicitly so the missing-key
+# error path is in our hands.
+_gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
+if not GEMINI_API_KEY:
+    print("⚠️  GEMINI_API_KEY is not set. LLM features will not work.")
+
+# All LLM call sites flow through llm_chat() so we have one place to swap
+# models, tweak defaults, or add retries.
+DEFAULT_GEMINI_MODEL = "gemini-3.5-flash"
+
+
+def _parse_llm_list(raw: str):
+    """Extract a Python/JSON list from LLM output that may contain prose.
+
+    Gemini sometimes prepends preambles like "Here is the list:\\n[ ... ]"
+    around the actual literal we want. We slice between the first `[` and
+    the last `]`, try Python literal first (handles single-quoted strings
+    the existing prompts ask for), and fall back to JSON if that fails.
+    Raises ValueError if no list can be found or parsed.
+    """
+    if raw is None:
+        raise ValueError("empty LLM response")
+    text = raw.strip()
+    start = text.find("[")
+    end = text.rfind("]")
+    if start == -1 or end == -1 or end <= start:
+        raise ValueError(f"no list literal in response: {text[:200]!r}")
+    list_str = text[start : end + 1]
+    try:
+        return ast.literal_eval(list_str)
+    except (ValueError, SyntaxError):
+        return json.loads(list_str)
+
+
+def llm_chat(
+    system_prompt: str,
+    user_message: str,
+    model: str = DEFAULT_GEMINI_MODEL,
+    temperature: float = 0.7,
+    response_mime_type: str = None,
+) -> str:
+    """Single-turn Gemini call. Returns the model's text output, stripped.
+
+    `response_mime_type="application/json"` asks Gemini to emit valid JSON;
+    pass it for the call sites whose downstream code does `json.loads` so
+    we don't get fenced ```json ... ``` blocks.
+    """
+    if _gemini_client is None:
+        raise RuntimeError(
+            "GEMINI_API_KEY is not set; cannot call the LLM. "
+            "Get a key at https://aistudio.google.com/apikey."
+        )
+    config_kwargs = {
+        "system_instruction": system_prompt,
+        "temperature": temperature,
+    }
+    if response_mime_type:
+        config_kwargs["response_mime_type"] = response_mime_type
+    resp = _gemini_client.models.generate_content(
+        model=model,
+        contents=user_message,
+        config=genai_types.GenerateContentConfig(**config_kwargs),
+    )
+    text = (resp.text or "").strip()
+    # Strip stray ```json fences if the model added them anyway.
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+    return text
 
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY") or YOUTUBE_API_KEY
 if not YOUTUBE_API_KEY:
@@ -62,24 +131,411 @@ def normalize_video_id(video_id):
 def normalize_video_id_list(video_ids):
     return [normalize_video_id(video_id) for video_id in video_ids]
 
-# Global state variables
-bkt_params = {}
+# Global state variables. Things that are genuinely per-process (loaded
+# once, identical across users) stay as globals: chat_bot, all_code,
+# video_type. Per-user mutable state — BKT, CUR_SEQ, the in-flight
+# correctness buffers — lives in USER_SESSIONS, see get_user_session().
 user_id = ""
-CUR_SEQ = []  # The current sequence of moves
 all_code = {}
 chat_bot = None
 video_type = "Exploratory Data Analysis (EDA)"
-code_line_buffer = ""
-correct_answer_buffer = ""
-knowledge_buffer = ""
+
+# T1.5: per-user session state. Each entry holds the state that used to be
+# scattered across module globals. Keyed by the user_id sent in each request
+# so that two browser tabs / two concurrent requests for the same user can't
+# stomp on each other's buffers (and so a future shared-server deployment
+# keeps users isolated even within one process).
+#
+# Per-user fields:
+#   bkt_params        : {skill_id: {"probMastery": float, "n_observations": int}}
+#   cur_seq           : list of pending teaching moves
+#   skill_id_buffer   : skill_id of the last move that set up a practice item
+#                       (replaces the old `knowledge_buffer` global)
+#   interaction_buffer: which interaction that practice item used; needed at
+#                       BKT update time to look up the right slip/guess
+#   code_line_buffer  : canonical code line for fill-in-blanks correctness
+#   code_line_blanks_buffer: the same line with ___ placeholders, used to
+#                            align per-blank correctness at update time
+#   correct_answer_buffer: canonical correct choice for multiple-choice
+USER_SESSIONS: dict = {}
+
+
+def get_user_session(uid: str) -> dict:
+    """Return (creating if needed) the per-user state dict."""
+    if uid not in USER_SESSIONS:
+        USER_SESSIONS[uid] = {
+            "bkt_params": {},
+            "cur_seq": [],
+            "skill_id_buffer": "",
+            "interaction_buffer": "",
+            "code_line_buffer": "",
+            "code_line_blanks_buffer": "",
+            "correct_answer_buffer": "",
+        }
+    return USER_SESSIONS[uid]
+
+
+# T1.2: per-interaction noise parameters. slip/guess/transit are properties of
+# the question type, not of the skill, so they live in this lookup rather than
+# in per-skill state. probGuess for a 4-option MC is 0.25 (a random click is
+# right one in four times); fill-in-blanks gets a much lower guess rate;
+# structured-text articulation has effectively zero guess but a higher slip
+# because the student may understand it but phrase it poorly.
+INTERACTION_PARAMS = {
+    "fill-in-blanks":  {"probSlip": 0.10, "probGuess": 0.05, "probTransit": 0.15},
+    "multiple-choice": {"probSlip": 0.10, "probGuess": 0.25, "probTransit": 0.10},
+    # Structured-text articulation: students who *do* understand may still
+    # phrase it poorly (high slip), and a rubric-passing answer is not perfect
+    # proof of mastery — the LLM grader is itself noisy and students can echo
+    # the right keywords (small but nonzero guess). probGuess > 0 also avoids
+    # the BKT degeneracy where a single correct obs pegs posterior to 1.0.
+    "structured-text": {"probSlip": 0.25, "probGuess": 0.05, "probTransit": 0.15},
+}
+DEFAULT_INTERACTION_PARAMS = {
+    "probSlip": 0.10,
+    "probGuess": 0.10,
+    "probTransit": 0.10,
+}
+
+
+def get_interaction_params(interaction: str) -> dict:
+    return INTERACTION_PARAMS.get(interaction, DEFAULT_INTERACTION_PARAMS)
+
+
+# T1.3: lenient code comparison for fill-in-blank correctness. Removes
+# comments, collapses whitespace, and tightens spacing around common
+# punctuation so that minor stylistic differences (extra spaces, trailing
+# commas, "# my note" annotations) don't cause false negatives that would
+# unfairly lower the student's mastery.
+_COMMENT_RE = re.compile(r"#.*$", re.MULTILINE)
+_WHITESPACE_RE = re.compile(r"\s+")
+_PUNCT_RE = re.compile(r"\s*([(),;])\s*")
+
+
+def canonicalize_code(s: str) -> str:
+    if not s:
+        return ""
+    s = _COMMENT_RE.sub("", s)
+    s = _WHITESPACE_RE.sub(" ", s)
+    s = _PUNCT_RE.sub(r"\1", s)
+    return s.strip()
+
+
+def extract_blank_answers(masked: str, full: str):
+    """Pull out what fills each `___` in `masked`, given the realized `full`.
+
+    Example:
+        masked = "___(___ %>% top_n(16, total_revenue), by = \"___\")"
+        full   = "semi_join(franchises %>% top_n(16, total_revenue), by = \"franchise\")"
+        → ["semi_join", "franchises", "franchise"]
+
+    Returns None if alignment fails (e.g., student modified the non-blank
+    skeleton), in which case the caller should fall back to all-or-nothing
+    comparison so we don't silently misattribute correctness.
+    """
+    if not masked or "___" not in masked:
+        return None
+    masked_c = canonicalize_code(masked)
+    full_c = canonicalize_code(full)
+    parts = masked_c.split("___")  # N+1 literal chunks around N blanks
+    answers: list = []
+    pos = 0
+    for i, chunk in enumerate(parts[:-1]):
+        # Locate this literal chunk in `full`.
+        start = full_c.find(chunk, pos)
+        if start == -1:
+            return None
+        pos = start + len(chunk)
+        next_chunk = parts[i + 1]
+        if next_chunk == "":
+            # The blank runs to the end of the string.
+            answers.append(full_c[pos:])
+            pos = len(full_c)
+        else:
+            next_start = full_c.find(next_chunk, pos)
+            if next_start == -1:
+                return None
+            answers.append(full_c[pos:next_start])
+            pos = next_start
+    return answers
+
+
+# T1.1 + cross-video transfer: deterministic skill IDs.
+#
+# Default: skill_id = "{video_id}::{segment_index}::{knowledge_index}". One
+# skill per knowledge item, no sharing across videos.
+#
+# With concept_tags.json present (see tools/draft_concept_tags.py), a knowledge
+# item can be mapped to an EDA-grounded concept_id like "filter_to_meaningful_subset".
+# All knowledge items mapped to the same concept_id share one BKT mastery curve,
+# which is how mastery transfers across the three study videos.
+#
+# The tag file lives next to the running process (i.e., the user's home dir
+# under TLJH) and is hot-reloaded on every lookup — researchers can patch it
+# mid-pilot without restarting the server.
+_CONCEPT_TAGS_PATH = "concept_tags.json"
+_concept_tags_cache: dict = {}
+_concept_tags_mtime: float = 0.0
+
+
+def _load_concept_tags() -> dict:
+    """Load concept_tags.json from disk, with hot-reload via mtime check."""
+    global _concept_tags_cache, _concept_tags_mtime
+    try:
+        mtime = os.path.getmtime(_CONCEPT_TAGS_PATH)
+    except OSError:
+        # File doesn't exist — no cross-video transfer, just fall back to
+        # position-based skill IDs. Not an error.
+        if _concept_tags_cache:
+            _concept_tags_cache = {}
+            _concept_tags_mtime = 0.0
+        return _concept_tags_cache
+    if mtime != _concept_tags_mtime:
+        try:
+            with open(_CONCEPT_TAGS_PATH) as f:
+                data = json.load(f)
+            # Accept either {"tags": {...}, "vocabulary": [...]} or a plain
+            # {video: {seg: {ki: concept}}} layout. Normalize to the tags map.
+            if isinstance(data, dict) and "tags" in data:
+                _concept_tags_cache = data["tags"] or {}
+            else:
+                _concept_tags_cache = data or {}
+            _concept_tags_mtime = mtime
+            print(f"Loaded concept_tags.json ({sum(len(s) for v in _concept_tags_cache.values() for s in v.values())} tags)")
+        except (OSError, ValueError) as exc:
+            print(f"Warning: could not read concept_tags.json: {exc}")
+            _concept_tags_cache = {}
+            _concept_tags_mtime = 0.0
+    return _concept_tags_cache
+
+
+def make_skill_id(video_id: str, segment_index, knowledge_index: int) -> str:
+    tags = _load_concept_tags()
+    concept = (
+        tags.get(str(video_id), {})
+        .get(str(segment_index), {})
+        .get(str(knowledge_index))
+    )
+    if concept:
+        return f"concept::{concept}"
+    return f"{video_id}::{segment_index}::{knowledge_index}"
+
+
+# T2.1: rubric-score a student's structured-text articulation so we can
+# feed open-ended answers into BKT. Three independent dimensions matched to
+# the prompt slots the system asks for (notice / cause / check). Each is
+# rated 0–1; the caller averages and binarizes for a single BKT observation
+# (a more diagnostic per-dimension scoring with separate skill tags is
+# possible later but requires authoring those skill tags first).
+_ARTICULATION_RUBRIC_PROMPT = (
+    "You are scoring a student's open-ended written articulation about a data "
+    "analysis concept. Rate the answer on three independent dimensions, each "
+    "in [0, 1]. Be lenient with phrasing and strict only about substance.\n"
+    "  - notices_pattern: does the student correctly identify what's happening "
+    "in the data or chart?\n"
+    "  - plausible_cause: does the student offer a sensible explanation or "
+    "hypothesis for the pattern?\n"
+    "  - proposes_check: does the student suggest a way to verify, refute, or "
+    "further investigate?\n"
+    "If a dimension is not addressed at all in the answer, score it 0.\n"
+    "Respond with JSON only, no ```json``` fences:\n"
+    '  {"notices_pattern": <0-1>, "plausible_cause": <0-1>, "proposes_check": <0-1>}'
+)
+
+
+def plan_methods_for_knowledge(
+    knowledge: str,
+    mastery: float,
+    n_observations: int,
+    video_content_type: str,
+    is_last_in_segment: bool,
+) -> list:
+    """Pick the CA methods to teach this knowledge item."""
+    if (
+        isinstance(knowledge, str)
+        and knowledge.strip().lower().startswith("declarative knowledge")
+    ):
+        return ["Modeling"]
+
+    if video_content_type == "programming":
+        # Programming tier table (single method per knowledge, checked in
+        # this priority order — the first matching tier wins):
+        # 1. Declarative knowledge string                      → [Modeling]
+        # 2. mastery < 0.3 AND n_obs < 1                       → [Scaffolding]
+        # 3. 0.3 ≤ mastery < 0.7 OR n_obs < 3                  → [Coaching]
+        # 4. mastery ≥ 0.7 OR (n_obs ≥ 3 AND mastery ≥ 0.3)    → [Articulation]
+        # 5. mastery < 0.3 AND n_obs ≥ 3 (chronic-fail)        → [Scaffolding, Coaching]
+        # Last knowledge item also gets a trailing Reflection (show-code
+        # gestalt wrap-up). Programming Articulation is an MC with its own
+        # built-in reveal, so it doesn't need a paired Reflection.
+        #
+        # Once a Scaffolding turn has been consumed, ChatHandler bumps n_obs 
+        # to 1, See the Scaffolding-consumption hook in ChatHandler. 
+        if mastery < 0.3 and n_observations < 1:
+            methods = ["Scaffolding"]
+        elif (0.3 <= mastery < 0.7) or n_observations < 3:
+            methods = ["Coaching"]
+        elif mastery >= 0.7 or (n_observations >= 3 and mastery >= 0.3):
+            methods = ["Articulation"]
+        else:
+            # Chronic-fail fallback: mastery < 0.3 AND n_obs >= 3 — student
+            # has practiced repeatedly but mastery hasn't moved. Pair
+            # Scaffolding (re-explain the concept) with Coaching (another
+            # practice attempt so mastery can actually change). Falling
+            # back to Scaffolding alone would put them right back into the
+            # same dead-end the n_obs bump was meant to fix.
+            methods = ["Scaffolding", "Coaching"]
+        if is_last_in_segment and methods[-1] != "Reflection":
+            methods.append("Reflection")
+    else:
+        # Concept tier table. Scaffolding in concept_action is multiple-
+        # choice, which already triggers a BKT update, so n_obs naturally
+        # bumps and we don't need the manual increment from ChatHandler.
+        # Articulation here is structured-text and Reflection is
+        # compare-with-expert, which only makes sense paired.
+        # 1. Declarative knowledge string                → [Modeling]
+        # 2. n_obs == 0  OR  mastery < 0.3               → [Scaffolding]
+        # 3. 0.3 ≤ mastery < 0.5  OR  n_obs < 2          → [Coaching]
+        # 4. 0.5 ≤ mastery < 0.7                         → [Coaching, Articulation]
+        # 5. mastery ≥ 0.7                               → [Articulation]
+        # Any plan ending in Articulation automatically appends Reflection
+        # (so the student always gets feedback on open-text answers).
+        if mastery > 0.7 or (n_observations >= 3 and mastery >= 0.3):
+            methods = ["Articulation"]
+        elif mastery < 0.3 or n_observations < 1:
+            methods = ["Scaffolding"]
+        else:
+            methods = ["Coaching"]
+        if methods and methods[-1] == "Articulation":
+            methods.append("Reflection")
+
+    return methods
+
+
+def plan_methods(
+    knowledge_list: list,
+    mastery_levels: list,
+    n_observations_list: list,
+    video_content_type: str,
+) -> list:
+    """Deterministic replacement for the LLM-based get_methods().
+
+    Returns a list of {"knowledge": ..., "method": [...]} dicts, the same
+    shape get_dsl() expects.
+
+    Always opens the segment with a Modeling move. For programming segments
+    Modeling is `task-intent` (task / approach / rationale); for concept
+    segments it's `expert-reading` (where to look / what to compare / what
+    to notice). The Modeling is attached to the first knowledge item — its
+    interaction doesn't update BKT, so it doesn't pollute that skill's
+    mastery — and ensures the student gets the META-skill framing before
+    any per-knowledge practice.
+    """
+    out = []
+    n = len(knowledge_list)
+    for i, knowledge in enumerate(knowledge_list):
+        mastery = mastery_levels[i] if i < len(mastery_levels) else 0.1
+        n_obs = n_observations_list[i] if i < len(n_observations_list) else 0
+        out.append(
+            {
+                "knowledge": knowledge,
+                "method": plan_methods_for_knowledge(
+                    knowledge=knowledge,
+                    mastery=mastery,
+                    n_observations=n_obs,
+                    video_content_type=video_content_type,
+                    is_last_in_segment=(i == n - 1),
+                ),
+            }
+        )
+
+    # Always start the segment with a Modeling move. Skip the prepend if
+    # the first knowledge is Declarative (the get_dsl override will
+    # convert it to Modeling anyway, so prepending would duplicate) or if
+    # the planner already chose Modeling for the first item.
+    if out:
+        first_knowledge = out[0]["knowledge"]
+        first_methods = out[0]["method"]
+        is_declarative = (
+            isinstance(first_knowledge, str)
+            and first_knowledge.strip().lower().startswith("declarative knowledge")
+        )
+        if not is_declarative and "Modeling" not in first_methods:
+            out[0]["method"] = ["Modeling"] + first_methods
+
+    return out
+
+
+def score_articulation(
+    articulation_answer: str,
+    knowledge: str,
+    model: str = DEFAULT_GEMINI_MODEL,
+) -> dict:
+    """Score a structured-text articulation answer against a 3-dim rubric.
+
+    Returns {notices_pattern, plausible_cause, proposes_check} with float
+    values in [0, 1], or None if scoring failed (LLM error, malformed JSON,
+    empty answer). Callers should treat None as "no observation made."
+    """
+    if not articulation_answer or not articulation_answer.strip():
+        return None
+    if not GEMINI_API_KEY:
+        return None
+    user_payload = (
+        f"Knowledge the student is articulating about:\n{knowledge}\n\n"
+        f"Student's answer:\n{articulation_answer}"
+    )
+    try:
+        raw = llm_chat(
+            system_prompt=_ARTICULATION_RUBRIC_PROMPT,
+            user_message=user_payload,
+            model=model,
+            temperature=0,
+            response_mime_type="application/json",
+        )
+        scores = json.loads(raw)
+    except Exception as exc:
+        print(f"Warning: articulation scoring failed: {exc}")
+        return None
+
+    def _clip(v):
+        try:
+            return max(0.0, min(1.0, float(v)))
+        except (TypeError, ValueError):
+            return 0.0
+
+    return {
+        "notices_pattern": _clip(scores.get("notices_pattern")),
+        "plausible_cause": _clip(scores.get("plausible_cause")),
+        "proposes_check": _clip(scores.get("proposes_check")),
+    }
+
+
 prog_action = {
     "Modeling": [
         {
-            "action": "Introduce the overall task for this segment in plain text so the student gets the big picture before line-level work",
-            "interaction": "plain-text",
-            "prompt": "[Use one or two sentences to introduce the overall task described by {knowledge}, covering the goal of this segment and the key approach. Do not reference any specific code line.]",
+            "action": "Open the segment by stating the task intention and the rationale for the chosen approach, using {interaction}",
+            "interaction": "task-intent",
+            "prompt": (
+                "Given the declarative knowledge from this segment: {knowledge}\n"
+                "This is the FIRST teaching message of a programming "
+                "segment. Frame the segment by stating what we're going to "
+                "build and why we choose this particular approach. The "
+                "video shows the code but doesn't explicitly motivate why "
+                "the chart type / functions were chosen — make that "
+                "rationale explicit. Respond as JSON without ```json``` "
+                "fences with exactly these three fields, each ONE short "
+                "sentence:\n"
+                '  {"task_goal": "what this segment is trying to '
+                'build or answer (the analytical question or visualization '
+                'goal)", '
+                '"approach": "the chart type / dplyr verbs / function '
+                'chain chosen to achieve it", '
+                '"rationale": "why this approach is well-suited to the '
+                'task (what makes the chosen chart/functions appropriate)"}'
+            ),
             "parameters": ["knowledge"],
-            "need-response": True,
+            "need-response": False,
         }
     ],
     "Scaffolding": [
@@ -88,7 +544,7 @@ prog_action = {
             "interaction": "annotated-code",
             "prompt": "[Use one sentence to explain the {knowledge} as it applies to the corresponding {code-line}, covering what effect we want to achieve, why we do it, and what function we use]",
             "parameters": ["knowledge", "code-line"],
-            "need-response": True,
+            "need-response": False,
         }
     ],
     "Coaching": [
@@ -133,11 +589,27 @@ prog_action = {
 concept_action = {
     "Modeling": [
         {
-            "action": "Introduce the overall analytical task for this segment in plain text so the student gets the big picture before deeper questions",
-            "interaction": "plain-text",
-            "prompt": "[Use one or two sentences to introduce the overall task described by {knowledge}, covering what we are trying to understand or compare and the key approach. Do not reference any specific code line.]",
+            "action": "Expose the cognitive interpretation process the video tutor uses to reach {knowledge}, using {interaction}",
+            "interaction": "expert-reading",
+            "prompt": (
+                "Given the declarative knowledge from this segment: {knowledge}\n"
+                "The video tutor shows the chart and states the insight but "
+                "doesn't narrate the gaze path or comparison they make to "
+                "get there. Make their hidden interpretive process explicit "
+                "so the student learns the META-skill of how the expert "
+                "reads a chart. Respond as JSON without ```json``` fences "
+                "with exactly these three fields, each ONE short sentence:\n"
+                '  {"where_to_look": "the specific feature on the chart '
+                'the expert focuses on (e.g., a bar, a stack segment, an '
+                'axis label)", '
+                '"what_to_compare": "the comparison or pattern the expert '
+                'mentally performs across the chart", '
+                '"what_to_notice": "the conclusion the student should '
+                'draw from that comparison (i.e., the insight stated by '
+                'the knowledge)"}'
+            ),
             "parameters": ["knowledge"],
-            "need-response": True,
+            "need-response": False,
         }
     ],
     "Scaffolding": [
@@ -151,9 +623,22 @@ concept_action = {
     ],
     "Articulation": [
         {
-            "action": "Encourage students to use {interaction} to verbally explain their thought process and reasoning behind their observations and conclusions",
+            "action": "Ask the student one focused open question to articulate their reasoning about {knowledge}, using {interaction}",
             "interaction": "structured-text",
-            "prompt": "Design a structured-text writing prompt that asks the student to articulate their reasoning about {knowledge}. Produce exactly three slot labels that are SPECIFIC TO THIS QUESTION (not generic templates); each slot should be a short noun phrase the student can fill in. The intro and the slots must read coherently together so that filling in every slot answers the intro question. Respond as JSON without ```json``` fences with this exact shape: {\"intro\": \"the question to think about, in one short sentence\", \"slots\": [\"<slot 1 specific to the question>\", \"<slot 2 specific to the question>\", \"<slot 3 specific to the question>\"]} Example: for a chart-interpretation question, slots might be [\"What I observe about <subject>\", \"A plausible reason\", \"Another factor that could explain it\"]. Do not reuse these example slots verbatim — tailor them to the actual question.",
+            "prompt": (
+                "Design a structured-text writing prompt that asks the "
+                "student ONE focused open question about {knowledge}. "
+                "Use exactly one slot — the textarea label should be a "
+                "short noun phrase that, together with the intro, reads "
+                "coherently as a single thinking task. Keep it light "
+                "enough that a one- or two-sentence answer feels natural. "
+                "Respond as JSON without ```json``` fences with this exact "
+                "shape: {\"intro\": \"the question to think about, in one "
+                "short sentence\", \"slots\": [\"<one specific slot label>\"]} "
+                "Example shape (do not copy verbatim): {\"intro\": \"Why "
+                "might Marvel Universe stand out from the other "
+                "franchises?\", \"slots\": [\"Your explanation\"]}"
+            ),
             "parameters": ["knowledge"],
             "need-response": True,
         }
@@ -169,9 +654,18 @@ concept_action = {
     ],
     "Reflection": [
         {
-            "action": "Show the student a side-by-side comparison of their answer with an expert interpretation using {interaction}",
+            "action": "Show the student a brief comparison of their answer with an expert interpretation using {interaction}",
             "interaction": "compare-with-expert",
-            "prompt": "Given the student's answer: {student-answer}\nProduce a comparison with an expert interpretation of {knowledge}. Respond as JSON without ```json``` fences: {\"expertAnswer\": \"two to three sentences of the expert interpretation, mirroring the student's structure when possible\", \"similarity\": \"one sentence on what the student got right\", \"difference\": \"one sentence on what the student missed or could refine\", \"suggestion\": \"one sentence with a concrete next step\"}",
+            "prompt": (
+                "Given the student's answer: {student-answer}\n"
+                "Produce a brief comparison with an expert interpretation "
+                "of {knowledge}. Respond as JSON without ```json``` fences:\n"
+                "{\"expertAnswer\": \"one or two sentences giving the "
+                "expert's interpretation, in the same voice as the "
+                "student's answer\", \"feedback\": \"one sentence of "
+                "constructive feedback that acknowledges what the student "
+                "got right and points to one thing to refine\"}"
+            ),
             "parameters": ["student-answer", "knowledge"],
             "need-response": False,
         }
@@ -232,7 +726,7 @@ class SegmentHandler(APIHandler):
 
     @tornado.web.authenticated
     def post(self):
-        global user_id, OPENAI_API_KEY
+        global user_id
         data = self.get_json_body()
         video_id = data["videoId"]
         user_id = data["userId"]
@@ -245,7 +739,7 @@ class SegmentHandler(APIHandler):
 class ChatHandler(APIHandler):
     @tornado.web.authenticated
     def post(self):
-        global CUR_SEQ, all_code, chat_bot, code_line_buffer, correct_answer_buffer, knowledge_buffer, video_type
+        global all_code, chat_bot, video_type
 
         # Existing video_id logic
         data = self.get_json_body()
@@ -285,9 +779,107 @@ class ChatHandler(APIHandler):
 
         conn = sqlite3.connect("cache.db")
         c = conn.cursor()
+
+        # T1.5: per-user state lives in a session dict, not module globals.
+        session = get_user_session(user_id_req)
+        # Hydrate BKT from disk on first contact for this user this process.
+        if not session["bkt_params"]:
+            session["bkt_params"] = init_bkt_params(user_id_req)
+
         if chat_bot is None:
-            init_bkt_params()
             initialize_chat_server(kernelType)
+
+        # T2.1: score the structured-text articulation that just arrived.
+        # The articulation move was popped on the previous turn (and its
+        # skill_id + "structured-text" interaction recorded in the session
+        # buffers). The next move in CUR_SEQ is typically Reflection. We run
+        # the rubric and update BKT before processing that next move so the
+        # turn includes both feedback and a mastery update.
+        if (
+            user_condition == "full_coggen"
+            and articulation_answer
+            and articulation_answer.strip()
+            and session.get("interaction_buffer") == "structured-text"
+            and session.get("skill_id_buffer")
+        ):
+            artic_skill_id = session["skill_id_buffer"]
+            knowledge_for_rubric = ""
+            if session["cur_seq"]:
+                knowledge_for_rubric = session["cur_seq"][0].get("knowledge", "")
+            rubric = score_articulation(articulation_answer, knowledge_for_rubric)
+            if rubric is not None:
+                mean_score = (
+                    rubric["notices_pattern"]
+                    + rubric["plausible_cause"]
+                    + rubric["proposes_check"]
+                ) / 3.0
+                is_correct = mean_score >= 0.5
+                if artic_skill_id not in session["bkt_params"]:
+                    session["bkt_params"][artic_skill_id] = _default_skill_state()
+                old_mastery = session["bkt_params"][artic_skill_id]["probMastery"]
+                update_bkt_param(
+                    session["bkt_params"][artic_skill_id],
+                    is_correct,
+                    "structured-text",
+                )
+                new_mastery = session["bkt_params"][artic_skill_id]["probMastery"]
+                # Persist the raw rubric scores alongside mastery so the
+                # study analysis can audit per-articulation grading later.
+                # The rubric history lives inside the per-skill JSON value so
+                # it travels with the existing bkt_params_cache row.
+                rubric_record = {
+                    "timestamp": datetime.datetime.utcnow().isoformat(),
+                    "video_id": video_id,
+                    "segment_index": segment_index,
+                    "notices_pattern": rubric["notices_pattern"],
+                    "plausible_cause": rubric["plausible_cause"],
+                    "proposes_check": rubric["proposes_check"],
+                    "mean": mean_score,
+                    "is_correct": is_correct,
+                    "mastery_before": old_mastery,
+                    "mastery_after": new_mastery,
+                    # Cap the stored answer so the JSON row doesn't bloat if
+                    # a participant writes a paragraph.
+                    "answer_excerpt": articulation_answer[:500],
+                }
+                session["bkt_params"][artic_skill_id].setdefault(
+                    "rubric_history", []
+                ).append(rubric_record)
+                print(
+                    f"T2.1 articulation: skill={artic_skill_id} "
+                    f"rubric={rubric} mean={mean_score:.2f} "
+                    f"correct={is_correct} mastery "
+                    f"{old_mastery:.3f} -> {new_mastery:.3f}"
+                )
+                try:
+                    bkt_params_to_database(user_id_req, session["bkt_params"])
+                except Exception as exc:
+                    print(f"Warning: BKT persistence failed (articulation): {exc}")
+                p = get_interaction_params("structured-text")
+                firebase_logger.log_bkt_update(
+                    user_id=user_id_req,
+                    session_id=session_id,
+                    skill=artic_skill_id,
+                    old_mastery=old_mastery,
+                    new_mastery=new_mastery,
+                    is_correct=is_correct,
+                    interaction_type="structured-text",
+                    video_id=video_id,
+                    segment_index=segment_index,
+                    user_response=articulation_answer,
+                    n_observations=session["bkt_params"][artic_skill_id].get(
+                        "n_observations", 0
+                    ),
+                    rubric=rubric,
+                    rubric_mean=mean_score,
+                    slip=p["probSlip"],
+                    guess=p["probGuess"],
+                    transit=p["probTransit"],
+                )
+            # Clear the interaction buffer so we don't re-score on this same
+            # articulation. The skill_id buffer will be overwritten naturally
+            # when the next move (Reflection) is processed below.
+            session["interaction_buffer"] = ""
 
         # ========== CONDITION 1: CONTROL (No Directed Learning) ==========
         if user_condition == "control":
@@ -353,9 +945,9 @@ class ChatHandler(APIHandler):
             input_data = {}
             # Default to None to handle cases where it might not get set
             move_detail = None
-            if CUR_SEQ != [] and question == "":
+            if session["cur_seq"] and question == "":
                 # If the student does not ask a question, get the pedagogy, parameters, etc
-                move_detail = CUR_SEQ[0]
+                move_detail = session["cur_seq"][0]
 
                 # Get whatever parameters when current segment needs
                 parameters = move_detail.get(
@@ -410,7 +1002,25 @@ class ChatHandler(APIHandler):
                     )
                     # results = conversation({"input": str(input_data)})["text"]
                     results = chat_bot.ask({"input": str(input_data)})
-                    correct_answer_buffer = json.loads(results)["correct answer"]
+                    try:
+                        session["correct_answer_buffer"] = json.loads(results)[
+                            "correct answer"
+                        ]
+                    except (ValueError, KeyError, TypeError):
+                        session["correct_answer_buffer"] = ""
+                elif interaction in ("expert-reading", "task-intent"):
+                    # Modeling cards. "expert-reading" (concept segments)
+                    # exposes the gaze path the video tutor doesn't narrate.
+                    # "task-intent" (programming segments) frames the
+                    # segment's goal and why the chosen approach fits.
+                    # Both return JSON the frontend renders into a card.
+                    # No BKT update fires — Modeling is teaching, not
+                    # assessment.
+                    results = llm_chat(
+                        system_prompt="You are a tutoring system. Respond with valid JSON only.",
+                        user_message=pedagogy,
+                        response_mime_type="application/json",
+                    )
                 elif interaction == "structured-text":
                     # Generates a writing prompt + slot labels for the student.
                     # The full JSON is returned as the message body and parsed by
@@ -451,7 +1061,8 @@ class ChatHandler(APIHandler):
                     code_line, code_line_with_blanks = get_code_with_blank_by_step(
                         video_id, segment_index, all_code, move_detail["knowledge"]
                     )
-                    code_line_buffer = code_line
+                    session["code_line_buffer"] = code_line
+                    session["code_line_blanks_buffer"] = code_line_with_blanks
                     input_data["code-line-with-blanks"] = code_line_with_blanks
                     input_data["requirement"] = (
                         "Don't include the 'code-line-with-blanks' in the response"
@@ -492,9 +1103,51 @@ class ChatHandler(APIHandler):
                         + "\n"
                         + code_with_blanks
                     )
-                if get_skill_by_knowledge(move_detail["knowledge"]) != "":
-                    knowledge_buffer = move_detail["knowledge"]
-                CUR_SEQ.pop(0)  # After using this move, remove it from the sequence
+                # T1.1: skill_id comes straight from the move (assigned in
+                # UpdateSeqHandler), so we no longer need to re-extract it
+                # from the natural-language knowledge string.
+                if move_detail.get("skill_id"):
+                    session["skill_id_buffer"] = move_detail["skill_id"]
+                    session["interaction_buffer"] = interaction
+
+                # Scaffolding consumption: bump n_observations for this skill
+                # when the Scaffolding move uses an interaction that does
+                # NOT trigger a downstream BKT update. This makes the next
+                # encounter of the same skill fall through Tier 1 into
+                # Coaching automatically, instead of getting stuck at
+                # mastery=0.1, n_obs=0 forever (programming Scaffolding is
+                # annotated-code, which has no correctness signal). Concept
+                # Scaffolding is multiple-choice and already triggers a
+                # BKT update through UpdateBKTHandler, so we skip the bump
+                # there to avoid double-counting.
+                _BKT_UPDATING_INTERACTIONS = (
+                    "fill-in-blanks",
+                    "multiple-choice",
+                    "structured-text",
+                )
+                if (
+                    move_detail.get("method") == "Scaffolding"
+                    and interaction not in _BKT_UPDATING_INTERACTIONS
+                    and move_detail.get("skill_id")
+                ):
+                    bkt_dict = session["bkt_params"]
+                    sid = move_detail["skill_id"]
+                    if sid not in bkt_dict:
+                        bkt_dict[sid] = _default_skill_state()
+                    bkt_dict[sid]["n_observations"] = (
+                        bkt_dict[sid].get("n_observations", 0) + 1
+                    )
+                    print(
+                        f"Scaffolding n_obs bump: skill={sid} "
+                        f"n_obs={bkt_dict[sid]['n_observations']} "
+                        f"(mastery unchanged at {bkt_dict[sid]['probMastery']:.3f})"
+                    )
+                    try:
+                        bkt_params_to_database(user_id_req, bkt_dict)
+                    except Exception as exc:
+                        print(f"Warning: BKT persistence failed after Scaffolding: {exc}")
+
+                session["cur_seq"].pop(0)  # After using this move, remove it
 
             elif question != "":
                 # Logic for when there's a question
@@ -502,7 +1155,7 @@ class ChatHandler(APIHandler):
                     "student's question": question,
                     "pedagogy": "Use less than three sentences briefly answer student's query or give feedbacks.",
                 }
-                if CUR_SEQ == []:
+                if not session["cur_seq"]:
                     need_response = True
                 else:
                     need_response = False
@@ -539,8 +1192,10 @@ class GoOnHandler(APIHandler):
     @tornado.web.authenticated
     def post(self):
         """Evaluate if the user is ready to go on to the next segment."""
-        global CUR_SEQ
-        if CUR_SEQ != []:
+        data = self.get_json_body() or {}
+        uid = data.get("userId", "unknown")
+        session = get_user_session(uid)
+        if session["cur_seq"]:
             result = "no"
         else:
             # set_prev_notebook(data["notebook"])
@@ -552,12 +1207,17 @@ class UpdateSeqHandler(APIHandler):
     @tornado.web.authenticated
     def post(self):
         """Update the sequence of moves and step index depending on the mastery of the skill and category."""
-        global CUR_SEQ, all_code, bkt_params
+        global all_code
         data = self.get_json_body()
         video_id = data["videoId"]
         segment_index = data["segmentIndex"]
         learning_obj = data["category"]
         user_id = data.get("userId", "unknown")
+        session = get_user_session(user_id)
+        # Hydrate BKT once per process for this user; cheap if already loaded.
+        if not session["bkt_params"]:
+            session["bkt_params"] = init_bkt_params(user_id)
+        bkt_params = session["bkt_params"]
 
         # Check user's condition
         user_condition = get_user_condition(user_id)
@@ -604,7 +1264,11 @@ class UpdateSeqHandler(APIHandler):
                             "prompt": "Generate a similar sentence like this: 'The relevant library and dataset can be imported and loaded using the following code. Try to understand the code like the video does. Then, move on to the next video to learn how to look at the dataset.'",
                             "interaction": "show-code",
                             "parameters": ["code-block"],
-                            "need-response": True,
+                            # show-code has no submit widget — the student
+                            # reads/runs the cell and uses the "Next message"
+                            # button to advance. need-response=False so that
+                            # button enables as soon as the message arrives.
+                            "need-response": False,
                         }
                     ],
                 }
@@ -620,7 +1284,8 @@ class UpdateSeqHandler(APIHandler):
                             "prompt": "Generate a similar sentence like this: 'The relevant library and dataset can be imported and loaded using the following code. Try to understand the code like the video does. Then, move on to the next video to learn how to look at the dataset.'",
                             "interaction": "show-code",
                             "parameters": ["code-block"],
-                            "need-response": True,
+                            # See above — show-code is read-only, no submit.
+                            "need-response": False,
                         },
                         {
                             "method": "Exploration",
@@ -628,7 +1293,10 @@ class UpdateSeqHandler(APIHandler):
                             "prompt": "Exploring and understanding the dataset and its attributes is the first step to doing exploratory data analysis. Now please try exploring the data on your own! Select a column below and look at a description and distribution just like Dave! If you have any hypothesis, please share with me.",
                             "interaction": "drop-down",
                             "parameters": [],
-                            "need-response": True,
+                            # The drop-down widget updates stats/chart in
+                            # place — no submit. Student explores freely
+                            # then clicks "Next message" when done.
+                            "need-response": False,
                         }
                     ],
                 }
@@ -726,15 +1394,33 @@ class UpdateSeqHandler(APIHandler):
                 # Create fixed DSL with single method
                 sections = [{"knowledge": fixed_knowledge, "actions": actions}]
             else:
-                # For full_coggen and fixed_cogapp: use normal adaptive sequence
-                mastery_level = get_mastery_level_by_segment(knowledge, bkt_params)
-                methods = get_methods(
-                    video_type, learning_obj, knowledge, mastery_level, code_block
+                # For full_coggen: use the T2.3 deterministic planner that
+                # consumes mastery + n_observations and applies the policy
+                # table documented next to plan_methods(). No GPT call here,
+                # so segment start is now near-instant.
+                mastery_level = get_mastery_level_by_segment(
+                    knowledge, bkt_params, video_id, segment_index
                 )
+                n_obs_list = [
+                    bkt_params.get(
+                        make_skill_id(video_id, segment_index, i), {}
+                    ).get("n_observations", 0)
+                    for i in range(len(knowledge))
+                ]
                 if code_block == "":
                     action_set = concept_action
+                    content_type = "concept"
                 else:
                     action_set = prog_action
+                    content_type = "programming"
+                methods = plan_methods(
+                    knowledge, mastery_level, n_obs_list, content_type
+                )
+                print(
+                    f"T2.3 planner: video={video_id} seg={segment_index} "
+                    f"mastery={mastery_level} n_obs={n_obs_list} -> "
+                    f"methods={[m['method'] for m in methods]}"
+                )
                 sections = get_dsl(methods, action_set)
             #     action_set = prog_action
             # sections = get_dsl(methods, action_set)
@@ -764,12 +1450,22 @@ class UpdateSeqHandler(APIHandler):
                             }
                             for d in modeling_template
                         ]
-        CUR_SEQ = [
-            dict(knowledge=section["knowledge"], **action)
-            for section in sections
-            for action in section["actions"]
-        ]
-        print("CUR_SEQ after update:", CUR_SEQ)
+        # T1.1: attach the deterministic skill_id to every move so the
+        # downstream BKT update doesn't need to re-extract a skill from the
+        # natural-language knowledge string.
+        new_cur_seq = []
+        for ki, section in enumerate(sections):
+            skill_id = make_skill_id(video_id, segment_index, ki)
+            for action in section["actions"]:
+                new_cur_seq.append(
+                    dict(
+                        knowledge=section["knowledge"],
+                        skill_id=skill_id,
+                        **action,
+                    )
+                )
+        session["cur_seq"] = new_cur_seq
+        print("CUR_SEQ after update:", session["cur_seq"])
 
 
 class FillInBlanksHandler(APIHandler):
@@ -790,7 +1486,6 @@ class FillInBlanksHandler(APIHandler):
 class UpdateBKTHandler(APIHandler):
     @tornado.web.authenticated
     def post(self):
-        global bkt_params, CUR_SEQ, knowledge_buffer
         data = self.get_json_body()
         video_id = data["videoId"]
         filled_code = data["filledCode"]
@@ -803,10 +1498,19 @@ class UpdateBKTHandler(APIHandler):
         if user_condition in ["control", "quiz", "fixed_cogapp"]:
             self.finish(json.dumps({"status": "skipped", "condition": user_condition}))
             return
-        skill = get_skill_by_knowledge(knowledge_buffer)
-        if video_id != "" and skill != "":
+
+        session = get_user_session(user_id_req)
+        if not session["bkt_params"]:
+            session["bkt_params"] = init_bkt_params(user_id_req)
+
+        # T1.1: skill_id was buffered by ChatHandler when the practice item
+        # was sent out, so we use it directly instead of re-extracting from
+        # a fragile natural-language knowledge string.
+        skill_id = session.get("skill_id_buffer", "")
+        if video_id != "" and skill_id:
             update_bkt_params(
-                skill,
+                session,
+                skill_id,
                 filled_code,
                 selected_choice,
                 user_id_req,
@@ -814,9 +1518,19 @@ class UpdateBKTHandler(APIHandler):
                 video_id,
                 segment_index,
             )
+            # T1.4: persist after each update so the on-disk state stays in
+            # sync with memory (also survives process restarts mid-study).
+            try:
+                bkt_params_to_database(user_id_req, session["bkt_params"])
+            except Exception as exc:
+                print(f"Warning: BKT persistence failed: {exc}")
             self.finish(json.dumps("update bkt successfully"))
         else:
-            print("Something wrong in UpdateBKTHandler.")
+            print(
+                f"UpdateBKTHandler skipped: video_id={video_id!r} "
+                f"skill_id_buffer={skill_id!r}"
+            )
+            self.finish(json.dumps({"status": "skipped"}))
 
 
 def initialze_database():
@@ -1260,22 +1974,12 @@ class CustomChatBotWithMemory:
 
     def ask(self, user_input):
         prompt = self._generate_prompt()
-        response = openai.ChatCompletion.create(
-            model="gpt-5.4-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": prompt,
-                },
-                {
-                    "role": "user",
-                    "content": str(user_input),
-                },
-            ],
+        bot_response = llm_chat(
+            system_prompt=prompt,
+            user_message=str(user_input),
         )
-        bot_response = response.choices[0].message.content
-        # bot_response = response["choices"][0]["message"]["content"]
-        # Update memory with the latest exchange
+        # Update memory with the latest exchange (langchain memory works
+        # provider-agnostically; we just record the strings).
         self.memory.save_context({"input": str(user_input)}, {"output": bot_response})
         return bot_response
 
@@ -1450,12 +2154,8 @@ def get_segments(video_id):
 
 def get_summary_by_LO(transcript, learning_goal):
     """Get the summary of a transcript by learning goal."""
-    response = openai.ChatCompletion.create(
-        model="gpt-5.4-mini",
-        messages=[
-            {
-                "role": "system",
-                "content": f"""Here is a video transcript about {video_type}. Summarize the video content that corresponds to each given learning goal.
+    raw = llm_chat(
+        system_prompt=f"""Here is a video transcript about {video_type}. Summarize the video content that corresponds to each given learning goal.
                                 The transcript is not necessarily arranged in the order in which the learning goals are defined and can contain multiple segments with the same learning goal.
                                 The script may contain only some of the learning goals. Please do not include summary of learning goals that do not exist in the transcript.
                                 Increase the granularity, for example if the video author create two different visualizations, they should be summarized into two distince points.
@@ -1470,14 +2170,9 @@ def get_summary_by_LO(transcript, learning_goal):
                                     ...
                                 ]
                             """,
-            },
-            {
-                "role": "user",
-                "content": f"transcript: {transcript}, learning goals: {learning_goal}",
-            },
-        ],
+        user_message=f"transcript: {transcript}, learning goals: {learning_goal}",
     )
-    summary = ast.literal_eval(response.choices[0].message.content)
+    summary = _parse_llm_list(raw)
     formatted_list = [{"category": item[0], "summary": item[1]} for item in summary]
     return formatted_list
 
@@ -1500,25 +2195,17 @@ def get_start_sentence(summary_list, transcript):
         else:
             result_string = transcript
 
-        response = openai.ChatCompletion.create(
-            model="gpt-5.4-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": """Here is a transcript of the video about exploratory data analysis and a summary of one paragraph of the video transcript.
-                                Find the starting sentence in the given transcript that corresponds to the summary.
-                                Don't add punctuation or capitalization that are not in the original transcript.
-                                Response only the first sentence.
-                            """,
-                },
-                {
-                    "role": "user",
-                    "content": f"transcript: {result_string}, summary: {item['summary']}",
-                },
-            ],
+        sentence = llm_chat(
+            system_prompt=(
+                "Here is a transcript of the video about exploratory data "
+                "analysis and a summary of one paragraph of the video "
+                "transcript. Find the starting sentence in the given "
+                "transcript that corresponds to the summary. Don't add "
+                "punctuation or capitalization that are not in the original "
+                "transcript. Response only the first sentence."
+            ),
+            user_message=f"transcript: {result_string}, summary: {item['summary']}",
         )
-
-        sentence = response.choices[0].message.content
         item["start sentence"] = sentence
 
     start_sentence_list = []
@@ -1529,29 +2216,16 @@ def get_start_sentence(summary_list, transcript):
 
 def get_timestamp(transcript_with_time, start_sentence_list):
     """Returns the start timestamp of each sentence in the start sentence list."""
-    response = openai.ChatCompletion.create(
-        model="gpt-5.4-mini",
-        messages=[
-            {
-                "role": "system",
-                "content": """Here is a video transcript about exploratory data analysis and a list of sentences.
-                            Find out the start timestamp corresponding to each sentence.
-                            Response only in a list, for example:
-                            [
-                                start timestamp 1,
-                                start timestamp 2,
-                                start timestamp 3,
-                                ...
-                            ]
-                            """,
-            },
-            {
-                "role": "user",
-                "content": f"transcript: {transcript_with_time}, sentence list: {start_sentence_list}",
-            },
-        ],
+    raw = llm_chat(
+        system_prompt=(
+            "Here is a video transcript about exploratory data analysis and a "
+            "list of sentences. Find out the start timestamp corresponding to "
+            "each sentence. Response only in a list, for example: "
+            "[start timestamp 1, start timestamp 2, start timestamp 3, ...]"
+        ),
+        user_message=f"transcript: {transcript_with_time}, sentence list: {start_sentence_list}",
     )
-    time = ast.literal_eval(response.choices[0].message.content)
+    time = _parse_llm_list(raw)
     return time
 
 
@@ -1716,7 +2390,22 @@ def get_knowledge(video_id, video_type, learning_obj, segment_index, code_block)
     )
     row = c.fetchone()
     if row:
-        return ast.literal_eval(row[0])
+        # Defensively re-parse the cached value. Older runs (under OpenAI)
+        # stored a pure Python list literal; newer Gemini runs may have
+        # cached a value with prose around the list. _parse_llm_list copes
+        # with both. If it's truly corrupt, drop the row and regenerate.
+        try:
+            return _parse_llm_list(row[0])
+        except (ValueError, SyntaxError) as exc:
+            print(
+                f"knowledge_cache row for {video_id}::{segment_index} is "
+                f"unparseable ({exc}); regenerating."
+            )
+            c.execute(
+                "DELETE FROM knowledge_cache WHERE video_id = ? AND segment_index = ?",
+                (video_id, segment_index),
+            )
+            conn.commit()
 
     start_time = segment["start"]
     end_time = segment["end"]
@@ -1728,12 +2417,8 @@ def get_knowledge(video_id, video_type, learning_obj, segment_index, code_block)
     else:
         num = 4
     if code_block != "":
-        response = openai.ChatCompletion.create(
-            model="gpt-5.4-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": f"""The following {video_type} video transcript and the code block taught in the video are about a learning goal: {learning_obj}. Summarize the declarative and procedural knowledge in the video transcript and code block.
+        knowledge = llm_chat(
+            system_prompt=f"""The following {video_type} video transcript and the code block taught in the video are about a learning goal: {learning_obj}. Summarize the declarative and procedural knowledge in the video transcript and code block.
                                 The result should be summarized in one sentence of declarative knowledge, and no more than {num - 1} sentences of procedural knowledge, in the order in which it should be learned.
                                 Each knowledge should follow this format:
                                 Declarative knowledge: "The task is + [final goal] + using + [general method/tool] + and + [additional method/technique for enhancement]".
@@ -1748,51 +2433,38 @@ def get_knowledge(video_id, video_type, learning_obj, segment_index, code_block)
                                     ...
                                 ]
                                 """,
-                },
-                {
-                    "role": "user",
-                    "content": f"video transcript: {segment_transcript}, code block: {code_block}",
-                },
-            ],
+            user_message=f"video transcript: {segment_transcript}, code block: {code_block}",
         )
     else:
-        response = openai.ChatCompletion.create(
-            model="gpt-5.4-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": f"""The following {video_type} video transcript is about a learning goal: {learning_obj}. Summarize the declarative and procedural knowledge in the video transcript.
+        knowledge = llm_chat(
+            system_prompt=f"""The following {video_type} video transcript is about a learning goal: {learning_obj}. Summarize the declarative and procedural knowledge in the video transcript.
                                     The result should be summarized in one sentence of procedural knowledge, and no more than {num - 1} sentences of declarative knowledge, in the order in which it should be learned.
-                                    Each knowledge should follow this format:
+                                    Each knowledge MUST begin with the literal label "Procedural knowledge:" or "Declarative knowledge:" so downstream logic can detect the type. Follow this format:
                                     Procedural knowledge: "To achieve/understand + [specific goal/outcome] + one need to + [general actions/processes] + [additional details] + and consider/use + [relevant factors/tools]." The [general actions/processes] should be quoted in a && sign.
-                                    For example, "To understand the distribution of earnings by college major, one need to &examine the histogram and identify overall trend or extreme values&, and consider whether high earnings are due to the field's financial reward or influenced by factors such as low sample size and high variation."
+                                    For example, "Procedural knowledge: To understand the distribution of earnings by college major, one need to &examine the histogram and identify overall trend or extreme values&, and consider whether high earnings are due to the field's financial reward or influenced by factors such as low sample size and high variation."
                                     Declarative knowledge: "[Subject] + [verb phrase] + that + [independent clause]".
-                                    For example, "The median income by college major shows that majors earn a median income of over $30K right out of college."
+                                    For example, "Declarative knowledge: The median income by college major shows that majors earn a median income of over $30K right out of college."
                                     And sort the output knowledge order according to the correct cognitive order. For example, students need to first learn how to interpret the chart then find out the facts in the chart.
                                     Your response should be in a list format without any explanations:
                                     [
-                                        'knowledge_1',
-                                        'knowledge_2',
+                                        'Procedural knowledge: ...',
+                                        'Declarative knowledge: ...',
                                         ...
                                     ]
                                 """,
-                },
-                {
-                    "role": "user",
-                    "content": f"video transcript: {segment_transcript}",
-                },
-            ],
+            user_message=f"video transcript: {segment_transcript}",
         )
-    knowledge = response.choices[0].message.content
-    # Insert new data if video_id doesn't exist
+    # Parse FIRST so we never cache a value we couldn't decode. If the LLM
+    # response is unparseable we surface the error here rather than poison
+    # the cache for every subsequent request.
+    parsed = _parse_llm_list(knowledge)
     c.execute(
         "INSERT INTO knowledge_cache (video_id, segment_index, knowledge) VALUES (?, ?, ?)",
-        (video_id, segment_index, knowledge),
+        (video_id, segment_index, repr(parsed)),
     )
     conn.commit()
     conn.close()
-    knowledge = ast.literal_eval(knowledge)
-    return knowledge
+    return parsed
 
 
 def get_methods(video_type, learning_obj, knowledge, mastery_level, code_block):
@@ -1801,12 +2473,8 @@ def get_methods(video_type, learning_obj, knowledge, mastery_level, code_block):
         video_content = "concept-related"
     else:
         video_content = "programming-related"
-    response = openai.ChatCompletion.create(
-        model="gpt-5.5",
-        messages=[
-            {
-                "role": "system",
-                "content": f"""You are an expert mentor who is good at arrange teaching methods to help student learn from a video about {video_type}.
+    methods = llm_chat(
+        system_prompt=f"""You are an expert mentor who is good at arrange teaching methods to help student learn from a video about {video_type}.
                                 You are teaching student to learn knowledge for {learning_obj} using the Cognitive Apprenticeship framework.
 
                                 Definition of Cognitive Apprenticeship framework methods:
@@ -1846,15 +2514,9 @@ def get_methods(video_type, learning_obj, knowledge, mastery_level, code_block):
                                     ...
                                 ]
                             """,
-            },
-            {
-                "role": "user",
-                "content": f"programming or concept: {video_content}, knowledge: {knowledge}, student's mastery level: {mastery_level}",
-            },
-        ],
+        user_message=f"programming or concept: {video_content}, knowledge: {knowledge}, student's mastery level: {mastery_level}",
     )
-    methods = response.choices[0].message.content
-    methods = ast.literal_eval(methods)
+    methods = _parse_llm_list(methods)
     return methods
 
 
@@ -1901,133 +2563,242 @@ def get_dsl(methods, action_set):
     return result
 
 
-def init_bkt_params():
-    """Initialize the bkt parameters for the given video."""
-    global bkt_params, user_id
+def _default_skill_state() -> dict:
+    return {"probMastery": 0.1, "n_observations": 0}
+
+
+def init_bkt_params(uid: str) -> dict:
+    """Load this user's BKT state from disk into a fresh dict.
+
+    Backward-compatible with the old persistence shape ({skill: float}) — any
+    legacy entry is rehydrated into the new {probMastery, n_observations}
+    shape with n_observations=0.
+    """
     conn = sqlite3.connect("cache.db")
     c = conn.cursor()
     c.execute(
-        "SELECT skills_probMastery FROM bkt_params_cache WHERE user_id = ?", (user_id,)
+        "SELECT skills_probMastery FROM bkt_params_cache WHERE user_id = ?", (uid,)
     )
-    prob_mastery_dict = json.loads(c.fetchone()[0])
-    # Iterating through the original data to populate the new data structure
-    bkt_params = {
-        skill: {
-            "probMastery": prob_mastery_dict.get(skill, 0.1),
-            "probTransit": 0.1,
-            "probSlip": 0.1,
-            "probGuess": 0.1,
-        }
-        for skill in prob_mastery_dict.keys()
-    }
-    conn.commit()
+    row = c.fetchone()
     conn.close()
+    if row is None or not row[0]:
+        return {}
+    try:
+        stored = json.loads(row[0])
+    except (ValueError, TypeError):
+        return {}
 
-
-def update_bkt_param(model, is_correct):
-    """Update the bkt parameters for the given skills."""
-    if is_correct == True:
-        numerator = model["probMastery"] * (1 - model["probSlip"])
-        mastery_and_guess = (1 - model["probMastery"]) * model["probGuess"]
-    else:
-        numerator = model["probMastery"] * model["probSlip"]
-        mastery_and_guess = (1 - model["probMastery"]) * (1 - model["probGuess"])
-
-    prob_mastery_given_observation = numerator / (numerator + mastery_and_guess)
-    model["probMastery"] = prob_mastery_given_observation + (
-        (1 - prob_mastery_given_observation) * model["probTransit"]
-    )
-
-
-def get_mastery_level_by_segment(list_of_knowledge, bkt_params):
-    """Get the mastery level for the given list of knowledge."""
-    mastery_level = []
-    for knowledge in list_of_knowledge:
-        skill = get_skill_by_knowledge(knowledge)
-
-        if skill == "":
-            # if the knowledge does not contain a skill
-            mastery_level.append(0.5)
-            continue
-
-        # Empty bkt_params means there's nothing to rerank against — bootstrap
-        # this skill with defaults so we don't call rerank on an empty list.
-        if not bkt_params:
-            bkt_params[skill] = {
-                "probMastery": 0.1,
-                "probTransit": 0.1,
-                "probSlip": 0.1,
-                "probGuess": 0.1,
+    bkt: dict = {}
+    for skill, value in stored.items():
+        if isinstance(value, dict):
+            entry = {
+                "probMastery": float(value.get("probMastery", 0.1)),
+                "n_observations": int(value.get("n_observations", 0)),
             }
-            mastery_level.append(0.1)
-            continue
-
-        rerank_results = _get_reranker().rerank(skill, list(bkt_params.keys()))
-        top_match = rerank_results["rerank_passages"][0]
-
-        if rerank_results["rerank_scores"][0] >= 0.55:
-            # if the skill is very similar to a skill in the bkt_params
-            # use the bkt_params of that skill and update the skill name.
-            # Skip the rename when the names are identical, otherwise we'd
-            # delete the entry we just aliased and KeyError on access.
-            if skill != top_match:
-                bkt_params[skill] = bkt_params[top_match]
-                del bkt_params[top_match]
-            mastery_level.append(bkt_params[skill]["probMastery"])
+            # Preserve any rubric history attached to this skill so the
+            # full audit trail survives reloads.
+            if "rubric_history" in value:
+                entry["rubric_history"] = list(value["rubric_history"])
+            bkt[skill] = entry
         else:
-            # if the skill is not similar to any skill in the bkt_params
-            # create a new skill with default params
-            bkt_params[skill] = {
-                "probMastery": 0.1,
-                "probTransit": 0.1,
-                "probSlip": 0.1,
-                "probGuess": 0.1,
+            # Legacy float-only entry.
+            bkt[skill] = {
+                "probMastery": float(value),
+                "n_observations": 0,
             }
-            mastery_level.append(0.1)
+    return bkt
+
+
+def update_bkt_param(state: dict, is_correct, interaction: str) -> None:
+    """Apply one BKT update to a single skill's state, in-place.
+
+    `is_correct` accepts either a bool (True / False — the standard binary
+    BKT input) or a float in [0, 1] for a *soft* observation (e.g. fraction
+    of blanks filled correctly). When fractional, the posterior is the
+    Bayesian mixture of the would-be-correct posterior and the would-be-wrong
+    posterior weighted by the fraction. Endpoints 1.0 / 0.0 reduce exactly
+    to the standard binary update.
+
+    Slip / guess / transit are looked up by interaction type (T1.2): a
+    4-option MC has a much higher guess rate than a fill-in-blanks item, so
+    identical correctness signals are *not* equally diagnostic. The per-skill
+    state keeps only probMastery and the running count of observations.
+    """
+    fraction = float(is_correct)
+    fraction = max(0.0, min(1.0, fraction))
+    p = get_interaction_params(interaction)
+    prob_mastery = state["probMastery"]
+
+    # Posteriors under the two hypotheses about the observation.
+    num_correct = prob_mastery * (1 - p["probSlip"])
+    den_correct = num_correct + (1 - prob_mastery) * p["probGuess"]
+    num_wrong = prob_mastery * p["probSlip"]
+    den_wrong = num_wrong + (1 - prob_mastery) * (1 - p["probGuess"])
+    if den_correct <= 0 or den_wrong <= 0:
+        # Degenerate case (shouldn't happen with sensible params); skip update.
+        return
+    posterior_correct = num_correct / den_correct
+    posterior_wrong = num_wrong / den_wrong
+
+    # Soft mixture: with fraction=1.0 this is exactly the old correct-update,
+    # with fraction=0.0 it's exactly the old wrong-update.
+    posterior = fraction * posterior_correct + (1.0 - fraction) * posterior_wrong
+    state["probMastery"] = posterior + (1 - posterior) * p["probTransit"]
+    state["n_observations"] = state.get("n_observations", 0) + 1
+
+
+def get_mastery_level_by_segment(
+    list_of_knowledge, bkt_params: dict, video_id: str, segment_index
+) -> list:
+    """Return mastery for each knowledge item in this segment.
+
+    T1.1: skills are identified deterministically by (video_id, segment_index,
+    knowledge_index). No reranker, no rename-on-rerank, no NL-string keys.
+    New skills are bootstrapped with default low mastery.
+    """
+    mastery_level = []
+    for idx, _ in enumerate(list_of_knowledge):
+        skill_id = make_skill_id(video_id, segment_index, idx)
+        if skill_id not in bkt_params:
+            bkt_params[skill_id] = _default_skill_state()
+        mastery_level.append(bkt_params[skill_id]["probMastery"])
     return mastery_level
 
 
 def update_bkt_params(
-    skill,
-    filled_code,
-    selected_choice,
+    session: dict,
+    skill_id: str,
+    filled_code: str,
+    selected_choice: str,
     user_id_req="unknown",
     session_id="unknown",
     video_id=None,
     segment_index=None,
 ):
-    """Update the bkt parameters for the practiced skills."""
-    global bkt_params, code_line_buffer, correct_answer_buffer
-    # Store old mastery before update
-    old_mastery = bkt_params[skill]["probMastery"]
+    """Update one skill's BKT state in `session` based on the latest practice.
+
+    T1.1: skill is now identified by skill_id (deterministic key), not by the
+    LLM-extracted natural-language skill phrase.
+    T1.2: the interaction stored in the session buffer determines which
+    slip/guess profile we apply.
+    T1.3: fill-in-blanks correctness uses canonicalize_code() for lenient
+    comparison rather than raw `.strip() == .strip()`.
+    """
+    bkt = session["bkt_params"]
+    if skill_id not in bkt:
+        bkt[skill_id] = _default_skill_state()
+
+    interaction_used = session.get("interaction_buffer", "")
+
     if filled_code != "":
-        is_correct = filled_code.strip() == code_line_buffer.strip()
-        interaction_type = "fill_in_blanks"
+        target = session.get("code_line_buffer", "")
+        masked = session.get("code_line_blanks_buffer", "")
         user_response = filled_code
-        code_line_buffer = ""
-    else:
-        is_correct = selected_choice == correct_answer_buffer
-        interaction_type = "multiple_choice"
-        user_response = selected_choice
-        correct_answer_buffer = ""
+        session["code_line_buffer"] = ""
+        session["code_line_blanks_buffer"] = ""
+        if not interaction_used:
+            interaction_used = "fill-in-blanks"
 
-    update_bkt_param(bkt_params[skill], is_correct)
-    new_mastery = bkt_params[skill]["probMastery"]
-    print("bkt_params: " + str(bkt_params))
+        # Soft scoring: align the filled code against the masked template
+        # and the target, count what fraction of blanks were correct, and
+        # feed that fraction into a single soft BKT update. This treats one
+        # submission as one observation (so n_observations doesn't bloat),
+        # while still rewarding partial correctness — 2 of 3 blanks right
+        # moves mastery up meaningfully rather than being binarized to
+        # "all wrong".
+        target_answers = extract_blank_answers(masked, target)
+        filled_answers = extract_blank_answers(masked, filled_code)
+        n_correct = 0
+        n_total = 0
+        if (
+            target_answers is not None
+            and filled_answers is not None
+            and len(target_answers) == len(filled_answers)
+            and len(target_answers) > 0
+        ):
+            n_total = len(target_answers)
+            for t, f in zip(target_answers, filled_answers):
+                if canonicalize_code(t) == canonicalize_code(f):
+                    n_correct += 1
+            fraction = n_correct / n_total
+        else:
+            # Alignment failed (likely because the student modified the
+            # skeleton). Fall back to whole-line comparison so we don't
+            # silently misattribute correctness — that gives 0.0 or 1.0.
+            fraction = (
+                1.0
+                if canonicalize_code(filled_code) == canonicalize_code(target)
+                else 0.0
+            )
+            n_total = 1
+            n_correct = int(fraction)
 
-    # Log BKT update to Firebase
+        old_mastery = bkt[skill_id]["probMastery"]
+        update_bkt_param(bkt[skill_id], fraction, interaction_used)
+        new_mastery = bkt[skill_id]["probMastery"]
+        print(
+            f"BKT update: skill={skill_id} interaction={interaction_used} "
+            f"blanks_correct={n_correct}/{n_total} (fraction={fraction:.2f}) "
+            f"mastery {old_mastery:.3f} -> {new_mastery:.3f} "
+            f"(n_obs={bkt[skill_id]['n_observations']})"
+        )
+        p = get_interaction_params(interaction_used)
+        firebase_logger.log_bkt_update(
+            user_id=user_id_req,
+            session_id=session_id,
+            skill=skill_id,
+            old_mastery=old_mastery,
+            new_mastery=new_mastery,
+            # Send the fraction itself, not a binarized bool — Firebase now
+            # has the raw partial-credit value for analysis.
+            is_correct=fraction,
+            interaction_type=interaction_used,
+            video_id=video_id,
+            segment_index=segment_index,
+            user_response=user_response,
+            n_observations=bkt[skill_id].get("n_observations", 0),
+            slip=p["probSlip"],
+            guess=p["probGuess"],
+            transit=p["probTransit"],
+        )
+        session["interaction_buffer"] = ""
+        return
+
+    # Multiple-choice path: single binary observation as before.
+    old_mastery = bkt[skill_id]["probMastery"]
+    is_correct = selected_choice == session.get("correct_answer_buffer", "")
+    user_response = selected_choice
+    session["correct_answer_buffer"] = ""
+    if not interaction_used:
+        interaction_used = "multiple-choice"
+
+    update_bkt_param(bkt[skill_id], is_correct, interaction_used)
+    new_mastery = bkt[skill_id]["probMastery"]
+    print(
+        f"BKT update: skill={skill_id} interaction={interaction_used} "
+        f"correct={is_correct} mastery {old_mastery:.3f} -> {new_mastery:.3f} "
+        f"(n_obs={bkt[skill_id]['n_observations']})"
+    )
+
+    p = get_interaction_params(interaction_used)
     firebase_logger.log_bkt_update(
         user_id=user_id_req,
         session_id=session_id,
-        skill=skill,
+        skill=skill_id,
         old_mastery=old_mastery,
         new_mastery=new_mastery,
         is_correct=is_correct,
-        interaction_type=interaction_type,
+        interaction_type=interaction_used,
         video_id=video_id,
         segment_index=segment_index,
         user_response=user_response,
+        n_observations=bkt[skill_id].get("n_observations", 0),
+        slip=p["probSlip"],
+        guess=p["probGuess"],
+        transit=p["probTransit"],
     )
+
+    session["interaction_buffer"] = ""
 
 
 def get_skill_by_knowledge(knowledge):
@@ -2049,24 +2820,55 @@ def get_skill_by_knowledge(knowledge):
     return skill
 
 
-def bkt_params_to_database():
-    """Store the updated bkt parameters into database."""
-    global bkt_params, user_id
-    updated_prob_mastery = {
-        key: value["probMastery"] for key, value in bkt_params.items()
-    }
+def bkt_params_to_database(uid: str, bkt_params: dict) -> None:
+    """Store the updated BKT state for a user.
+
+    T1.4: persist the full per-skill state ({probMastery, n_observations}),
+    not just probMastery. Backward compatible with the old float-only schema:
+    legacy rows are upgraded in place on first write.
+    """
+    serialized = {}
+    for skill_id, value in bkt_params.items():
+        entry = {
+            "probMastery": float(value["probMastery"]),
+            "n_observations": int(value.get("n_observations", 0)),
+        }
+        if value.get("rubric_history"):
+            entry["rubric_history"] = list(value["rubric_history"])
+        serialized[skill_id] = entry
     conn = sqlite3.connect("cache.db")
     c = conn.cursor()
     c.execute(
-        "SELECT skills_probMastery FROM bkt_params_cache WHERE user_id = ?", (user_id,)
+        "SELECT skills_probMastery FROM bkt_params_cache WHERE user_id = ?",
+        (uid,),
     )
     row = c.fetchone()
-    existing_prob_mastery = json.loads(row[0])
-    existing_prob_mastery.update(updated_prob_mastery)
-    c.execute(
-        "UPDATE bkt_params_cache SET skills_probMastery = ? WHERE user_id = ?",
-        (json.dumps(existing_prob_mastery), user_id),
-    )
+    if row is None:
+        c.execute(
+            "INSERT INTO bkt_params_cache (user_id, skills_probMastery) VALUES (?, ?)",
+            (uid, json.dumps(serialized)),
+        )
+    else:
+        try:
+            existing = json.loads(row[0]) if row[0] else {}
+        except (ValueError, TypeError):
+            existing = {}
+        # Upgrade any legacy float entries to the new dict shape so the file
+        # is self-consistent after this write.
+        merged: dict = {}
+        for skill_id, value in existing.items():
+            if isinstance(value, dict):
+                merged[skill_id] = value
+            else:
+                merged[skill_id] = {
+                    "probMastery": float(value),
+                    "n_observations": 0,
+                }
+        merged.update(serialized)
+        c.execute(
+            "UPDATE bkt_params_cache SET skills_probMastery = ? WHERE user_id = ?",
+            (json.dumps(merged), uid),
+        )
     conn.commit()
     conn.close()
 
@@ -2132,12 +2934,8 @@ def get_code_with_blank(video_id, segment_index, code_json):
     code_block = code_json[str(segment_index)]
     print("functions_attributes_to_learn:", function_attribute)
     # get the code with blank
-    response = openai.ChatCompletion.create(
-        model="gpt-5.4-mini",
-        messages=[
-            {
-                "role": "system",
-                "content": """Use the given code block, make all the designated functions and attributes to be blanks in the code as blanks.
+    code_with_blanks = llm_chat(
+        system_prompt="""Use the given code block, make all the designated functions and attributes to be blanks in the code as blanks.
                             You should not make code that is not in the designated functions and attributes to be blanks.
                             The code blanks should only be the items in the functions/attributes to learn so that students can use the items to fill in the blanks.
                             Adjusts the range of blanks according to the format of the items in the given functions/attributes to learn list.
@@ -2148,14 +2946,8 @@ def get_code_with_blank(video_id, segment_index, code_json):
                             Each blank should be exactly an underscore consisting of three short underscores '___'.
                             Respond in the following format: ```{{r code with blanks}}```
                             """,
-            },
-            {
-                "role": "user",
-                "content": f"functions/attributes to learn: {str(function_attribute)}, code block: {str(code_block)}",
-            },
-        ],
+        user_message=f"functions/attributes to learn: {str(function_attribute)}, code block: {str(code_block)}",
     )
-    code_with_blanks = response.choices[0].message.content
     c.execute(
         "UPDATE code_block_cache SET code_with_blanks = ? WHERE video_id = ? AND segment_index = ?",
         (code_with_blanks, video_id, segment_index),
@@ -2174,24 +2966,14 @@ def get_code_with_blank_by_step(video_id, segment_index, code_json, knowledge):
     code_lines_with_blanks = code_with_blanks.split("\n")[1:-1]
     function_attribute = get_function_attribute_by_knowledge(knowledge)
     # get the code with blank
-    response = openai.ChatCompletion.create(
-        model="gpt-5.4-mini",
-        messages=[
-            {
-                "role": "system",
-                "content": """You are an expert programmer who can understand R code. A student is learning EDA by learning code line-by-line.
+    line_index = llm_chat(
+        system_prompt="""You are an expert programmer who can understand R code. A student is learning EDA by learning code line-by-line.
                             Now your task is to find out the corresponding code lines index (start from 0) in the code block that corresponds to current knowledge and the functions and attributes to learn.
                             The corresponding code lines can have one or two lines. Respond in the following format (a list without explanation): [index_1, ...]
                         """,
-            },
-            {
-                "role": "user",
-                "content": f"knowledge to learn: {str(knowledge)}, function and attribute to learn: {str(function_attribute)}, code block: {code_lines}",
-            },
-        ],
+        user_message=f"knowledge to learn: {str(knowledge)}, function and attribute to learn: {str(function_attribute)}, code block: {code_lines}",
     )
-    line_index = response.choices[0].message.content
-    line_index = ast.literal_eval(line_index)
+    line_index = _parse_llm_list(line_index)
     line_index.sort()
     # Extract the lines corresponding to the given indices
     selected_lines = [code_lines[i] for i in line_index]

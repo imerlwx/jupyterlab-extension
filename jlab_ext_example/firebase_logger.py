@@ -188,21 +188,32 @@ def log_bkt_update(
     video_id: Optional[str] = None,
     segment_index: Optional[int] = None,
     user_response: Optional[str] = None,
+    n_observations: Optional[int] = None,
+    rubric: Optional[Dict[str, float]] = None,
+    rubric_mean: Optional[float] = None,
+    slip: Optional[float] = None,
+    guess: Optional[float] = None,
+    transit: Optional[float] = None,
 ):
     """
-    Log BKT (Bayesian Knowledge Tracing) model update to Firebase
+    Log BKT (Bayesian Knowledge Tracing) model update to Firebase.
+
+    Every update is appended to a per-session timeline AND used to overwrite
+    the current per-skill snapshot. The optional kwargs let callers attach
+    additional audit detail (rubric scores for articulation, evidence count,
+    interaction-specific BKT parameters used) so the Firebase record is a
+    full source of truth for post-study analysis.
 
     Args:
-        user_id: Unique identifier for the user
-        session_id: Unique identifier for the session
-        skill: The skill being assessed
-        old_mastery: Probability of mastery before update (0-1)
-        new_mastery: Probability of mastery after update (0-1)
-        is_correct: Whether the user answered correctly
-        interaction_type: 'fill_in_blanks' or 'multiple_choice'
-        video_id: YouTube video ID (optional)
-        segment_index: Current segment index (optional)
-        user_response: The user's actual response (optional)
+        user_id, session_id, skill: identifiers.
+        old_mastery, new_mastery, is_correct, interaction_type: BKT core fields.
+        video_id, segment_index, user_response: context.
+        n_observations: total practice events on this skill *after* the update.
+        rubric: {notices_pattern, plausible_cause, proposes_check} when the
+            update came from a structured-text articulation; else None.
+        rubric_mean: mean of the rubric dimensions (the value thresholded to
+            produce is_correct).
+        slip, guess, transit: the BKT noise parameters used for this update.
     """
     if not _firebase_enabled:
         return
@@ -223,18 +234,37 @@ def log_bkt_update(
             "user_response": user_response,
             "mastery_change": new_mastery - old_mastery,
         }
+        if n_observations is not None:
+            update_data["n_observations"] = n_observations
+        if rubric is not None:
+            update_data["rubric"] = rubric
+        if rubric_mean is not None:
+            update_data["rubric_mean"] = rubric_mean
+        if slip is not None:
+            update_data["slip"] = slip
+        if guess is not None:
+            update_data["guess"] = guess
+        if transit is not None:
+            update_data["transit"] = transit
 
         ref.push(update_data)
 
-        # Also update the current BKT state
+        # Also update the current BKT state. Include n_observations and the
+        # most recent rubric so a single read of `bkt_state/{uid}/{skill}`
+        # gives an analyst the full live picture.
+        state_payload = {
+            "mastery": new_mastery,
+            "last_updated": get_timestamp(),
+            "session_id": session_id,
+            "last_interaction": interaction_type,
+        }
+        if n_observations is not None:
+            state_payload["n_observations"] = n_observations
+        if rubric is not None:
+            state_payload["last_rubric"] = rubric
+            state_payload["last_rubric_mean"] = rubric_mean
         state_ref = db.reference(f"bkt_state/{user_id}")
-        state_ref.child(skill).set(
-            {
-                "mastery": new_mastery,
-                "last_updated": get_timestamp(),
-                "session_id": session_id,
-            }
-        )
+        state_ref.child(skill).set(state_payload)
 
     except Exception as e:
         print(f"❌ Failed to log BKT update: {str(e)}")
