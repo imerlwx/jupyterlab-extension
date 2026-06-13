@@ -120,11 +120,11 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
   };
 
   const PRETEST_QUALTRICS_URL =
-    'https://your-qualtrics-pretest-link.example.com';
+    'https://stanforduniversity.qualtrics.com/jfe/form/SV_5sEuT23Z0EFjXBY';
   const POSTTEST_QUALTRICS_URLS: Record<number, string> = {
-    1: 'https://your-qualtrics-posttest-1-link.example.com',
-    2: 'https://your-qualtrics-posttest-2-link.example.com',
-    3: 'https://your-qualtrics-posttest-3-link.example.com'
+    1: 'https://stanforduniversity.qualtrics.com/jfe/form/SV_3CB4p2UZ6anRHTg',
+    2: 'https://stanforduniversity.qualtrics.com/jfe/form/SV_3WSu6Jb2vlggT0q',
+    3: 'https://stanforduniversity.qualtrics.com/jfe/form/SV_0OK5PJxoIQUFbnw'
   };
 
   const [player, setPlayer] = useState<any | null>(null);
