@@ -7,7 +7,10 @@ node_modules/
 *.egg-info/
 .ipynb_checkpoints
 *.tsbuildinfo
-jlab_ext_example/labextension
+# Prebuilt labextension is committed so the deploy VM can install without a
+# Node build toolchain (pyproject's skip-if-exists picks it up). Rebuild it
+# with `jlpm build:prod` before committing frontend changes.
+# jlab_ext_example/labextension
 # Version file is handled by hatchling
 jlab_ext_example/_version.py
 
