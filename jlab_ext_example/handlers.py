@@ -2987,7 +2987,14 @@ def get_code_with_blank_by_step(video_id, segment_index, code_json, knowledge):
 def get_user_condition(user_id):
     """
     Get or assign a condition for a user.
-    Uses deterministic hash-based assignment for automatic balancing.
+
+    Assignment priority:
+      1. Already assigned (local cache.db) → return it (stable per user).
+      2. test_ prefix → pinned condition (for the researcher's own testing).
+      3. Firebase permuted-block randomization → EXACT balance across the
+         four cells (shared counter, concurrency-safe).
+      4. Fallback (Firebase unavailable) → deterministic md5 hash, which is
+         only approximately balanced.
 
     Conditions:
     - "control": No directed learning, just video + chat
@@ -3001,19 +3008,17 @@ def get_user_condition(user_id):
     conn = sqlite3.connect("cache.db")
     c = conn.cursor()
 
-    # Check if user already has a condition assigned
+    # 1. Already assigned for this user → stable, return it.
     c.execute("SELECT condition FROM user_conditions WHERE user_id = ?", (user_id,))
     row = c.fetchone()
-
     if row:
         condition = row[0]
         conn.close()
         return condition
 
-    # Assign new condition based on hash of user_id for balancing
-    # This ensures deterministic assignment and automatic balancing
     conditions = ["control", "quiz", "fixed_cogapp", "full_coggen"]
-    # Special prefix handling for test users (deterministic by prefix)
+
+    # 2. Test users: pinned condition by prefix.
     test_prefixes = {
         "test_control": "control",
         "test_quiz": "quiz",
@@ -3026,13 +3031,21 @@ def get_user_condition(user_id):
             condition = cond
             break
 
+    # 3. Real participants: exact-balance assignment via Firebase.
     if condition is None:
-        # Use hashlib.md5 for deterministic hashing across Python restarts
-        # (Python's built-in hash() is randomized per process since Python 3.3)
+        condition = firebase_logger.assign_condition_balanced(user_id, conditions)
+
+    # 4. Fallback if Firebase is unavailable: deterministic hash (approximate
+    #    balance only). Logged so you can spot it in the server output.
+    if condition is None:
         hash_val = int(hashlib.md5(user_id.encode()).hexdigest(), 16)
         condition = conditions[hash_val % len(conditions)]
+        print(
+            f"⚠️  Firebase unavailable; fell back to HASH assignment for "
+            f"'{user_id}' (balance not guaranteed)."
+        )
 
-    # Store in database
+    # Cache locally so repeat lookups for this user are fast and stable.
     c.execute(
         "INSERT INTO user_conditions (user_id, condition) VALUES (?, ?)",
         (user_id, condition),

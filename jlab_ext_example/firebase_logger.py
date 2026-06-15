@@ -79,6 +79,70 @@ def is_firebase_enabled() -> bool:
     return _firebase_enabled
 
 
+def assign_condition_balanced(user_id: str, conditions: list):
+    """Atomically assign a study condition with permuted-block randomization.
+
+    Uses a single Firebase Realtime Database transaction on
+    `/condition_assignment` to keep all participants' counts in one shared,
+    concurrency-safe place (each participant otherwise has a separate
+    cache.db, so there's no shared SQLite to count against).
+
+    Algorithm — equivalent to permuted-block randomization with block size
+    = len(conditions):
+      * If the user is already assigned, return that (idempotent / stable).
+      * Otherwise assign to the condition with the FEWEST participants so
+        far, breaking ties at random. This keeps every cell within 1 of the
+        others at all times and exactly equal at each multiple of the block
+        size — and because the first participant in each block picks at
+        random among the empty cells, each block is a random permutation.
+
+    Returns the assigned condition string, or None if Firebase is
+    unavailable (caller should fall back to hash-based assignment).
+    """
+    if not _firebase_enabled:
+        return None
+
+    import random
+
+    def _transaction(current):
+        data = current or {}
+        assignments = data.get("assignments", {})
+        if user_id in assignments:
+            # Already assigned — no-op, keep data unchanged.
+            return data
+        counts = data.get("counts", {})
+        # Ensure every condition has a count entry.
+        for cond in conditions:
+            counts.setdefault(cond, 0)
+        min_count = min(counts[cond] for cond in conditions)
+        candidates = [cond for cond in conditions if counts[cond] == min_count]
+        chosen = random.choice(candidates)
+        counts[chosen] = counts[chosen] + 1
+        assignments[user_id] = chosen
+        data["counts"] = counts
+        data["assignments"] = assignments
+        return data
+
+    try:
+        ref = db.reference("condition_assignment")
+        result = ref.transaction(_transaction)
+        # transaction() returns the committed snapshot value.
+        if isinstance(result, dict):
+            assigned = result.get("assignments", {}).get(user_id)
+        else:
+            assigned = None
+        if assigned is None:
+            # Fall back to a fresh read in case the SDK returned a
+            # non-dict snapshot wrapper.
+            assigned = (
+                ref.child("assignments").child(user_id).get()
+            )
+        return assigned
+    except Exception as e:
+        print(f"❌ Balanced condition assignment failed: {e}")
+        return None
+
+
 def get_timestamp() -> str:
     """Get current timestamp in ISO 8601 format"""
     return datetime.utcnow().isoformat() + "Z"
