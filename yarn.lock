@@ -1411,7 +1411,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@chatscope/chat-ui-kit-styles@npm:^1.2.0":
+"@chatscope/chat-ui-kit-styles@npm:^1.2.0, @chatscope/chat-ui-kit-styles@npm:^1.4.0":
   version: 1.4.0
   resolution: "@chatscope/chat-ui-kit-styles@npm:1.4.0"
   checksum: f43fc7f07cf1dd457f27fe54c2bd887d31a2fe88a6f5d489d3a8d73e22bced337ae2a02ee2ce9851dd828ac01add5db02b14eca195e4e9d644f7d88398070ce7
@@ -8792,6 +8792,7 @@ __metadata:
   resolution: "jlab-ext-example@workspace:."
   dependencies:
     "@chatscope/chat-ui-kit-react": ^1.10.1
+    "@chatscope/chat-ui-kit-styles": ^1.4.0
     "@emotion/react": ^11.11.4
     "@emotion/styled": ^11.11.5
     "@jupyterlab/application": ^4.0.3
