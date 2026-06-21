@@ -175,6 +175,10 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
   // (whose closures don't include userId) can still read the fresh value
   // after handleUserIDSubmit has setUserId'd.
   const userIdRef = useRef<string>('');
+  // Mirror segments so handleSend can read the current list even when it's
+  // invoked from a stale closure (e.g. the test-mode auto-fire scheduled
+  // inside initializeChat, whose useCallback captured an empty segments[]).
+  const segmentsRef = useRef<ISegment[]>([]);
   const [isReadyToSend, setIsReadyToSend] = useState(false);
   const [isAlredaySend, setIsAlredaySend] = useState(false);
   const [errorInCode, setErrorInCode] = useState('');
@@ -521,10 +525,17 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
         );
         const currentTime = player ? Math.round(player.getCurrentTime()) : 0;
 
+        // Read segment index + list from refs so a stale closure (e.g. the
+        // test-mode auto-fire scheduled in initializeChat, which captured an
+        // empty segments[]) still computes the correct category. Without
+        // this, segment 0 ("Understand the dataset" in some videos) gets a
+        // wrong category and the first teaching message never fires.
+        const segIdxForCategory = currentSegmentIndexRef.current;
+        const segsForCategory = segmentsRef.current;
         let category = '';
-        if (currentSegmentIndex < segments.length) {
-          category = segments[currentSegmentIndex].category;
-        } else if (currentSegmentIndex < segments.length + 2) {
+        if (segIdxForCategory < segsForCategory.length) {
+          category = segsForCategory[segIdxForCategory].category;
+        } else if (segIdxForCategory < segsForCategory.length + 2) {
           category = 'Self-exploration';
         } else {
           category = 'Conclusion';
@@ -826,7 +837,8 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     videoIdRef.current = videoId;
     canGoOnRef.current = canGoOn;
     userIdRef.current = userId;
-  }, [currentSegmentIndex, videoId, canGoOn, userId]);
+    segmentsRef.current = segments;
+  }, [currentSegmentIndex, videoId, canGoOn, userId, segments]);
 
   useEffect(() => {
     // This effect runs when videoId changes
