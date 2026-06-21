@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
   Dialog,
-  DialogTitle,
   DialogContent,
   DialogActions,
   TextField,
@@ -13,6 +12,44 @@ import {
 import Radio from '@mui/material/Radio';
 import RadioGroup from '@mui/material/RadioGroup';
 import FormControlLabel from '@mui/material/FormControlLabel';
+
+// Append the participant's user ID to a Qualtrics URL as a query parameter
+// so each survey response can be linked back to this participant. Qualtrics
+// captures it via an Embedded Data field named `userId` (see the survey-flow
+// setup in the deploy notes). Handles URLs that already have a query string.
+const appendUserId = (url: string, userId: string): string => {
+  if (!url) {
+    return url;
+  }
+  const sep = url.includes('?') ? '&' : '?';
+  return `${url}${sep}userId=${encodeURIComponent(userId)}`;
+};
+
+// Shared modern button styles, matching the blue accent used across the app.
+const primaryBtnSx = {
+  textTransform: 'none',
+  fontWeight: 600,
+  fontSize: '0.9rem',
+  borderRadius: '999px',
+  px: 3,
+  py: 1,
+  background: '#0969da',
+  boxShadow: 'none',
+  '&:hover': { background: '#0860c4', boxShadow: 'none' },
+  '&.Mui-disabled': { background: '#cfd5dc', color: 'white' }
+} as const;
+
+const secondaryBtnSx = {
+  textTransform: 'none',
+  fontWeight: 500,
+  fontSize: '0.85rem',
+  borderRadius: '999px',
+  px: 2.5,
+  py: 0.7,
+  color: '#0969da',
+  borderColor: '#0969da',
+  '&:hover': { background: '#ddf4ff', borderColor: '#0969da' }
+} as const;
 
 interface IUserIDDialogProps {
   open: boolean;
@@ -232,16 +269,42 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
       maxWidth="sm"
       fullWidth
       aria-labelledby="user-id-dialog-title"
+      PaperProps={{
+        sx: {
+          borderRadius: 3,
+          overflow: 'hidden',
+          boxShadow: '0 12px 40px rgba(0,0,0,0.18)'
+        }
+      }}
     >
-      <DialogTitle id="user-id-dialog-title">
-        Welcome to AI Programming Tutor!
-      </DialogTitle>
-      <DialogContent>
-        <Box sx={{ mt: 2 }}>
-          <Typography variant="body1" gutterBottom>
-            To get started, please enter your user ID we provided you with. This
-            will be used to track your learning progress and provide
-            personalized assistance.
+      <Box
+        sx={{
+          background: 'linear-gradient(135deg, #0969da 0%, #2a7de1 100%)',
+          color: 'white',
+          px: 4,
+          py: 3
+        }}
+      >
+        <Typography
+          id="user-id-dialog-title"
+          sx={{ fontSize: '1.4rem', fontWeight: 700, lineHeight: 1.2 }}
+        >
+          Welcome to Tutorly
+        </Typography>
+        <Typography
+          sx={{ fontSize: '0.9rem', opacity: 0.92, mt: 0.5 }}
+        >
+          Your personal AI tutor for exploratory data analysis
+        </Typography>
+      </Box>
+      <DialogContent sx={{ px: 4, py: 3 }}>
+        <Box>
+          <Typography
+            variant="body2"
+            sx={{ color: '#57606a', lineHeight: 1.5, mb: 1 }}
+          >
+            To get started, enter the participant ID we provided. We use it to
+            track your learning progress and personalize the session.
           </Typography>
           {/* <Typography
             variant="body2"
@@ -348,12 +411,15 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
                         <Button
                           variant="outlined"
                           size="small"
-                          sx={{ mr: 1 }}
+                          sx={{ ...secondaryBtnSx, mr: 1 }}
                           onClick={() =>
                             window.open(
-                              posttestUrls[
-                                studyProgress.pendingPosttest.questionnaireId!
-                              ],
+                              appendUserId(
+                                posttestUrls[
+                                  studyProgress.pendingPosttest.questionnaireId!
+                                ],
+                                userId.trim()
+                              ),
                               '_blank'
                             )
                           }
@@ -363,6 +429,7 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
                         <Button
                           variant="contained"
                           size="small"
+                          sx={primaryBtnSx}
                           onClick={async () => {
                             await onMarkPendingPosttestComplete(
                               userId.trim(),
@@ -407,8 +474,13 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
               <Button
                 variant="outlined"
                 size="small"
-                onClick={() => window.open(pretestUrl, '_blank')}
-                sx={{ mr: 1 }}
+                onClick={() =>
+                  window.open(
+                    appendUserId(pretestUrl, userId.trim()),
+                    '_blank'
+                  )
+                }
+                sx={{ ...secondaryBtnSx, mr: 1 }}
               >
                 Open Pre-test
               </Button>
@@ -416,6 +488,7 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
                 variant={hasConfirmedPretest ? 'contained' : 'outlined'}
                 size="small"
                 onClick={() => setHasConfirmedPretest(true)}
+                sx={hasConfirmedPretest ? primaryBtnSx : secondaryBtnSx}
               >
                 I Completed the Pre-test
               </Button>
@@ -438,28 +511,36 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
           />
         </Box>
       </DialogContent>
-      <DialogActions>
+      <DialogActions sx={{ px: 4, pb: 3, pt: 1 }}>
         {!needsPretest ? (
           <Button
             onClick={handleSubmit}
             variant="contained"
-            color="primary"
+            sx={primaryBtnSx}
             disabled={
               !userId.trim() ||
               (!isAssignedMode && !effectiveVideoId) ||
               isLoading
             }
           >
-            {isLoading ? <CircularProgress size={18} /> : 'Start Learning'}
+            {isLoading ? (
+              <CircularProgress size={18} sx={{ color: 'white' }} />
+            ) : (
+              'Start Learning'
+            )}
           </Button>
         ) : (
           <Button
             onClick={handleConfirmPretest}
             variant="contained"
-            color="primary"
+            sx={primaryBtnSx}
             disabled={!hasConfirmedPretest || isLoading}
           >
-            {isLoading ? <CircularProgress size={18} /> : 'Continue to Videos'}
+            {isLoading ? (
+              <CircularProgress size={18} sx={{ color: 'white' }} />
+            ) : (
+              'Continue to Videos'
+            )}
           </Button>
         )}
       </DialogActions>

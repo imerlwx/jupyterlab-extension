@@ -2199,9 +2199,14 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                             variant="outlined"
                             size="small"
                             sx={{ mr: 1 }}
-                            onClick={() =>
-                              window.open(message.posttestUrl, '_blank')
-                            }
+                            onClick={() => {
+                              // Append the participant's ID so the Qualtrics
+                              // response can be linked back to this user.
+                              const base = message.posttestUrl || '';
+                              const sep = base.includes('?') ? '&' : '?';
+                              const url = `${base}${sep}userId=${encodeURIComponent(userId)}`;
+                              window.open(url, '_blank');
+                            }}
                           >
                             Open Post-test
                           </Button>
