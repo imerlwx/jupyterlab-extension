@@ -33,6 +33,17 @@ from jlab_ext_example import firebase_logger
 #         _reranker_model = RerankerModel(model_name_or_path="maidalun1020/bce-reranker-base_v1")
 #     return _reranker_model
 
+# Absolute path to a data file shipped inside this package. Used so the
+# bundled *_code.json files load regardless of the server's working
+# directory (the deployed single-user server's CWD is the participant's
+# home, not the repo root).
+_PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def _package_data_path(filename: str) -> str:
+    return os.path.join(_PACKAGE_DIR, filename)
+
+
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
 
 
@@ -1228,28 +1239,24 @@ class UpdateSeqHandler(APIHandler):
             return
 
         if all_code == {}:
-            if video_id == "nx5yhXAQLxw":
-                with open("college_major_code.json", "r") as file:
-                    # Parse the file and convert JSON data into a Python dictionary
-                    all_code = json.load(file)
-            elif video_id == "Kd9BNI6QMmQ":
-                with open("video_game_code.json", "r") as file:
-                    # Parse the file and convert JSON data into a Python dictionary
-                    all_code = json.load(file)
-            elif video_id == "EF4A4OtQprg":
-                with open("pet_names_code.json", "r") as file:
-                    # Parse the file and convert JSON data into a Python dictionary
-                    all_code = json.load(file)
-            elif video_id == "1xsbTs9-a50":
-                with open("franchise_revenue_code.json", "r") as file:
-                    # Parse the file and convert JSON data into a Python dictionary
-                    all_code = json.load(file)
-            elif video_id == "-1x8Kpyndss":
-                with open("coffee_ratings_code.json", "r") as file:
-                    # Parse the file and convert JSON data into a Python dictionary
-                    all_code = json.load(file)
-            elif video_id == "8jazNUpO3lQ":
-                with open("ml_code.json", "r") as file:
+            # Map each video to its packaged code-blocks JSON. These files
+            # ship INSIDE the package (jlab_ext_example/) and are loaded by an
+            # absolute path via _package_data_path, so they resolve correctly
+            # regardless of the server's working directory. (Previously they
+            # were opened by bare relative names, which only worked when the
+            # process CWD happened to be the repo root — i.e. local dev — and
+            # failed on the deployed server with FileNotFoundError.)
+            _code_file_by_video = {
+                "nx5yhXAQLxw": "college_major_code.json",
+                "Kd9BNI6QMmQ": "video_game_code.json",
+                "EF4A4OtQprg": "pet_names_code.json",
+                "1xsbTs9-a50": "franchise_revenue_code.json",
+                "-1x8Kpyndss": "coffee_ratings_code.json",
+                "8jazNUpO3lQ": "ml_code.json",
+            }
+            _code_file = _code_file_by_video.get(video_id)
+            if _code_file:
+                with open(_package_data_path(_code_file), "r") as file:
                     # Parse the file and convert JSON data into a Python dictionary
                     all_code = json.load(file)
 
