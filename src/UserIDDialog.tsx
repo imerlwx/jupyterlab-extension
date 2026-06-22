@@ -30,7 +30,9 @@ const primaryBtnSx = {
   textTransform: 'none',
   fontWeight: 600,
   fontSize: '0.9rem',
-  borderRadius: '999px',
+  // !important so the pill radius beats JupyterLab's base button CSS on
+  // the server (which otherwise overrides MUI's sx border-radius).
+  borderRadius: '999px !important',
   px: 3,
   py: 1,
   background: '#0969da',
@@ -43,7 +45,7 @@ const secondaryBtnSx = {
   textTransform: 'none',
   fontWeight: 500,
   fontSize: '0.85rem',
-  borderRadius: '999px',
+  borderRadius: '999px !important',
   px: 2.5,
   py: 0.7,
   color: '#0969da',

@@ -2836,7 +2836,10 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                   fontSize: '0.82rem',
                   fontWeight: 600,
                   padding: '4px 16px',
-                  borderRadius: '999px',
+                  // !important so the pill radius beats JupyterLab's own
+                  // button CSS on the server (its base styles otherwise
+                  // override MUI's sx border-radius).
+                  borderRadius: '999px !important',
                   background: '#0969da',
                   boxShadow: 'none',
                   '&:hover': {
