@@ -179,13 +179,10 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
   // invoked from a stale closure (e.g. the test-mode auto-fire scheduled
   // inside initializeChat, whose useCallback captured an empty segments[]).
   const segmentsRef = useRef<ISegment[]>([]);
-  // Always points at the latest handleSend. initializeChat / handleGoOn are
-  // captured early (or recreated at different times) and would otherwise
-  // call a stale handleSend; calling handleSendRef.current() guarantees the
-  // current closure (with up-to-date segments/state) runs.
-  const handleSendRef = useRef<
-    ((question: string, opts?: any) => void) | null
-  >(null);
+  // Guard so the test-mode auto-fire runs at most once per segment, even if
+  // initializeChat / handleGoOn somehow run twice — prevents draining the
+  // freshly-built CUR_SEQ with repeated handleSend('') calls.
+  const autoFiredSegmentRef = useRef<number>(-1);
   const [isReadyToSend, setIsReadyToSend] = useState(false);
   const [isAlredaySend, setIsAlredaySend] = useState(false);
   const [errorInCode, setErrorInCode] = useState('');
@@ -405,14 +402,15 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
               // We sync the refs synchronously here because handleSend's
               // closure (captured at first render with empty state) reads
               // userId/videoId from these refs.
-              if (userId.startsWith('test_')) {
+              if (
+                userId.startsWith('test_') &&
+                autoFiredSegmentRef.current !== 0
+              ) {
+                autoFiredSegmentRef.current = 0;
                 userIdRef.current = userId;
                 videoIdRef.current = videoId;
                 setIsAlredaySend(true);
-                setTimeout(
-                  () => handleSendRef.current && handleSendRef.current(''),
-                  150
-                );
+                setTimeout(() => handleSend(''), 150);
               }
             })
             .catch(reason => {
@@ -749,10 +747,6 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     ]
   );
 
-  // Keep the ref pointing at the latest handleSend so stale-closure callers
-  // (initializeChat's auto-fire, handleGoOn) always run the current version.
-  handleSendRef.current = handleSend;
-
   // Function to handle "Go On" button click
   const handleGoOn = () => {
     setCanGoOn(false); // Disable the button
@@ -777,15 +771,17 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
           // the first chat message of the new segment immediately so
           // the "Next message" button becomes usable without waiting.
           // Sync refs synchronously — handleSend reads from them.
-          if (userId.startsWith('test_')) {
+          const nextIdx = currentSegmentIndex + 1;
+          if (
+            userId.startsWith('test_') &&
+            autoFiredSegmentRef.current !== nextIdx
+          ) {
+            autoFiredSegmentRef.current = nextIdx;
             userIdRef.current = userId;
             videoIdRef.current = videoId;
-            currentSegmentIndexRef.current = currentSegmentIndex + 1;
+            currentSegmentIndexRef.current = nextIdx;
             setIsAlredaySend(true);
-            setTimeout(
-              () => handleSendRef.current && handleSendRef.current(''),
-              150
-            );
+            setTimeout(() => handleSend(''), 150);
           }
         })
         .catch(reason => {
