@@ -361,13 +361,15 @@ def plan_methods_for_knowledge(
     video_content_type: str,
     is_last_in_segment: bool,
 ) -> list:
-    """Pick the CA methods to teach this knowledge item."""
-    if (
-        isinstance(knowledge, str)
-        and knowledge.strip().lower().startswith("declarative knowledge")
-    ):
-        return ["Modeling"]
+    """Pick the CA methods to teach this knowledge item.
 
+    Note: this does NOT special-case declarative knowledge. Modeling is
+    applied exactly once per segment — to the first knowledge item — by
+    plan_methods(), regardless of whether items are declarative or
+    procedural. (Previously every declarative item was forced to Modeling,
+    which produced one expert-reading card per declarative fact — e.g. five
+    Modeling cards in a concept segment.)
+    """
     if video_content_type == "programming":
         # Programming tier table (single method per knowledge, checked in
         # this priority order — the first matching tier wins):
@@ -434,45 +436,35 @@ def plan_methods(
     Returns a list of {"knowledge": ..., "method": [...]} dicts, the same
     shape get_dsl() expects.
 
-    Always opens the segment with a Modeling move. For programming segments
-    Modeling is `task-intent` (task / approach / rationale); for concept
-    segments it's `expert-reading` (where to look / what to compare / what
-    to notice). The Modeling is attached to the first knowledge item — its
-    interaction doesn't update BKT, so it doesn't pollute that skill's
-    mastery — and ensures the student gets the META-skill framing before
-    any per-knowledge practice.
+    Modeling is used EXACTLY ONCE per segment, as the opener (the first
+    action). The first knowledge item is taught with [Modeling] — for
+    programming that's `task-intent` (task / approach / rationale), for
+    concept it's `expert-reading` (where to look / what to compare / what to
+    notice). Every OTHER knowledge item gets a real teaching method
+    (Scaffolding / Coaching / Articulation) chosen by mastery — never
+    Modeling, regardless of declarative vs procedural. This avoids the bug
+    where concept segments (which have many declarative facts) produced one
+    Modeling card per item.
     """
     out = []
     n = len(knowledge_list)
     for i, knowledge in enumerate(knowledge_list):
-        mastery = mastery_levels[i] if i < len(mastery_levels) else 0.1
-        n_obs = n_observations_list[i] if i < len(n_observations_list) else 0
-        out.append(
-            {
-                "knowledge": knowledge,
-                "method": plan_methods_for_knowledge(
-                    knowledge=knowledge,
-                    mastery=mastery,
-                    n_observations=n_obs,
-                    video_content_type=video_content_type,
-                    is_last_in_segment=(i == n - 1),
-                ),
-            }
-        )
-
-    # Always start the segment with a Modeling move. Skip the prepend if
-    # the first knowledge is Declarative (the get_dsl override will
-    # convert it to Modeling anyway, so prepending would duplicate) or if
-    # the planner already chose Modeling for the first item.
-    if out:
-        first_knowledge = out[0]["knowledge"]
-        first_methods = out[0]["method"]
-        is_declarative = (
-            isinstance(first_knowledge, str)
-            and first_knowledge.strip().lower().startswith("declarative knowledge")
-        )
-        if not is_declarative and "Modeling" not in first_methods:
-            out[0]["method"] = ["Modeling"] + first_methods
+        if i == 0:
+            # Segment opener: a single Modeling card framing the segment.
+            method = ["Modeling"]
+        else:
+            mastery = mastery_levels[i] if i < len(mastery_levels) else 0.1
+            n_obs = (
+                n_observations_list[i] if i < len(n_observations_list) else 0
+            )
+            method = plan_methods_for_knowledge(
+                knowledge=knowledge,
+                mastery=mastery,
+                n_observations=n_obs,
+                video_content_type=video_content_type,
+                is_last_in_segment=(i == n - 1),
+            )
+        out.append({"knowledge": knowledge, "method": method})
 
     return out
 
@@ -1432,11 +1424,17 @@ class UpdateSeqHandler(APIHandler):
             #     action_set = prog_action
             # sections = get_dsl(methods, action_set)
 
-            # Final guard: Declarative knowledge always uses Modeling, regardless
-            # of which planner path produced the sections (covers fixed_cogapp).
-            # Only applies to branches that defined action_set (quiz / fixed_cogapp
-            # / full_coggen); the Load/Understand branches above don't need it.
-            if "action_set" in locals() and "Modeling" in action_set:
+            # Final guard: for the fixed_cogapp baseline ONLY, a declarative
+            # knowledge item is taught with Modeling (it isn't tied to a code
+            # line). full_coggen is intentionally excluded — plan_methods()
+            # already places Modeling exactly once (the segment opener), and
+            # re-forcing every declarative item here would recreate the
+            # multiple-Modeling-cards bug.
+            if (
+                user_condition == "fixed_cogapp"
+                and "action_set" in locals()
+                and "Modeling" in action_set
+            ):
                 modeling_template = action_set["Modeling"]
                 for section in sections:
                     k = section.get("knowledge", "")
@@ -2535,14 +2533,10 @@ def get_dsl(methods, action_set):
         knowledge = method_entry["knowledge"]
         action_entries = method_entry["method"]
 
-        # Always teach Declarative knowledge with Modeling (segment-level overview),
-        # regardless of what the planner returned, since it isn't tied to one code line.
-        if (
-            isinstance(knowledge, str)
-            and knowledge.strip().lower().startswith("declarative knowledge")
-            and "Modeling" in action_set
-        ):
-            action_entries = ["Modeling"]
+        # NOTE: no declarative→Modeling override here. plan_methods() already
+        # decides where Modeling goes (the segment opener only). Forcing
+        # declarative items to Modeling here is what produced one expert-
+        # reading card per declarative fact in concept segments.
 
         # Prepare the actions list based on the teaching methods provided
         actions = []
