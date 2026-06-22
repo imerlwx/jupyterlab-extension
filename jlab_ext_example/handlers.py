@@ -2989,11 +2989,14 @@ def get_user_condition(user_id):
     Get or assign a condition for a user.
 
     Assignment priority:
+      0. test_ prefix → pinned condition (researcher testing). Checked FIRST,
+         before any cache, so a stale cached row can never mis-route a test
+         account (e.g. test_full_001 must always be full_coggen, regardless
+         of what an old/seeded cache.db says).
       1. Already assigned (local cache.db) → return it (stable per user).
-      2. test_ prefix → pinned condition (for the researcher's own testing).
-      3. Firebase permuted-block randomization → EXACT balance across the
+      2. Firebase permuted-block randomization → EXACT balance across the
          four cells (shared counter, concurrency-safe).
-      4. Fallback (Firebase unavailable) → deterministic md5 hash, which is
+      3. Fallback (Firebase unavailable) → deterministic md5 hash, which is
          only approximately balanced.
 
     Conditions:
@@ -3005,10 +3008,24 @@ def get_user_condition(user_id):
     Returns: condition string
     """
     initialze_database()
+    conditions = ["control", "quiz", "fixed_cogapp", "full_coggen"]
+
+    # 0. Test users: pinned condition by prefix — checked BEFORE the cache so
+    #    test accounts are immune to any stale/seeded user_conditions row.
+    test_prefixes = {
+        "test_control": "control",
+        "test_quiz": "quiz",
+        "test_fixed": "fixed_cogapp",
+        "test_full": "full_coggen",
+    }
+    for prefix, cond in test_prefixes.items():
+        if user_id.startswith(prefix):
+            return cond
+
     conn = sqlite3.connect("cache.db")
     c = conn.cursor()
 
-    # 1. Already assigned for this user → stable, return it.
+    # 1. Already assigned for this (real) user → stable, return it.
     c.execute("SELECT condition FROM user_conditions WHERE user_id = ?", (user_id,))
     row = c.fetchone()
     if row:
@@ -3016,22 +3033,9 @@ def get_user_condition(user_id):
         conn.close()
         return condition
 
-    conditions = ["control", "quiz", "fixed_cogapp", "full_coggen"]
-
-    # 2. Test users: pinned condition by prefix.
-    test_prefixes = {
-        "test_control": "control",
-        "test_quiz": "quiz",
-        "test_fixed": "fixed_cogapp",
-        "test_full": "full_coggen",
-    }
     condition = None
-    for prefix, cond in test_prefixes.items():
-        if user_id.startswith(prefix):
-            condition = cond
-            break
 
-    # 3. Real participants: exact-balance assignment via Firebase.
+    # 2. Real participants: exact-balance assignment via Firebase.
     if condition is None:
         condition = firebase_logger.assign_condition_balanced(user_id, conditions)
 
