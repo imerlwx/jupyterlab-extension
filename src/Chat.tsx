@@ -179,6 +179,13 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
   // invoked from a stale closure (e.g. the test-mode auto-fire scheduled
   // inside initializeChat, whose useCallback captured an empty segments[]).
   const segmentsRef = useRef<ISegment[]>([]);
+  // Always points at the latest handleSend. initializeChat / handleGoOn are
+  // captured early (or recreated at different times) and would otherwise
+  // call a stale handleSend; calling handleSendRef.current() guarantees the
+  // current closure (with up-to-date segments/state) runs.
+  const handleSendRef = useRef<
+    ((question: string, opts?: any) => void) | null
+  >(null);
   const [isReadyToSend, setIsReadyToSend] = useState(false);
   const [isAlredaySend, setIsAlredaySend] = useState(false);
   const [errorInCode, setErrorInCode] = useState('');
@@ -402,7 +409,10 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                 userIdRef.current = userId;
                 videoIdRef.current = videoId;
                 setIsAlredaySend(true);
-                setTimeout(() => handleSend(''), 150);
+                setTimeout(
+                  () => handleSendRef.current && handleSendRef.current(''),
+                  150
+                );
               }
             })
             .catch(reason => {
@@ -739,6 +749,10 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     ]
   );
 
+  // Keep the ref pointing at the latest handleSend so stale-closure callers
+  // (initializeChat's auto-fire, handleGoOn) always run the current version.
+  handleSendRef.current = handleSend;
+
   // Function to handle "Go On" button click
   const handleGoOn = () => {
     setCanGoOn(false); // Disable the button
@@ -768,7 +782,10 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
             videoIdRef.current = videoId;
             currentSegmentIndexRef.current = currentSegmentIndex + 1;
             setIsAlredaySend(true);
-            setTimeout(() => handleSend(''), 150);
+            setTimeout(
+              () => handleSendRef.current && handleSendRef.current(''),
+              150
+            );
           }
         })
         .catch(reason => {
@@ -2653,7 +2670,16 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                                 color: '#24292f'
                               }}
                             >
-                              Video segment
+                              {(() => {
+                                const idx = segments.findIndex(
+                                  s =>
+                                    s.start === message.start &&
+                                    s.end === message.end
+                                );
+                                return idx >= 0
+                                  ? `Video segment ${idx + 1}`
+                                  : 'Video segment';
+                              })()}
                             </span>
                             {formatSegmentDuration(
                               message.start,
