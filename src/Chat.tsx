@@ -465,6 +465,27 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     return input.replace(/<[^>]*>/g, '');
   }
 
+  // Format a segment's length (from its start/end seconds) as a short,
+  // human-readable duration for the video card.
+  function formatSegmentDuration(
+    start: number | null,
+    end: number | null
+  ): string | null {
+    if (start == null || end == null) {
+      return null;
+    }
+    const total = Math.max(0, Math.round(end - start));
+    const m = Math.floor(total / 60);
+    const s = total % 60;
+    if (m === 0) {
+      return `${s} sec`;
+    }
+    if (s === 0) {
+      return `${m} min`;
+    }
+    return `${m} min ${s} sec`;
+  }
+
   const handleSend = useCallback(
     async (
       question: string,
@@ -2546,16 +2567,124 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                           ></div>
                         ) : null}
                         <div
-                          style={
-                            popupStates[i] ? openerAboveStyle : openerBelowStyle
-                          }
+                          style={{
+                            ...(popupStates[i]
+                              ? openerAboveStyle
+                              : openerBelowStyle),
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '14px',
+                            cursor: 'pointer',
+                            width: 'fit-content'
+                          }}
                           onClick={() => openPopup(i)}
                         >
-                          <img
-                            src={`https://img.youtube.com/vi/${message.videoId}/0.jpg`}
-                            alt="YouTube Thumbnail"
-                            style={{ width: '430px', height: '240px' }}
-                          />
+                          {/* Thumbnail with rounded corners + play overlay */}
+                          <div
+                            style={{
+                              position: 'relative',
+                              width: '260px',
+                              height: '146px',
+                              borderRadius: '10px',
+                              overflow: 'hidden',
+                              flex: '0 0 auto',
+                              boxShadow: '0 2px 8px rgba(0,0,0,0.15)'
+                            }}
+                          >
+                            <img
+                              src={`https://img.youtube.com/vi/${message.videoId}/0.jpg`}
+                              alt="Video segment thumbnail"
+                              style={{
+                                width: '100%',
+                                height: '100%',
+                                objectFit: 'cover',
+                                display: 'block'
+                              }}
+                            />
+                            {/* dark gradient for contrast */}
+                            <div
+                              style={{
+                                position: 'absolute',
+                                inset: 0,
+                                background:
+                                  'linear-gradient(180deg, rgba(0,0,0,0.05) 0%, rgba(0,0,0,0.35) 100%)'
+                              }}
+                            />
+                            {/* play button */}
+                            <div
+                              style={{
+                                position: 'absolute',
+                                top: '50%',
+                                left: '50%',
+                                transform: 'translate(-50%, -50%)',
+                                width: '52px',
+                                height: '52px',
+                                borderRadius: '50%',
+                                background: 'rgba(0,0,0,0.55)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center'
+                              }}
+                            >
+                              <div
+                                style={{
+                                  width: 0,
+                                  height: 0,
+                                  borderTop: '10px solid transparent',
+                                  borderBottom: '10px solid transparent',
+                                  borderLeft: '16px solid white',
+                                  marginLeft: '4px'
+                                }}
+                              />
+                            </div>
+                          </div>
+                          {/* Side info: label + duration + hint */}
+                          <div
+                            style={{
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: '4px'
+                            }}
+                          >
+                            <span
+                              style={{
+                                fontSize: '0.85rem',
+                                fontWeight: 600,
+                                color: '#24292f'
+                              }}
+                            >
+                              Video segment
+                            </span>
+                            {formatSegmentDuration(
+                              message.start,
+                              message.end
+                            ) && (
+                              <span
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '5px',
+                                  fontSize: '0.8rem',
+                                  color: '#57606a'
+                                }}
+                              >
+                                <span aria-hidden="true">⏱</span>
+                                {formatSegmentDuration(
+                                  message.start,
+                                  message.end
+                                )}
+                              </span>
+                            )}
+                            <span
+                              style={{
+                                fontSize: '0.75rem',
+                                color: '#0969da',
+                                fontWeight: 500
+                              }}
+                            >
+                              Click to play
+                            </span>
+                          </div>
                         </div>
                         {popupStates[i] && (
                           <div style={popupStyle}>
