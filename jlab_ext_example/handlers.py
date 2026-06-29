@@ -1399,6 +1399,15 @@ class UpdateSeqHandler(APIHandler):
                 if fixed_method not in action_set:
                     fixed_method = "Coaching"  # safety net
 
+                # Concept Articulation (structured-text) is heavy — writing a
+                # full open answer for every knowledge item would be a lot. So
+                # for concept Articulation segments we keep it LIGHT: teach
+                # only the first non-opener item (one structured-text answer +
+                # its compare-with-expert feedback).
+                concept_articulation_light = (
+                    content_type == "concept" and fixed_method == "Articulation"
+                )
+
                 def _fixed_item_methods():
                     # Concept Articulation is structured-text, which needs a
                     # paired compare-with-expert Reflection so the student's
@@ -1409,12 +1418,30 @@ class UpdateSeqHandler(APIHandler):
 
                 fixed_method_entries = []
                 for i, k in enumerate(knowledge):
+                    if i == 0:
+                        fixed_method_entries.append(
+                            {"knowledge": k, "method": ["Modeling"]}
+                        )
+                        continue
+                    # Light concept-Articulation: only the first non-opener item.
+                    if concept_articulation_light and i > 1:
+                        break
                     fixed_method_entries.append(
-                        {
-                            "knowledge": k,
-                            "method": ["Modeling"] if i == 0 else _fixed_item_methods(),
-                        }
+                        {"knowledge": k, "method": _fixed_item_methods()}
                     )
+
+                # Programming: end the segment with a show-code Reflection
+                # (the gestalt wrap-up), matching full_coggen. Skip if the
+                # last item is already a Reflection (e.g. segments 7-8).
+                if (
+                    content_type == "programming"
+                    and len(fixed_method_entries) > 1
+                    and fixed_method_entries[-1]["method"][-1] != "Reflection"
+                ):
+                    fixed_method_entries[-1]["method"] = (
+                        fixed_method_entries[-1]["method"] + ["Reflection"]
+                    )
+
                 sections = get_dsl(fixed_method_entries, action_set)
             else:
                 # For full_coggen: use the T2.3 deterministic planner that
