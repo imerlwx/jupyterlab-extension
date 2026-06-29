@@ -3025,8 +3025,22 @@ def get_code_with_blank_by_step(video_id, segment_index, code_json, knowledge):
                         """,
         user_message=f"knowledge to learn: {str(knowledge)}, function and attribute to learn: {str(function_attribute)}, code block: {code_lines}",
     )
-    line_index = _parse_llm_list(line_index)
-    line_index.sort()
+    try:
+        line_index = _parse_llm_list(line_index)
+    except (ValueError, SyntaxError):
+        line_index = []
+    # Clamp to indices that are valid for BOTH lists. The LLM can hallucinate
+    # an out-of-range index, and code_lines vs code_lines_with_blanks may have
+    # different line counts (the blanked version is LLM-generated), so an
+    # index valid for one can be out of range for the other → IndexError.
+    max_idx = min(len(code_lines), len(code_lines_with_blanks))
+    line_index = sorted(
+        {i for i in line_index if isinstance(i, int) and 0 <= i < max_idx}
+    )
+    # Fallback: if the LLM gave nothing usable, default to the first line so
+    # the student still sees a code line rather than an empty card.
+    if not line_index and max_idx > 0:
+        line_index = [0]
     # Extract the lines corresponding to the given indices
     selected_lines = [code_lines[i] for i in line_index]
     selected_lines_with_blank = [code_lines_with_blanks[i] for i in line_index]
