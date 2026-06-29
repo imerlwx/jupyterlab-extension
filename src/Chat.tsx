@@ -57,6 +57,32 @@ import Papa from 'papaparse';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
 import { UserIDDialog } from './UserIDDialog';
 
+// Shared button styles for interaction cards, matching the app's pill-button
+// language (docked Next/Go-on, dialog buttons). borderRadius uses !important
+// so the pill shape survives JupyterLab's base button CSS on the server.
+const cardPrimaryBtnSx = {
+  textTransform: 'none',
+  fontSize: '0.8rem',
+  fontWeight: 600,
+  padding: '5px 16px',
+  borderRadius: '999px !important',
+  background: '#0969da',
+  boxShadow: 'none',
+  '&:hover': { background: '#0860c4', boxShadow: 'none' },
+  '&.Mui-disabled': { background: '#cfd5dc', color: 'white' }
+} as const;
+
+const cardOutlinedBtnSx = {
+  textTransform: 'none',
+  fontSize: '0.78rem',
+  fontWeight: 500,
+  padding: '3px 14px',
+  borderRadius: '999px !important',
+  color: '#0969da',
+  borderColor: '#0969da',
+  '&:hover': { background: '#ddf4ff', borderColor: '#0969da' }
+} as const;
+
 export interface ISegment {
   start: number;
   end: number;
@@ -1389,13 +1415,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
             onSubmit(combined);
           }}
           disabled={isSubmitted || allEmpty}
-          sx={{
-            padding: '6px 14px',
-            fontSize: '0.8rem',
-            marginTop: '6px',
-            textTransform: 'none',
-            borderRadius: '6px'
-          }}
+          sx={{ ...cardPrimaryBtnSx, marginTop: '6px' }}
         >
           {isSubmitted ? 'Submitted' : 'Submit'}
         </Button>
@@ -1616,15 +1636,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                 variant="outlined"
                 size="small"
                 onClick={() => setRevealed(true)}
-                sx={{
-                  textTransform: 'none',
-                  fontSize: '0.78rem',
-                  padding: '2px 12px',
-                  borderRadius: '6px',
-                  color: '#0969da',
-                  borderColor: '#0969da',
-                  '&:hover': { background: '#ddf4ff' }
-                }}
+                sx={cardOutlinedBtnSx}
               >
                 Reveal
               </Button>
@@ -2130,12 +2142,9 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                                 }}
                                 disabled={!selectedChoice || isAnswered}
                                 sx={{
-                                  padding: '6px 14px',
-                                  fontSize: '0.8rem',
+                                  ...cardPrimaryBtnSx,
                                   marginTop: '10px',
-                                  alignSelf: 'flex-start',
-                                  textTransform: 'none',
-                                  borderRadius: '6px'
+                                  alignSelf: 'flex-start'
                                 }}
                               >
                                 {isAnswered ? 'Submitted' : 'Submit'}
