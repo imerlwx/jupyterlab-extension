@@ -226,7 +226,6 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
   const [posttestPromptedVideos, setPosttestPromptedVideos] = useState<
     Record<string, boolean>
   >({});
-  const [lastSegmentWatched, setLastSegmentWatched] = useState(false);
   const [videoFinished, setVideoFinished] = useState(false);
 
   // dataset url and data attributes descriptions
@@ -1820,7 +1819,6 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
 
     setUserId(submittedUserId);
     setVideoId(finalVideoId);
-    setLastSegmentWatched(false);
     setVideoFinished(false);
     setShowUserIDDialog(false);
     console.log(`User ID set: ${submittedUserId}, Session ID: ${sessionId}`);
@@ -2734,17 +2732,6 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                               }}
                               onReady={handleReady}
                               onEnd={event => {
-                                const lastSegment =
-                                  segments.length > 0
-                                    ? segments[segments.length - 1]
-                                    : null;
-                                const isLastSegmentVideo =
-                                  !!lastSegment &&
-                                  message.start === lastSegment.start &&
-                                  message.end === lastSegment.end;
-                                if (isLastSegmentVideo) {
-                                  setLastSegmentWatched(true);
-                                }
                                 if (
                                   message.category !== 'Introduction' &&
                                   !isAlredaySend
@@ -2791,9 +2778,14 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
           const goOnEnabled = !isOnLastSegment
             ? canGoOn && !isTyping && videoId !== ''
             : (() => {
+              // "I have finished this video" enables once the LAST segment's
+              // teaching is exhausted (canGoOn) — the same gate as "Go on to
+              // next clip". We intentionally do NOT require lastSegmentWatched
+              // (the video playing to its end): that blocked the button when
+              // the student skipped/scrubbed the video or when test-mode
+              // bypasses the video entirely, even though all teaching was done.
               const dslReady = userCondition === 'control' ? true : canGoOn;
               return (
-                lastSegmentWatched &&
                 dslReady &&
                 !isTyping &&
                 videoId !== '' &&
