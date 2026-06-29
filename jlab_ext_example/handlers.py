@@ -2430,19 +2430,23 @@ def get_knowledge(video_id, video_type, learning_obj, segment_index, code_block)
         # Defensively re-parse the cached value. Older runs (under OpenAI)
         # stored a pure Python list literal; newer Gemini runs may have
         # cached a value with prose around the list. _parse_llm_list copes
-        # with both. If it's truly corrupt, drop the row and regenerate.
+        # with both. If it's corrupt OR EMPTY, drop the row and regenerate
+        # (a cached empty list would permanently skip the segment).
         try:
-            return _parse_llm_list(row[0])
-        except (ValueError, SyntaxError) as exc:
-            print(
-                f"knowledge_cache row for {video_id}::{segment_index} is "
-                f"unparseable ({exc}); regenerating."
-            )
-            c.execute(
-                "DELETE FROM knowledge_cache WHERE video_id = ? AND segment_index = ?",
-                (video_id, segment_index),
-            )
-            conn.commit()
+            cached = _parse_llm_list(row[0])
+        except (ValueError, SyntaxError):
+            cached = None
+        if cached:
+            return cached
+        print(
+            f"knowledge_cache row for {video_id}::{segment_index} is "
+            f"empty/unparseable; regenerating."
+        )
+        c.execute(
+            "DELETE FROM knowledge_cache WHERE video_id = ? AND segment_index = ?",
+            (video_id, segment_index),
+        )
+        conn.commit()
 
     start_time = segment["start"]
     end_time = segment["end"]
@@ -2491,10 +2495,25 @@ def get_knowledge(video_id, video_type, learning_obj, segment_index, code_block)
                                 """,
             user_message=f"video transcript: {segment_transcript}",
         )
-    # Parse FIRST so we never cache a value we couldn't decode. If the LLM
-    # response is unparseable we surface the error here rather than poison
-    # the cache for every subsequent request.
-    parsed = _parse_llm_list(knowledge)
+    # Parse FIRST so we never cache a value we couldn't decode.
+    try:
+        parsed = _parse_llm_list(knowledge)
+    except (ValueError, SyntaxError):
+        parsed = []
+
+    # Don't cache (and surface) an EMPTY result. The LLM occasionally returns
+    # an empty list for a segment (a transient hiccup); caching that would
+    # permanently skip the segment's teaching ("no methods, proceed to next").
+    # Caching only non-empty knowledge means a refresh/re-entry regenerates it.
+    if not parsed:
+        print(
+            f"⚠️  get_knowledge produced EMPTY knowledge for "
+            f"{video_id}::{segment_index} ({learning_obj}); not caching so it "
+            f"will be retried on the next request."
+        )
+        conn.close()
+        return parsed
+
     c.execute(
         "INSERT INTO knowledge_cache (video_id, segment_index, knowledge) VALUES (?, ?, ?)",
         (video_id, segment_index, repr(parsed)),
