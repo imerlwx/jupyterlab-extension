@@ -143,13 +143,38 @@ def normalize_video_id_list(video_ids):
     return [normalize_video_id(video_id) for video_id in video_ids]
 
 # Global state variables. Things that are genuinely per-process (loaded
-# once, identical across users) stay as globals: chat_bot, all_code,
-# video_type. Per-user mutable state — BKT, CUR_SEQ, the in-flight
-# correctness buffers — lives in USER_SESSIONS, see get_user_session().
+# once, identical across users) stay as globals: chat_bot, video_type.
+# Per-user mutable state — BKT, CUR_SEQ, the in-flight correctness buffers —
+# lives in USER_SESSIONS, see get_user_session().
 user_id = ""
-all_code = {}
 chat_bot = None
 video_type = "Exploratory Data Analysis (EDA)"
+
+# Code blocks are PER VIDEO and must be fetched by video_id, never held in a
+# single shared global. (A previous bug loaded code into one `all_code` global
+# only when empty, so switching to a second video kept serving the first
+# video's code.) get_all_code() caches each video's code separately.
+_CODE_FILE_BY_VIDEO = {
+    "nx5yhXAQLxw": "college_major_code.json",
+    "Kd9BNI6QMmQ": "video_game_code.json",
+    "EF4A4OtQprg": "pet_names_code.json",
+    "1xsbTs9-a50": "franchise_revenue_code.json",
+    "-1x8Kpyndss": "coffee_ratings_code.json",
+    "8jazNUpO3lQ": "ml_code.json",
+}
+_all_code_cache: dict = {}
+
+
+def get_all_code(video_id: str) -> dict:
+    """Return the code-blocks dict for a specific video (cached per video)."""
+    if video_id not in _all_code_cache:
+        fname = _CODE_FILE_BY_VIDEO.get(video_id)
+        if fname:
+            with open(_package_data_path(fname), "r") as f:
+                _all_code_cache[video_id] = json.load(f)
+        else:
+            _all_code_cache[video_id] = {}
+    return _all_code_cache[video_id]
 
 # T1.5: per-user session state. Each entry holds the state that used to be
 # scattered across module globals. Keyed by the user_id sent in each request
@@ -742,13 +767,15 @@ class SegmentHandler(APIHandler):
 class ChatHandler(APIHandler):
     @tornado.web.authenticated
     def post(self):
-        global all_code, chat_bot, video_type
+        global chat_bot, video_type
 
         # Existing video_id logic
         data = self.get_json_body()
         notebook = data["notebook"]
         question = data["question"]
         video_id = data["videoId"]
+        # Per-video code blocks (cached per video_id) — never a shared global.
+        all_code = get_all_code(video_id)
         segment_index = data["segmentIndex"]
         kernelType = data["kernelType"]
         selected_choice = data["selectedChoice"]
@@ -1210,7 +1237,6 @@ class UpdateSeqHandler(APIHandler):
     @tornado.web.authenticated
     def post(self):
         """Update the sequence of moves and step index depending on the mastery of the skill and category."""
-        global all_code
         data = self.get_json_body()
         video_id = data["videoId"]
         segment_index = data["segmentIndex"]
@@ -1230,27 +1256,9 @@ class UpdateSeqHandler(APIHandler):
             self.finish(json.dumps({"status": "skipped", "condition": "control"}))
             return
 
-        if all_code == {}:
-            # Map each video to its packaged code-blocks JSON. These files
-            # ship INSIDE the package (jlab_ext_example/) and are loaded by an
-            # absolute path via _package_data_path, so they resolve correctly
-            # regardless of the server's working directory. (Previously they
-            # were opened by bare relative names, which only worked when the
-            # process CWD happened to be the repo root — i.e. local dev — and
-            # failed on the deployed server with FileNotFoundError.)
-            _code_file_by_video = {
-                "nx5yhXAQLxw": "college_major_code.json",
-                "Kd9BNI6QMmQ": "video_game_code.json",
-                "EF4A4OtQprg": "pet_names_code.json",
-                "1xsbTs9-a50": "franchise_revenue_code.json",
-                "-1x8Kpyndss": "coffee_ratings_code.json",
-                "8jazNUpO3lQ": "ml_code.json",
-            }
-            _code_file = _code_file_by_video.get(video_id)
-            if _code_file:
-                with open(_package_data_path(_code_file), "r") as file:
-                    # Parse the file and convert JSON data into a Python dictionary
-                    all_code = json.load(file)
+        # Per-video code blocks (cached per video_id), so switching videos
+        # always uses the correct code.
+        all_code = get_all_code(video_id)
 
         if learning_obj == "Load packages/data":
             sections = [
@@ -1503,7 +1511,9 @@ class FillInBlanksHandler(APIHandler):
         video_id = data["videoId"]
         segment_index = data["segmentIndex"]
         functions_attributes_to_learn = get_function_attribute_by_segment(
-            video_id=video_id, segment_index=segment_index, code_json=all_code
+            video_id=video_id,
+            segment_index=segment_index,
+            code_json=get_all_code(video_id),
         )
         # Flattening the list of lists and extracting unique items
         choices = list(set(functions_attributes_to_learn))
