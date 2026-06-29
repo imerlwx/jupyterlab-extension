@@ -2251,7 +2251,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                           <Button
                             variant="outlined"
                             size="small"
-                            sx={{ mr: 1 }}
+                            sx={{ ...cardOutlinedBtnSx, mr: 1 }}
                             onClick={() => {
                               // Append the participant's ID so the Qualtrics
                               // response can be linked back to this user.
@@ -2267,6 +2267,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                             variant="contained"
                             size="small"
                             disabled={!!message.posttestConfirmed}
+                            sx={cardPrimaryBtnSx}
                             onClick={() => {
                               void handleMarkPosttestComplete(
                                 userId,
