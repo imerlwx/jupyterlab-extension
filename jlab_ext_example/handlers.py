@@ -1305,15 +1305,32 @@ class UpdateSeqHandler(APIHandler):
             knowledge = get_knowledge(
                 video_id, video_type, learning_obj, segment_index, code_block
             )
-            # For quiz condition: use fixed Coaching + Reflection sequence
+            # For quiz condition: a multiple-choice question + expert-comparison
+            # feedback. The MC is CONTENT-AWARE (code-focused for programming
+            # segments, chart-focused for concept segments), and feedback uses
+            # the same compare-with-expert card as full_coggen. The MC json
+            # schema is appended by ChatHandler's multiple-choice branch, so we
+            # only describe the question here.
             if user_condition == "quiz":
-                # Pick first knowledge item for quiz
                 if isinstance(knowledge, list) and len(knowledge) > 0:
                     quiz_knowledge = knowledge[0]
                 else:
                     quiz_knowledge = "the concepts covered in this segment"
 
-                # Fixed DSL: Coaching (quiz question) + Reflection (feedback)
+                if code_block != "":
+                    mc_prompt = (
+                        "Propose a multiple-choice question for the student "
+                        "about the programming approach behind {knowledge} — "
+                        "for example, why a particular function or step is "
+                        "used, or what it achieves in the code."
+                    )
+                else:
+                    mc_prompt = (
+                        "Propose a multiple-choice question for the student "
+                        "to learn {knowledge}, such as what pattern they find "
+                        "in the chart or the potential reason behind it."
+                    )
+
                 sections = [
                     {
                         "knowledge": quiz_knowledge,
@@ -1322,76 +1339,83 @@ class UpdateSeqHandler(APIHandler):
                                 "method": "Coaching",
                                 "action": "Use {interaction} for the student to answer to learn the knowledge",
                                 "interaction": "multiple-choice",
-                                "prompt": 'Propose a multiple-choice question for the student to answer to learn the {knowledge}, such as what pattern do they find in the chart, what could be the potential reason behind the pattern, etc. Please respond with the following json structure without the ```json``` title: {"question": "question", "choices": ["choice", "choice", "choice", "choice"], "correct answer": "choice"}',
+                                "prompt": mc_prompt,
                                 "parameters": ["knowledge"],
                                 "need-response": True,
                             },
                             {
                                 "method": "Reflection",
-                                "action": "Use {interaction} to give feedback on the student's answer",
-                                "interaction": "plain-text",
-                                "prompt": "[Use one sentence to give feedback on the {student-answer}][Use one sentence to tell the student if any additional steps could confirm their choice][Ask the student to remember the choice and see if it makes sense as they watch the rest of the video]",
-                                "parameters": ["student-answer"],
+                                "action": "Show the student a brief comparison with an expert interpretation using {interaction}",
+                                "interaction": "compare-with-expert",
+                                "prompt": (
+                                    "Given the student's answer: {student-answer}\n"
+                                    "Produce a brief comparison with an expert "
+                                    "interpretation of {knowledge}. Respond as JSON "
+                                    "without ```json``` fences:\n"
+                                    '{"expertAnswer": "one or two sentences giving '
+                                    'the expert\'s interpretation", "feedback": '
+                                    '"one sentence acknowledging what the student '
+                                    'got right and pointing to one thing to refine"}'
+                                ),
+                                "parameters": ["student-answer", "knowledge"],
                                 "need-response": False,
                             },
                         ],
                     }
                 ]
-            # For fixed_cogapp condition: use fixed method progression based on segment index
+            # For fixed_cogapp condition (CogApp without a student model):
+            # mirror full_coggen's STRUCTURE — a Modeling opener on the first
+            # knowledge item, then teach each remaining item — but the method
+            # for non-opener items is FIXED by segment index instead of chosen
+            # by mastery. The action set (prog_action / concept_action) is the
+            # same one full_coggen uses, so each method renders with the same
+            # interaction.
             elif user_condition == "fixed_cogapp":
-                # Pick first knowledge item
-                if isinstance(knowledge, list) and len(knowledge) > 0:
-                    fixed_knowledge = knowledge[0]
-                else:
-                    fixed_knowledge = "the concepts covered in this segment"
-
-                # Determine teaching method based on segment index
-                # Segments 1-2: Scaffolding
-                # Segments 3-4: Coaching
-                # Segments 5-6: Articulation
-                # Segments 7-8: Reflection
-                # Segments 9+: Exploration
+                # Method by segment index (the "fixed order" of the baseline).
                 if segment_index in [1, 2]:
-                    method = "Scaffolding"
+                    fixed_method = "Scaffolding"
                 elif segment_index in [3, 4]:
-                    method = "Coaching"
+                    fixed_method = "Coaching"
                 elif segment_index in [5, 6]:
-                    method = "Articulation"
+                    fixed_method = "Articulation"
                 elif segment_index in [7, 8]:
-                    method = "Reflection"
+                    fixed_method = "Reflection"
                 elif segment_index >= 9:
-                    method = "Exploration"  # Note: Exploration not yet in action sets, will fallback
+                    fixed_method = "Exploration"
                 else:
-                    method = "Scaffolding"  # Default for segment 0 or others
+                    fixed_method = "Scaffolding"  # segment 0 / fallback
 
-                # Determine action set based on code presence
-                # "Preprocess and Visualize the data" → prog_action (has code)
-                # "Interpret the chart" → concept_action (no code)
                 if code_block == "":
                     action_set = concept_action
+                    content_type = "concept"
                 else:
                     action_set = prog_action
+                    content_type = "programming"
 
-                # Get actions for this method
-                if method in action_set:
-                    actions = action_set[method]
-                else:
-                    # Fallback: if method not in action_set, use Articulation or first available
-                    if "Articulation" in action_set:
-                        actions = action_set["Articulation"]
-                        print(
-                            f"Warning: {method} not in action_set, falling back to Articulation"
-                        )
-                    else:
-                        # Use first available method as last resort
-                        fallback_method = list(action_set.keys())[0]
-                        actions = action_set[fallback_method]
-                        print(
-                            f"Warning: {method} not in action_set, falling back to {fallback_method}"
-                        )
+                if not (isinstance(knowledge, list) and len(knowledge) > 0):
+                    knowledge = ["the concepts covered in this segment"]
 
-                # Create fixed DSL with single method
-                sections = [{"knowledge": fixed_knowledge, "actions": actions}]
+                # First item → Modeling opener; the rest → the fixed method.
+                if fixed_method not in action_set:
+                    fixed_method = "Coaching"  # safety net
+
+                def _fixed_item_methods():
+                    # Concept Articulation is structured-text, which needs a
+                    # paired compare-with-expert Reflection so the student's
+                    # written answer gets feedback (same as full_coggen).
+                    if fixed_method == "Articulation" and content_type == "concept":
+                        return ["Articulation", "Reflection"]
+                    return [fixed_method]
+
+                fixed_method_entries = []
+                for i, k in enumerate(knowledge):
+                    fixed_method_entries.append(
+                        {
+                            "knowledge": k,
+                            "method": ["Modeling"] if i == 0 else _fixed_item_methods(),
+                        }
+                    )
+                sections = get_dsl(fixed_method_entries, action_set)
             else:
                 # For full_coggen: use the T2.3 deterministic planner that
                 # consumes mastery + n_observations and applies the policy
@@ -1421,40 +1445,11 @@ class UpdateSeqHandler(APIHandler):
                     f"methods={[m['method'] for m in methods]}"
                 )
                 sections = get_dsl(methods, action_set)
-            #     action_set = prog_action
-            # sections = get_dsl(methods, action_set)
 
-            # Final guard: for the fixed_cogapp baseline ONLY, a declarative
-            # knowledge item is taught with Modeling (it isn't tied to a code
-            # line). full_coggen is intentionally excluded — plan_methods()
-            # already places Modeling exactly once (the segment opener), and
-            # re-forcing every declarative item here would recreate the
-            # multiple-Modeling-cards bug.
-            if (
-                user_condition == "fixed_cogapp"
-                and "action_set" in locals()
-                and "Modeling" in action_set
-            ):
-                modeling_template = action_set["Modeling"]
-                for section in sections:
-                    k = section.get("knowledge", "")
-                    if (
-                        isinstance(k, str)
-                        and k.strip().lower().startswith("declarative knowledge")
-                    ):
-                        section["actions"] = [
-                            {
-                                "method": "Modeling",
-                                "action": d["action"].replace(
-                                    "{interaction}", d["interaction"]
-                                ),
-                                "prompt": d["prompt"].replace("{knowledge}", k),
-                                "interaction": d["interaction"],
-                                "need-response": d["need-response"],
-                                "parameters": d["parameters"],
-                            }
-                            for d in modeling_template
-                        ]
+            # Note: no declarative→Modeling final guard. Both full_coggen and
+            # fixed_cogapp now place Modeling explicitly as the segment opener
+            # (first knowledge item only), so forcing every declarative item
+            # to Modeling here would recreate the multiple-Modeling-cards bug.
         # T1.1: attach the deterministic skill_id to every move so the
         # downstream BKT update doesn't need to re-extract a skill from the
         # natural-language knowledge string.
