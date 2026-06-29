@@ -1071,7 +1071,9 @@ class ChatHandler(APIHandler):
                     )
                     results = json.dumps(payload)
                 elif interaction == "annotated-code":
-                    code_line, _ = get_code_with_blank_by_step(
+                    # Scaffolding only needs the plain line to explain — no
+                    # blanked version, so use the lighter line-only helper.
+                    code_line = get_code_line_by_step(
                         video_id, segment_index, all_code, move_detail["knowledge"]
                     )
                     input_data["code-line"] = code_line
@@ -1111,7 +1113,7 @@ class ChatHandler(APIHandler):
                     # results = conversation({"input": str(input_data)})["text"]
                     results = chat_bot.ask({"input": str(input_data)})
                     if "code-line" in move_detail["parameters"]:
-                        code_line, _ = get_code_with_blank_by_step(
+                        code_line = get_code_line_by_step(
                             video_id, segment_index, all_code, move_detail["knowledge"]
                         )
                         results = (
@@ -3009,16 +3011,14 @@ def get_code_with_blank(video_id, segment_index, code_json):
     return code_with_blanks
 
 
-def get_code_with_blank_by_step(video_id, segment_index, code_json, knowledge):
-    """Get the code with blank by step index for a video segment."""
-    code_with_blanks = get_code_with_blank(video_id, segment_index, code_json)
-    code_block = code_json[str(segment_index)]
-    # Split the code block into a list by newline character
-    code_lines = code_block.split("\\n")[1:-1]
-    code_lines_with_blanks = code_with_blanks.split("\n")[1:-1]
+def _find_code_line_indices(code_lines, knowledge):
+    """Ask the LLM which code-line indices correspond to a knowledge item.
+
+    Returns a clamped, de-duplicated, sorted list of valid indices into
+    code_lines (falls back to [0] if the LLM gives nothing usable).
+    """
     function_attribute = get_function_attribute_by_knowledge(knowledge)
-    # get the code with blank
-    line_index = llm_chat(
+    raw = llm_chat(
         system_prompt="""You are an expert programmer who can understand R code. A student is learning EDA by learning code line-by-line.
                             Now your task is to find out the corresponding code lines index (start from 0) in the code block that corresponds to current knowledge and the functions and attributes to learn.
                             The corresponding code lines can have one or two lines. Respond in the following format (a list without explanation): [index_1, ...]
@@ -3026,27 +3026,53 @@ def get_code_with_blank_by_step(video_id, segment_index, code_json, knowledge):
         user_message=f"knowledge to learn: {str(knowledge)}, function and attribute to learn: {str(function_attribute)}, code block: {code_lines}",
     )
     try:
-        line_index = _parse_llm_list(line_index)
+        idx = _parse_llm_list(raw)
     except (ValueError, SyntaxError):
-        line_index = []
-    # Clamp to indices that are valid for BOTH lists. The LLM can hallucinate
-    # an out-of-range index, and code_lines vs code_lines_with_blanks may have
-    # different line counts (the blanked version is LLM-generated), so an
-    # index valid for one can be out of range for the other → IndexError.
-    max_idx = min(len(code_lines), len(code_lines_with_blanks))
-    line_index = sorted(
-        {i for i in line_index if isinstance(i, int) and 0 <= i < max_idx}
+        idx = []
+    idx = sorted(
+        {i for i in idx if isinstance(i, int) and 0 <= i < len(code_lines)}
     )
-    # Fallback: if the LLM gave nothing usable, default to the first line so
-    # the student still sees a code line rather than an empty card.
+    if not idx and code_lines:
+        idx = [0]
+    return idx
+
+
+def get_code_line_by_step(video_id, segment_index, code_json, knowledge):
+    """Return just the PLAIN code line(s) matching a knowledge item.
+
+    Used by Scaffolding (annotated-code), which only needs to show/explain a
+    code line — it does NOT need the blanked version. Avoids the extra
+    get_code_with_blank LLM call and the line-count mismatch that the blanked
+    path can hit.
+    """
+    code_block = code_json[str(segment_index)]
+    code_lines = code_block.split("\\n")[1:-1]
+    line_index = _find_code_line_indices(code_lines, knowledge)
+    return "\n".join(code_lines[i] for i in line_index)
+
+
+def get_code_with_blank_by_step(video_id, segment_index, code_json, knowledge):
+    """Return (plain code line(s), blanked code line(s)) for a knowledge item.
+
+    Used by Coaching (fill-in-blanks), which needs the blanked version for the
+    student to fill in.
+    """
+    code_with_blanks = get_code_with_blank(video_id, segment_index, code_json)
+    code_block = code_json[str(segment_index)]
+    code_lines = code_block.split("\\n")[1:-1]
+    code_lines_with_blanks = code_with_blanks.split("\n")[1:-1]
+    # Clamp to indices valid for BOTH lists — the blanked version is
+    # LLM-generated and may have a different line count than the original.
+    max_idx = min(len(code_lines), len(code_lines_with_blanks))
+    line_index = [
+        i for i in _find_code_line_indices(code_lines, knowledge) if i < max_idx
+    ]
     if not line_index and max_idx > 0:
         line_index = [0]
-    # Extract the lines corresponding to the given indices
-    selected_lines = [code_lines[i] for i in line_index]
-    selected_lines_with_blank = [code_lines_with_blanks[i] for i in line_index]
-    # Combine the selected lines into a new string, separated by new lines
-    combined_code = "\n".join(selected_lines)
-    combined_code_with_blank = "\n".join(selected_lines_with_blank)
+    combined_code = "\n".join(code_lines[i] for i in line_index)
+    combined_code_with_blank = "\n".join(
+        code_lines_with_blanks[i] for i in line_index
+    )
     return combined_code, combined_code_with_blank
 
 
