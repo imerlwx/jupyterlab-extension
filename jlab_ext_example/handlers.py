@@ -3012,29 +3012,29 @@ def get_code_with_blank(video_id, segment_index, code_json):
 
 
 def _find_code_line_indices(code_lines, knowledge):
-    """Ask the LLM which code-line indices correspond to a knowledge item.
+    """Find the code-line index/indices for a knowledge item DETERMINISTICALLY.
 
-    Returns a clamped, de-duplicated, sorted list of valid indices into
-    code_lines (falls back to [0] if the LLM gives nothing usable).
+    The knowledge string names the relevant functions/attributes in single
+    quotes (e.g. 'geom_boxplot', 'country'), and those appear verbatim in the
+    code — so we match by substring instead of making an LLM call. Each line
+    is scored by how many of the knowledge's quoted items it contains; the
+    best one or two matching lines are returned (in source order). Falls back
+    to [0] if nothing matches. This replaces a per-move LLM round-trip (it was
+    also a frequent source of hallucinated out-of-range indices).
     """
-    function_attribute = get_function_attribute_by_knowledge(knowledge)
-    raw = llm_chat(
-        system_prompt="""You are an expert programmer who can understand R code. A student is learning EDA by learning code line-by-line.
-                            Now your task is to find out the corresponding code lines index (start from 0) in the code block that corresponds to current knowledge and the functions and attributes to learn.
-                            The corresponding code lines can have one or two lines. Respond in the following format (a list without explanation): [index_1, ...]
-                        """,
-        user_message=f"knowledge to learn: {str(knowledge)}, function and attribute to learn: {str(function_attribute)}, code block: {code_lines}",
-    )
-    try:
-        idx = _parse_llm_list(raw)
-    except (ValueError, SyntaxError):
-        idx = []
-    idx = sorted(
-        {i for i in idx if isinstance(i, int) and 0 <= i < len(code_lines)}
-    )
-    if not idx and code_lines:
-        idx = [0]
-    return idx
+    attrs = [a for a in get_function_attribute_by_knowledge(knowledge) if a]
+    if not attrs or not code_lines:
+        return [0] if code_lines else []
+    scored = []
+    for i, line in enumerate(code_lines):
+        score = sum(1 for a in attrs if a in line)
+        if score > 0:
+            scored.append((score, i))
+    if not scored:
+        return [0]
+    # Highest-match lines first; keep up to 2, returned in source order.
+    scored.sort(key=lambda si: (-si[0], si[1]))
+    return sorted(i for _, i in scored[:2])
 
 
 def get_code_line_by_step(video_id, segment_index, code_json, knowledge):
