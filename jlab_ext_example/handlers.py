@@ -3153,6 +3153,89 @@ def get_user_condition(user_id):
     return condition
 
 
+# ---------------------------------------------------------------------------
+# Survey completion codes.
+#
+# Each Qualtrics survey shows a secret completion code on its end-of-survey
+# page. The participant types that code into Tutorly, and we verify it here
+# against survey_codes.json before marking the pre-/post-test as complete.
+# The file lives server-side only (next to cache.db in the user's home dir,
+# same deployment pattern as concept_tags.json) so the codes never reach the
+# frontend bundle. Hot-reloaded via mtime, so codes can be rotated mid-study
+# without a restart. Expected shape:
+#
+#   {
+#     "pretest": "TUTORLY-PRE-XXXX",
+#     "posttest": {"1": "TUTORLY-P1-XXXX", "2": "...", "3": "..."}
+#   }
+#
+# Post-test codes are keyed by questionnaire ID (the Latin-square slot, same
+# key as POSTTEST_QUALTRICS_URLS), since each questionnaire is its own survey.
+_SURVEY_CODES_PATH = "survey_codes.json"
+_survey_codes_cache: dict = {}
+_survey_codes_mtime: float = 0.0
+
+
+def _load_survey_codes() -> dict:
+    """Load survey_codes.json from disk, with hot-reload via mtime check."""
+    global _survey_codes_cache, _survey_codes_mtime
+    try:
+        mtime = os.path.getmtime(_SURVEY_CODES_PATH)
+    except OSError:
+        if _survey_codes_cache:
+            _survey_codes_cache = {}
+            _survey_codes_mtime = 0.0
+        return _survey_codes_cache
+    if mtime != _survey_codes_mtime:
+        try:
+            with open(_SURVEY_CODES_PATH) as f:
+                _survey_codes_cache = json.load(f) or {}
+            _survey_codes_mtime = mtime
+            print("Loaded survey_codes.json")
+        except (OSError, ValueError) as exc:
+            print(f"Warning: could not read survey_codes.json: {exc}")
+            _survey_codes_cache = {}
+            _survey_codes_mtime = 0.0
+    return _survey_codes_cache
+
+
+def _normalize_survey_code(code) -> str:
+    return str(code or "").strip().upper()
+
+
+def verify_survey_code(stage: str, code: str, questionnaire_id=None):
+    """Check a participant-entered completion code.
+
+    stage: "pretest" or "posttest" (posttest also needs questionnaire_id).
+    Returns (verified: bool, message: str). Fails closed: if survey_codes.json
+    is missing or has no code for this stage, nothing verifies.
+    """
+    codes = _load_survey_codes()
+    if not codes:
+        return False, (
+            "Code verification is not configured on the server. "
+            "Please contact the researcher."
+        )
+
+    if stage == "pretest":
+        expected = codes.get("pretest")
+    else:
+        expected = (codes.get("posttest") or {}).get(str(questionnaire_id))
+
+    if not expected:
+        return False, (
+            "No completion code is configured for this survey. "
+            "Please contact the researcher."
+        )
+
+    if _normalize_survey_code(code) == _normalize_survey_code(expected):
+        return True, "Code verified."
+    return False, (
+        "That code doesn't match. Please copy the completion code shown at "
+        "the end of the survey and try again."
+    )
+
+
 def get_pretest_status(user_id):
     """Get pre-test completion status for a user."""
     initialze_database()
@@ -3584,18 +3667,53 @@ class GetPretestStatusHandler(APIHandler):
 
 
 class MarkPretestCompleteHandler(APIHandler):
-    """Handler to mark a user's pre-test as complete"""
+    """Handler to mark a user's pre-test as complete.
+
+    Requires the completion code shown at the end of the Qualtrics pre-test;
+    the pre-test is only marked complete when the code verifies. Every attempt
+    (pass or fail) is logged to Firebase for offline auditing against the
+    actual Qualtrics responses.
+    """
 
     @tornado.web.authenticated
     def post(self):
         data = self.get_json_body()
         user_id = data.get("userId", "unknown")
+        session_id = data.get("sessionId", "login")
+        code = data.get("code", "")
+
+        verified, message = verify_survey_code("pretest", code)
+
+        firebase_logger.log_interaction(
+            user_id=user_id,
+            session_id=session_id,
+            interaction_type="survey_code_attempt",
+            interaction_data={
+                "stage": "pretest",
+                "code_entered": _normalize_survey_code(code),
+                "verified": verified,
+            },
+        )
+
+        if not verified:
+            self.finish(
+                json.dumps(
+                    {
+                        "userId": user_id,
+                        "verified": False,
+                        "pretestCompleted": False,
+                        "message": message,
+                    }
+                )
+            )
+            return
 
         status = mark_pretest_complete(user_id)
         self.finish(
             json.dumps(
                 {
                     "userId": user_id,
+                    "verified": True,
                     "pretestCompleted": status["pretestCompleted"],
                     "pretestCompletedAt": status["pretestCompletedAt"],
                     "message": "Pre-test completion recorded",
@@ -3677,13 +3795,83 @@ class GetNextPosttestHandler(APIHandler):
 
 
 class MarkPosttestCompleteHandler(APIHandler):
-    """Handler to mark post-test completion for a finished video session"""
+    """Handler to mark post-test completion for a finished video session.
+
+    Requires the completion code from the end of the assigned post-test
+    survey. The server itself determines which questionnaire is pending
+    (latin_order[posttest_index]), so the code is always checked against the
+    survey the participant was actually assigned. Attempts are logged to
+    Firebase for auditing.
+    """
 
     @tornado.web.authenticated
     def post(self):
         data = self.get_json_body()
         user_id = data.get("userId", "unknown")
         video_id = data.get("videoId", "")
+        session_id = data.get("sessionId", "login")
+        code = data.get("code", "")
+
+        progress = get_or_create_questionnaire_progress(user_id)
+        already_completed = normalize_video_id(video_id) in progress["completed_videos"]
+
+        if already_completed:
+            # Idempotent: re-confirming an already-recorded post-test is fine.
+            self.finish(
+                json.dumps(
+                    {
+                        "userId": user_id,
+                        "videoId": video_id,
+                        "verified": True,
+                        "message": "Post-test already recorded",
+                        "posttestIndex": progress["posttest_index"],
+                        "completedVideos": progress["completed_videos"],
+                    }
+                )
+            )
+            return
+
+        if progress["posttest_index"] >= 3:
+            self.finish(
+                json.dumps(
+                    {
+                        "userId": user_id,
+                        "videoId": video_id,
+                        "verified": False,
+                        "message": "All post-tests are already recorded.",
+                    }
+                )
+            )
+            return
+
+        questionnaire_id = progress["latin_order"][progress["posttest_index"]]
+        verified, message = verify_survey_code("posttest", code, questionnaire_id)
+
+        firebase_logger.log_interaction(
+            user_id=user_id,
+            session_id=session_id,
+            interaction_type="survey_code_attempt",
+            interaction_data={
+                "stage": "posttest",
+                "questionnaire_id": questionnaire_id,
+                "code_entered": _normalize_survey_code(code),
+                "verified": verified,
+            },
+            video_id=video_id,
+        )
+
+        if not verified:
+            self.finish(
+                json.dumps(
+                    {
+                        "userId": user_id,
+                        "videoId": video_id,
+                        "verified": False,
+                        "message": message,
+                    }
+                )
+            )
+            return
 
         status = mark_posttest_complete(user_id, video_id)
         self.finish(
@@ -3691,6 +3879,7 @@ class MarkPosttestCompleteHandler(APIHandler):
                 {
                     "userId": user_id,
                     "videoId": video_id,
+                    "verified": True,
                     "message": "Post-test completion recorded",
                     **status,
                 }

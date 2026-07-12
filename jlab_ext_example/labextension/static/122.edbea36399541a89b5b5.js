@@ -1,1 +1,0 @@
-"use strict";(self.webpackChunkjlab_ext_example=self.webpackChunkjlab_ext_example||[]).push([[122],{22122:(e,t,a)=>{function n(){return n=Object.assign?Object.assign.bind():function(e){for(var t=1;t<arguments.length;t++){var a=arguments[t];for(var n in a)Object.prototype.hasOwnProperty.call(a,n)&&(e[n]=a[n])}return e},n.apply(this,arguments)}a.d(t,{Z:()=>n})}}]);

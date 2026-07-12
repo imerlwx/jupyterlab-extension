@@ -61,12 +61,16 @@ interface IUserIDDialogProps {
   posttestUrls: Record<number, string>;
   onSubmit: (userId: string, videoId: string) => Promise<void> | void;
   onCheckPretestStatus: (userId: string) => Promise<boolean>;
-  onMarkPretestComplete: (userId: string) => Promise<void>;
+  onMarkPretestComplete: (
+    userId: string,
+    code: string
+  ) => Promise<{ verified: boolean; message: string }>;
   onGetStudyProgress: (userId: string) => Promise<IStudyProgress>;
   onMarkPendingPosttestComplete: (
     userId: string,
-    videoId: string
-  ) => Promise<void>;
+    videoId: string,
+    code: string
+  ) => Promise<{ verified: boolean; message: string }>;
 }
 
 interface IStudyProgress {
@@ -100,7 +104,11 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [needsPretest, setNeedsPretest] = useState(false);
-  const [hasConfirmedPretest, setHasConfirmedPretest] = useState(false);
+  const [pretestCode, setPretestCode] = useState('');
+  const [pretestCodeError, setPretestCodeError] = useState('');
+  const [posttestCode, setPosttestCode] = useState('');
+  const [posttestCodeError, setPosttestCodeError] = useState('');
+  const [isVerifyingPosttest, setIsVerifyingPosttest] = useState(false);
   const [studyProgress, setStudyProgress] = useState<IStudyProgress | null>(
     null
   );
@@ -198,13 +206,23 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
   const handleConfirmPretest = async () => {
     setIsLoading(true);
     setError('');
+    setPretestCodeError('');
 
     try {
-      await onMarkPretestComplete(userId.trim());
+      const result = await onMarkPretestComplete(
+        userId.trim(),
+        pretestCode.trim()
+      );
+      if (!result.verified) {
+        setPretestCodeError(
+          result.message || 'That code doesn’t match. Please try again.'
+        );
+        return;
+      }
       await onSubmit(userId.trim(), effectiveVideoId || '');
     } catch (err) {
-      console.error('Failed to mark pre-test as completed:', err);
-      setError('Failed to save pre-test completion. Please try again.');
+      console.error('Failed to verify pre-test completion code:', err);
+      setError('Failed to verify the completion code. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -408,12 +426,14 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
                     studyProgress.pendingPosttest.videoId && (
                       <Box sx={{ mt: 1.5 }}>
                         <Typography variant="body2" sx={{ mb: 1 }}>
-                          Pending post-test available now.
+                          Pending post-test available now. After submitting it,
+                          enter the completion code shown at the end of the
+                          survey.
                         </Typography>
                         <Button
                           variant="outlined"
                           size="small"
-                          sx={{ ...secondaryBtnSx, mr: 1 }}
+                          sx={{ ...secondaryBtnSx, mb: 1.5 }}
                           onClick={() =>
                             window.open(
                               appendUserId(
@@ -428,23 +448,67 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
                         >
                           Open Pending Post-test
                         </Button>
-                        <Button
-                          variant="contained"
-                          size="small"
-                          sx={primaryBtnSx}
-                          onClick={async () => {
-                            await onMarkPendingPosttestComplete(
-                              userId.trim(),
-                              studyProgress.pendingPosttest.videoId!
-                            );
-                            const updated = await onGetStudyProgress(
-                              userId.trim()
-                            );
-                            setStudyProgress(updated);
+                        <Box
+                          sx={{
+                            display: 'flex',
+                            alignItems: 'flex-start',
+                            gap: 1
                           }}
                         >
-                          I Completed This Post-test
-                        </Button>
+                          <TextField
+                            size="small"
+                            label="Completion code"
+                            value={posttestCode}
+                            error={!!posttestCodeError}
+                            helperText={posttestCodeError || ''}
+                            onChange={e => {
+                              setPosttestCode(e.target.value);
+                              setPosttestCodeError('');
+                            }}
+                          />
+                          <Button
+                            variant="contained"
+                            size="small"
+                            sx={{ ...primaryBtnSx, mt: 0.4 }}
+                            disabled={!posttestCode.trim() || isVerifyingPosttest}
+                            onClick={async () => {
+                              setIsVerifyingPosttest(true);
+                              setPosttestCodeError('');
+                              try {
+                                const result =
+                                  await onMarkPendingPosttestComplete(
+                                    userId.trim(),
+                                    studyProgress.pendingPosttest.videoId!,
+                                    posttestCode.trim()
+                                  );
+                                if (!result.verified) {
+                                  setPosttestCodeError(
+                                    result.message ||
+                                      'That code doesn’t match. Please try again.'
+                                  );
+                                  return;
+                                }
+                                setPosttestCode('');
+                                const updated = await onGetStudyProgress(
+                                  userId.trim()
+                                );
+                                setStudyProgress(updated);
+                              } catch (err) {
+                                console.error(
+                                  'Failed to verify post-test code:',
+                                  err
+                                );
+                                setPosttestCodeError(
+                                  'Failed to verify the code. Please try again.'
+                                );
+                              } finally {
+                                setIsVerifyingPosttest(false);
+                              }
+                            }}
+                          >
+                            Submit Code
+                          </Button>
+                        </Box>
                       </Box>
                     )}
                   {studyProgress.studyCompleted && (
@@ -470,8 +534,9 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
                 Pre-test required before video access
               </Typography>
               <Typography variant="body2" sx={{ mb: 1.5 }}>
-                Please finish the Qualtrics pre-test first. After submitting it,
-                click "I Completed the Pre-test" to continue.
+                Please finish the Qualtrics pre-test first. After submitting
+                it, you will receive a completion code — enter it below to
+                continue.
               </Typography>
               <Button
                 variant="outlined"
@@ -482,18 +547,22 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
                     '_blank'
                   )
                 }
-                sx={{ ...secondaryBtnSx, mr: 1 }}
+                sx={{ ...secondaryBtnSx, mb: 1.5 }}
               >
                 Open Pre-test
               </Button>
-              <Button
-                variant={hasConfirmedPretest ? 'contained' : 'outlined'}
+              <TextField
+                fullWidth
                 size="small"
-                onClick={() => setHasConfirmedPretest(true)}
-                sx={hasConfirmedPretest ? primaryBtnSx : secondaryBtnSx}
-              >
-                I Completed the Pre-test
-              </Button>
+                label="Pre-test completion code"
+                value={pretestCode}
+                error={!!pretestCodeError}
+                helperText={pretestCodeError || ''}
+                onChange={e => {
+                  setPretestCode(e.target.value);
+                  setPretestCodeError('');
+                }}
+              />
             </Box>
           )}
           <TextField
@@ -536,7 +605,7 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
             onClick={handleConfirmPretest}
             variant="contained"
             sx={primaryBtnSx}
-            disabled={!hasConfirmedPretest || isLoading}
+            disabled={!pretestCode.trim() || isLoading}
           >
             {isLoading ? (
               <CircularProgress size={18} sx={{ color: 'white' }} />

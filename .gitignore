@@ -139,3 +139,5 @@ firebase-credentials.json
 *.png
 
 .claude
+# Real survey completion codes (secret; use survey_codes.example.json as template)
+survey_codes.json

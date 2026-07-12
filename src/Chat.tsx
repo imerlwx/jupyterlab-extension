@@ -29,13 +29,13 @@ import YouTube, { YouTubeEvent } from 'react-youtube';
 import {
   Button,
   Box,
-  Typography
+  Typography,
+  TextField
   // Dialog,
   // DialogActions,
   // DialogContent,
   // DialogContentText,
   // DialogTitle,
-  // TextField
 } from '@mui/material';
 import { ISignal, Signal } from '@lumino/signaling';
 import { Cell, CodeCell, ICellModel } from '@jupyterlab/cells';
@@ -225,6 +225,14 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
   const [checkedCode, setCheckedCode] = useState<string[]>([]);
   const [posttestPromptedVideos, setPosttestPromptedVideos] = useState<
     Record<string, boolean>
+  >({});
+  // Per post-test-card completion-code entry and its validation error,
+  // keyed by the chat message id of the post-test card.
+  const [posttestCodeInputs, setPosttestCodeInputs] = useState<
+    Record<string, string>
+  >({});
+  const [posttestCodeErrors, setPosttestCodeErrors] = useState<
+    Record<string, string>
   >({});
   const [videoFinished, setVideoFinished] = useState(false);
 
@@ -1854,12 +1862,21 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
   };
 
   const handleMarkPretestComplete = async (
-    submittedUserId: string
-  ): Promise<void> => {
-    await requestAPI<any>('mark_pretest_complete', {
-      body: JSON.stringify({ userId: submittedUserId }),
+    submittedUserId: string,
+    completionCode: string
+  ): Promise<{ verified: boolean; message: string }> => {
+    const response = await requestAPI<any>('mark_pretest_complete', {
+      body: JSON.stringify({
+        userId: submittedUserId,
+        sessionId: sessionId,
+        code: completionCode
+      }),
       method: 'POST'
     });
+    return {
+      verified: !!response.verified,
+      message: response.message || ''
+    };
   };
 
   const handleGetStudyProgress = async (submittedUserId: string) => {
@@ -1871,30 +1888,50 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
 
   const handleMarkPendingPosttestComplete = async (
     submittedUserId: string,
-    completedVideoId: string
-  ) => {
-    await requestAPI<any>('mark_posttest_complete', {
+    completedVideoId: string,
+    completionCode: string
+  ): Promise<{ verified: boolean; message: string }> => {
+    const response = await requestAPI<any>('mark_posttest_complete', {
       body: JSON.stringify({
         userId: submittedUserId,
-        videoId: completedVideoId
+        videoId: completedVideoId,
+        sessionId: sessionId,
+        code: completionCode
       }),
       method: 'POST'
     });
+    return {
+      verified: !!response.verified,
+      message: response.message || ''
+    };
   };
 
   const handleMarkPosttestComplete = async (
     submittedUserId: string,
     completedVideoId: string,
-    messageId: string
+    messageId: string,
+    completionCode: string
   ): Promise<void> => {
-    await requestAPI<any>('mark_posttest_complete', {
+    const response = await requestAPI<any>('mark_posttest_complete', {
       body: JSON.stringify({
         userId: submittedUserId,
-        videoId: completedVideoId
+        videoId: completedVideoId,
+        sessionId: sessionId,
+        code: completionCode
       }),
       method: 'POST'
     });
 
+    if (!response.verified) {
+      setPosttestCodeErrors(prev => ({
+        ...prev,
+        [messageId]:
+          response.message || 'That code doesn’t match. Please try again.'
+      }));
+      return;
+    }
+
+    setPosttestCodeErrors(prev => ({ ...prev, [messageId]: '' }));
     setMessages(prevMessages =>
       prevMessages.map(msg =>
         msg.id === messageId ? { ...msg, posttestConfirmed: true } : msg
@@ -2245,13 +2282,14 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                           }}
                         >
                           <Typography variant="body2" sx={{ mb: 1.5 }}>
-                            Open the assigned questionnaire and submit it before
-                            starting your next video.
+                            Open the assigned questionnaire and submit it. At
+                            the end you will receive a completion code — enter
+                            it below to record your post-test.
                           </Typography>
                           <Button
                             variant="outlined"
                             size="small"
-                            sx={{ ...cardOutlinedBtnSx, mr: 1 }}
+                            sx={{ ...cardOutlinedBtnSx, mb: 1.5 }}
                             onClick={() => {
                               // Append the participant's ID so the Qualtrics
                               // response can be linked back to this user.
@@ -2263,23 +2301,53 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                           >
                             Open Post-test
                           </Button>
-                          <Button
-                            variant="contained"
-                            size="small"
-                            disabled={!!message.posttestConfirmed}
-                            sx={cardPrimaryBtnSx}
-                            onClick={() => {
-                              void handleMarkPosttestComplete(
-                                userId,
-                                videoId,
-                                message.id
-                              );
+                          <Box
+                            sx={{
+                              display: 'flex',
+                              alignItems: 'flex-start',
+                              gap: 1
                             }}
                           >
-                            {message.posttestConfirmed
-                              ? 'Post-test Recorded'
-                              : 'I Completed the Post-test'}
-                          </Button>
+                            <TextField
+                              size="small"
+                              label="Completion code"
+                              value={posttestCodeInputs[message.id] || ''}
+                              disabled={!!message.posttestConfirmed}
+                              error={!!posttestCodeErrors[message.id]}
+                              helperText={posttestCodeErrors[message.id] || ''}
+                              onChange={e => {
+                                setPosttestCodeInputs(prev => ({
+                                  ...prev,
+                                  [message.id]: e.target.value
+                                }));
+                                setPosttestCodeErrors(prev => ({
+                                  ...prev,
+                                  [message.id]: ''
+                                }));
+                              }}
+                            />
+                            <Button
+                              variant="contained"
+                              size="small"
+                              disabled={
+                                !!message.posttestConfirmed ||
+                                !(posttestCodeInputs[message.id] || '').trim()
+                              }
+                              sx={{ ...cardPrimaryBtnSx, mt: 0.4 }}
+                              onClick={() => {
+                                void handleMarkPosttestComplete(
+                                  userId,
+                                  videoId,
+                                  message.id,
+                                  (posttestCodeInputs[message.id] || '').trim()
+                                );
+                              }}
+                            >
+                              {message.posttestConfirmed
+                                ? 'Post-test Recorded'
+                                : 'Submit Code'}
+                            </Button>
+                          </Box>
                         </Box>
                       )}
                     {message.code && (
