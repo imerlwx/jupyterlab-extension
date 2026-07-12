@@ -1,0 +1,245 @@
+{
+  "_README": "Concept-tag mapping for the EDA student model. Each entry maps (video_id -> segment_index -> knowledge_index) to a concept_id. Items with the same concept_id share BKT mastery across videos. Edit freely — the runtime hot-reloads this file.",
+  "vocabulary": [
+    "inspect_data_structure",
+    "filter_to_meaningful_subset",
+    "aggregate_by_group",
+    "derive_new_variable",
+    "join_related_tables",
+    "complete_missing_data",
+    "reshape_data",
+    "dimensionality_reduction",
+    "choose_appropriate_chart_type",
+    "order_categorical_for_readability",
+    "decompose_by_category",
+    "orient_for_clarity",
+    "compare_across_groups",
+    "visualize_distribution",
+    "visualize_relationship",
+    "identify_pattern",
+    "form_hypothesis",
+    "propose_check",
+    "spot_outliers_or_anomalies"
+  ],
+  "tags": {
+    "1xsbTs9-a50": {
+      "1": {
+        "0": "choose_appropriate_chart_type",
+        "1": "filter_to_meaningful_subset",
+        "2": "order_categorical_for_readability",
+        "3": "order_categorical_for_readability",
+        "4": "choose_appropriate_chart_type"
+      },
+      "2": {
+        "0": "orient_for_clarity",
+        "1": "identify_pattern",
+        "2": "identify_pattern",
+        "3": "orient_for_clarity",
+        "4": "form_hypothesis"
+      },
+      "3": {
+        "0": "decompose_by_category",
+        "1": "filter_to_meaningful_subset",
+        "2": "order_categorical_for_readability",
+        "3": "decompose_by_category",
+        "4": "orient_for_clarity"
+      },
+      "4": {
+        "0": "compare_across_groups",
+        "1": "identify_pattern",
+        "2": "identify_pattern",
+        "3": "propose_check"
+      },
+      "5": {
+        "0": "visualize_relationship",
+        "1": "visualize_relationship",
+        "2": "orient_for_clarity",
+        "3": "orient_for_clarity"
+      },
+      "6": {
+        "0": "compare_across_groups",
+        "1": "spot_outliers_or_anomalies",
+        "2": "identify_pattern",
+        "3": "form_hypothesis"
+      },
+      "7": {
+        "0": "choose_appropriate_chart_type",
+        "1": "aggregate_by_group",
+        "2": "order_categorical_for_readability",
+        "3": "decompose_by_category",
+        "4": "choose_appropriate_chart_type"
+      },
+      "8": {
+        "0": "choose_appropriate_chart_type",
+        "1": "choose_appropriate_chart_type",
+        "2": "identify_pattern",
+        "3": "identify_pattern"
+      },
+      "9": {
+        "0": "choose_appropriate_chart_type",
+        "1": "order_categorical_for_readability",
+        "2": "choose_appropriate_chart_type",
+        "3": "orient_for_clarity",
+        "4": "orient_for_clarity"
+      },
+      "10": {
+        "0": "choose_appropriate_chart_type",
+        "1": "identify_pattern",
+        "2": "choose_appropriate_chart_type"
+      },
+      "11": {
+        "0": "choose_appropriate_chart_type",
+        "1": "filter_to_meaningful_subset",
+        "2": "order_categorical_for_readability",
+        "3": "orient_for_clarity",
+        "4": "orient_for_clarity"
+      }
+    },
+    "EF4A4OtQprg": {
+      "1": {
+        "0": "compare_across_groups",
+        "1": "filter_to_meaningful_subset",
+        "2": "filter_to_meaningful_subset",
+        "3": "order_categorical_for_readability",
+        "4": "decompose_by_category"
+      },
+      "2": {
+        "0": "compare_across_groups",
+        "1": "identify_pattern",
+        "2": "identify_pattern"
+      },
+      "3": {
+        "0": "compare_across_groups",
+        "1": "filter_to_meaningful_subset",
+        "2": "derive_new_variable",
+        "3": "derive_new_variable",
+        "4": "order_categorical_for_readability"
+      },
+      "4": {
+        "0": "propose_check",
+        "1": "form_hypothesis",
+        "2": "propose_check"
+      },
+      "5": {
+        "0": "propose_check",
+        "1": "filter_to_meaningful_subset",
+        "2": "derive_new_variable",
+        "3": "propose_check",
+        "4": "visualize_distribution"
+      },
+      "6": {
+        "0": "complete_missing_data",
+        "1": "aggregate_by_group",
+        "2": "aggregate_by_group",
+        "3": "complete_missing_data",
+        "4": "join_related_tables"
+      },
+      "7": {
+        "0": "propose_check",
+        "1": "propose_check",
+        "2": "propose_check",
+        "3": "identify_pattern",
+        "4": "identify_pattern"
+      },
+      "8": {
+        "0": "visualize_relationship",
+        "1": "derive_new_variable",
+        "2": "derive_new_variable",
+        "3": "visualize_relationship",
+        "4": "orient_for_clarity"
+      },
+      "9": {
+        "0": "spot_outliers_or_anomalies",
+        "1": "spot_outliers_or_anomalies",
+        "2": "spot_outliers_or_anomalies"
+      },
+      "10": {
+        "0": "orient_for_clarity",
+        "1": "filter_to_meaningful_subset",
+        "2": "order_categorical_for_readability",
+        "3": "orient_for_clarity",
+        "4": "orient_for_clarity"
+      }
+    },
+    "-1x8Kpyndss": {
+      "1": {
+        "0": "visualize_distribution",
+        "1": "inspect_data_structure",
+        "2": "filter_to_meaningful_subset",
+        "3": "order_categorical_for_readability",
+        "4": "visualize_distribution"
+      },
+      "2": {
+        "0": "visualize_distribution",
+        "1": "identify_pattern",
+        "2": "spot_outliers_or_anomalies"
+      },
+      "3": {
+        "0": "visualize_distribution",
+        "1": "inspect_data_structure",
+        "2": "filter_to_meaningful_subset",
+        "3": "order_categorical_for_readability",
+        "4": "visualize_distribution"
+      },
+      "4": {
+        "0": "compare_across_groups",
+        "1": "identify_pattern",
+        "2": "identify_pattern",
+        "3": "form_hypothesis"
+      },
+      "5": {
+        "0": "visualize_distribution",
+        "1": "filter_to_meaningful_subset",
+        "2": "reshape_data",
+        "3": "order_categorical_for_readability",
+        "4": "visualize_distribution"
+      },
+      "6": {
+        "0": "visualize_distribution",
+        "1": "identify_pattern",
+        "2": "spot_outliers_or_anomalies"
+      },
+      "7": {
+        "0": "visualize_relationship",
+        "1": "visualize_relationship",
+        "2": "derive_new_variable",
+        "3": "dimensionality_reduction",
+        "4": "order_categorical_for_readability"
+      },
+      "8": {
+        "0": "visualize_relationship",
+        "1": "identify_pattern",
+        "2": "identify_pattern",
+        "3": "identify_pattern",
+        "4": "form_hypothesis"
+      },
+      "9": {
+        "0": "visualize_relationship",
+        "1": "filter_to_meaningful_subset",
+        "2": "derive_new_variable",
+        "3": "visualize_relationship",
+        "4": "visualize_relationship"
+      },
+      "10": {
+        "0": "visualize_relationship",
+        "1": "identify_pattern",
+        "2": "identify_pattern",
+        "3": "spot_outliers_or_anomalies"
+      },
+      "11": {
+        "0": "visualize_relationship",
+        "1": "visualize_relationship",
+        "2": "derive_new_variable",
+        "3": "order_categorical_for_readability",
+        "4": "visualize_relationship"
+      },
+      "12": {
+        "0": "visualize_relationship",
+        "1": "identify_pattern",
+        "2": "identify_pattern",
+        "3": "identify_pattern",
+        "4": "identify_pattern"
+      }
+    }
+  }
+}
