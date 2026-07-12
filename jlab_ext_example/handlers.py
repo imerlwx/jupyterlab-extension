@@ -3171,31 +3171,43 @@ def get_user_condition(user_id):
 #
 # Post-test codes are keyed by questionnaire ID (the Latin-square slot, same
 # key as POSTTEST_QUALTRICS_URLS), since each questionnaire is its own survey.
-_SURVEY_CODES_PATH = "survey_codes.json"
+# Checked in order; the first file that exists wins. The central /etc path
+# is preferred on the server: one copy for all participants (rotation is a
+# single edit) and it doesn't appear in anyone's JupyterLab file browser the
+# way a home-directory file would. The CWD path is for local development.
+_SURVEY_CODES_PATHS = [
+    "/etc/tutorly/survey_codes.json",
+    "survey_codes.json",
+]
 _survey_codes_cache: dict = {}
-_survey_codes_mtime: float = 0.0
+_survey_codes_key = None  # (path, mtime) of the currently loaded file
 
 
 def _load_survey_codes() -> dict:
     """Load survey_codes.json from disk, with hot-reload via mtime check."""
-    global _survey_codes_cache, _survey_codes_mtime
-    try:
-        mtime = os.path.getmtime(_SURVEY_CODES_PATH)
-    except OSError:
-        if _survey_codes_cache:
-            _survey_codes_cache = {}
-            _survey_codes_mtime = 0.0
-        return _survey_codes_cache
-    if mtime != _survey_codes_mtime:
+    global _survey_codes_cache, _survey_codes_key
+    path = mtime = None
+    for candidate in _SURVEY_CODES_PATHS:
         try:
-            with open(_SURVEY_CODES_PATH) as f:
+            mtime = os.path.getmtime(candidate)
+            path = candidate
+            break
+        except OSError:
+            continue
+    if path is None:
+        _survey_codes_cache = {}
+        _survey_codes_key = None
+        return _survey_codes_cache
+    if (path, mtime) != _survey_codes_key:
+        try:
+            with open(path) as f:
                 _survey_codes_cache = json.load(f) or {}
-            _survey_codes_mtime = mtime
-            print("Loaded survey_codes.json")
+            _survey_codes_key = (path, mtime)
+            print(f"Loaded survey codes from {path}")
         except (OSError, ValueError) as exc:
-            print(f"Warning: could not read survey_codes.json: {exc}")
+            print(f"Warning: could not read {path}: {exc}")
             _survey_codes_cache = {}
-            _survey_codes_mtime = 0.0
+            _survey_codes_key = None
     return _survey_codes_cache
 
 
