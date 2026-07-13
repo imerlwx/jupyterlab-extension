@@ -1283,6 +1283,35 @@ class UpdateSeqHandler(APIHandler):
                 }
             ]
         elif learning_obj == "Understand the dataset":
+            # The drop-down explorer only charts NUMERIC columns. For the pet
+            # names dataset the only numeric columns are license_number and
+            # zip_code — identifiers whose distributions are meaningless — so
+            # that video gets a plain-text exploration prompt instead (the
+            # student explores the loaded table in the notebook and shares a
+            # hypothesis in chat). Same Exploration step either way, keeping
+            # segment 0 comparable across videos.
+            if video_id == "EF4A4OtQprg":  # Seattle pet names
+                explore_action = {
+                    "method": "Exploration",
+                    "action": "Have the student illustrate his findings by explore the dataset",
+                    "prompt": "Exploring and understanding the dataset and its attributes is the first step to doing exploratory data analysis. Now please try exploring the data on your own in the notebook — look at the animals' names, species, and breeds just like Dave! If you have any hypothesis, please share with me.",
+                    "interaction": "plain text",
+                    "parameters": [],
+                    # Free exploration in the notebook — no submit widget.
+                    "need-response": False,
+                }
+            else:
+                explore_action = {
+                    "method": "Exploration",
+                    "action": "Have the student illustrate his findings by explore the dataset",
+                    "prompt": "Exploring and understanding the dataset and its attributes is the first step to doing exploratory data analysis. Now please try exploring the data on your own! Select a column below and look at a description and distribution just like Dave! If you have any hypothesis, please share with me.",
+                    "interaction": "drop-down",
+                    "parameters": [],
+                    # The drop-down widget updates stats/chart in
+                    # place — no submit. Student explores freely
+                    # then clicks "Next message" when done.
+                    "need-response": False,
+                }
             sections = [
                 {
                     "knowledge": "Understand the attribute meanings and metrics of the dataset, and generate hypothesis on the data",
@@ -1296,17 +1325,7 @@ class UpdateSeqHandler(APIHandler):
                             # See above — show-code is read-only, no submit.
                             "need-response": False,
                         },
-                        {
-                            "method": "Exploration",
-                            "action": "Have the student illustrate his findings by explore the dataset",
-                            "prompt": "Exploring and understanding the dataset and its attributes is the first step to doing exploratory data analysis. Now please try exploring the data on your own! Select a column below and look at a description and distribution just like Dave! If you have any hypothesis, please share with me.",
-                            "interaction": "drop-down",
-                            "parameters": [],
-                            # The drop-down widget updates stats/chart in
-                            # place — no submit. Student explores freely
-                            # then clicks "Next message" when done.
-                            "need-response": False,
-                        }
+                        explore_action,
                     ],
                 }
             ]

@@ -1,9 +1,0 @@
-{
-  "_README": "Template for survey_codes.json. Copy to survey_codes.json, replace the codes with the real secret completion codes shown at the end of each Qualtrics survey, and deploy next to cache.db in each participant's home directory (and /etc/skel/ for future accounts). Do NOT commit the real survey_codes.json — the repo is public. Codes are compared case-insensitively after trimming whitespace. Post-test codes are keyed by questionnaire ID (the Latin-square slot, same keys as POSTTEST_QUALTRICS_URLS). Hot-reloaded via mtime, so codes can be rotated mid-study without a restart.",
-  "pretest": "TUTORLY-PRE-0000",
-  "posttest": {
-    "1": "TUTORLY-P1-0000",
-    "2": "TUTORLY-P2-0000",
-    "3": "TUTORLY-P3-0000"
-  }
-}
