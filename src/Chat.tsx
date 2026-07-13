@@ -1851,16 +1851,6 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     );
   };
 
-  const handleCheckPretestStatus = async (
-    submittedUserId: string
-  ): Promise<boolean> => {
-    const response = await requestAPI<any>('get_pretest_status', {
-      body: JSON.stringify({ userId: submittedUserId }),
-      method: 'POST'
-    });
-    return !!response.pretestCompleted;
-  };
-
   const handleMarkPretestComplete = async (
     submittedUserId: string,
     completionCode: string
@@ -2026,7 +2016,6 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
         videoLabels={VIDEO_LABELS}
         videoSelectionMode={USE_RANDOM_VIDEO_ASSIGNMENT ? 'assigned' : 'manual'}
         onSubmit={handleUserIDSubmit}
-        onCheckPretestStatus={handleCheckPretestStatus}
         onMarkPretestComplete={handleMarkPretestComplete}
         onGetStudyProgress={handleGetStudyProgress}
         onMarkPendingPosttestComplete={handleMarkPendingPosttestComplete}

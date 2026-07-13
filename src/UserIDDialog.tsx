@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -60,7 +60,6 @@ interface IUserIDDialogProps {
   videoLabels: Record<string, string>;
   posttestUrls: Record<number, string>;
   onSubmit: (userId: string, videoId: string) => Promise<void> | void;
-  onCheckPretestStatus: (userId: string) => Promise<boolean>;
   onMarkPretestComplete: (
     userId: string,
     code: string
@@ -94,26 +93,27 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
   videoLabels,
   posttestUrls,
   onSubmit,
-  onCheckPretestStatus,
   onMarkPretestComplete,
   onGetStudyProgress,
   onMarkPendingPosttestComplete
 }) => {
+  // Two-step flow: the participant first submits their ID ("id" step), and
+  // only then sees their learning progress and the continue gate ("progress"
+  // step). Progress is fetched once on the step transition, never while the
+  // participant is still typing their ID.
+  const [step, setStep] = useState<'id' | 'progress'>('id');
   const [userId, setUserId] = useState('');
   const [videoId, setVideoId] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [needsPretest, setNeedsPretest] = useState(false);
+  const [studyProgress, setStudyProgress] = useState<IStudyProgress | null>(
+    null
+  );
   const [pretestCode, setPretestCode] = useState('');
   const [pretestCodeError, setPretestCodeError] = useState('');
   const [posttestCode, setPosttestCode] = useState('');
   const [posttestCodeError, setPosttestCodeError] = useState('');
   const [isVerifyingPosttest, setIsVerifyingPosttest] = useState(false);
-  const [studyProgress, setStudyProgress] = useState<IStudyProgress | null>(
-    null
-  );
-  const [isLoadingProgress, setIsLoadingProgress] = useState(false);
-  const [progressError, setProgressError] = useState('');
 
   const isAssignedMode = videoSelectionMode === 'assigned';
   const assignedVideoId =
@@ -121,6 +121,7 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
       id => !studyProgress.completedVideos.includes(id)
     ) || '';
   const effectiveVideoId = isAssignedMode ? assignedVideoId || '' : videoId;
+  const pretestCompleted = !!studyProgress?.pretestCompleted;
 
   const isValidUserId = (value: string) => {
     const trimmed = value.trim();
@@ -131,98 +132,69 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
     return userIdPattern.test(trimmed);
   };
 
-  useEffect(() => {
+  const handleNextStep = async () => {
     const trimmed = userId.trim();
-    if (!isValidUserId(trimmed)) {
-      setStudyProgress(null);
-      setProgressError('');
+    if (!trimmed) {
+      setError('Please enter a user ID');
       return;
     }
-
-    const timer = setTimeout(async () => {
-      try {
-        setIsLoadingProgress(true);
-        setProgressError('');
-        const progress = await onGetStudyProgress(trimmed);
-        setStudyProgress(progress);
-      } catch (err) {
-        console.error('Failed to load study progress:', err);
-        setProgressError('Failed to load progress.');
-      } finally {
-        setIsLoadingProgress(false);
-      }
-    }, 350);
-
-    return () => clearTimeout(timer);
-  }, [userId, onGetStudyProgress]);
-
-  const validateUserInput = () => {
-    if (!userId.trim()) {
-      setError('Please enter a user ID');
-      return false;
-    }
-
-    // Validate user ID format (alphanumeric, hyphens, underscores)
-    const userIdPattern = /^[a-zA-Z0-9_-]+$/;
-    if (!userIdPattern.test(userId.trim())) {
+    if (!isValidUserId(trimmed)) {
       setError(
         'User ID can only contain letters, numbers, hyphens, and underscores'
       );
-      return false;
-    }
-
-    if (!isAssignedMode && !effectiveVideoId) {
-      setError('Please select a video topic');
-      return false;
-    }
-
-    return true;
-  };
-
-  const handleSubmit = async () => {
-    if (!validateUserInput()) {
       return;
     }
 
     setIsLoading(true);
     setError('');
-
     try {
-      const pretestCompleted = await onCheckPretestStatus(userId.trim());
-      if (pretestCompleted) {
-        await onSubmit(userId.trim(), effectiveVideoId || '');
-        return;
-      }
-
-      setNeedsPretest(true);
+      const progress = await onGetStudyProgress(trimmed);
+      setStudyProgress(progress);
+      setStep('progress');
     } catch (err) {
-      console.error('Failed to check pre-test status:', err);
-      setError('Failed to check pre-test status. Please try again.');
+      console.error('Failed to load study progress:', err);
+      setError('Failed to load your progress. Please try again.');
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleConfirmPretest = async () => {
+  const handleChangeUserId = () => {
+    setStep('id');
+    setStudyProgress(null);
+    setError('');
+    setPretestCode('');
+    setPretestCodeError('');
+    setPosttestCode('');
+    setPosttestCodeError('');
+  };
+
+  const handleContinue = async () => {
+    if (!isAssignedMode && !effectiveVideoId) {
+      setError('Please select a video topic');
+      return;
+    }
+
     setIsLoading(true);
     setError('');
     setPretestCodeError('');
-
     try {
-      const result = await onMarkPretestComplete(
-        userId.trim(),
-        pretestCode.trim()
-      );
-      if (!result.verified) {
-        setPretestCodeError(
-          result.message || 'That code doesn’t match. Please try again.'
+      if (!pretestCompleted) {
+        const result = await onMarkPretestComplete(
+          userId.trim(),
+          pretestCode.trim()
         );
-        return;
+        if (!result.verified) {
+          setPretestCodeError(
+            result.message || 'That code doesn’t match. Please try again.'
+          );
+          return;
+        }
       }
       await onSubmit(userId.trim(), effectiveVideoId || '');
     } catch (err) {
-      console.error('Failed to verify pre-test completion code:', err);
-      setError('Failed to verify the completion code. Please try again.');
+      console.error('Failed to continue to videos:', err);
+      setError('Something went wrong. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -230,7 +202,7 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
 
   const handleKeyPress = (event: React.KeyboardEvent) => {
     if (event.key === 'Enter') {
-      handleSubmit();
+      handleNextStep();
     }
   };
 
@@ -311,66 +283,64 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
         >
           Welcome to Tutorly
         </Typography>
-        <Typography
-          sx={{ fontSize: '0.9rem', opacity: 0.92, mt: 0.5 }}
-        >
+        <Typography sx={{ fontSize: '0.9rem', opacity: 0.92, mt: 0.5 }}>
           Your personal AI tutor for exploratory data analysis
         </Typography>
       </Box>
       <DialogContent sx={{ px: 4, py: 3 }}>
-        <Box>
-          <Typography
-            variant="body2"
-            sx={{ color: '#57606a', lineHeight: 1.5, mb: 1 }}
-          >
-            To get started, enter the participant ID we provided. We use it to
-            track your learning progress and personalize the session.
-          </Typography>
-          {/* <Typography
-            variant="body2"
-            color="text.secondary"
-            sx={{ mt: 2, mb: 3 }}
-          >
-            Your user ID is the one we provided you with.
-          </Typography> */}
-          {!isAssignedMode ? (
-            <>
-              <Typography variant="body2" sx={{ mt: 2, mb: 2 }}>
-                Please select a video topic:
+        {step === 'id' ? (
+          <Box>
+            <Typography
+              variant="body2"
+              sx={{ color: '#57606a', lineHeight: 1.5, mb: 2 }}
+            >
+              To get started, enter the participant ID we provided. We use it
+              to track your learning progress and personalize the session.
+            </Typography>
+            <TextField
+              autoFocus
+              fullWidth
+              label="User ID"
+              variant="outlined"
+              value={userId}
+              onChange={e => {
+                setUserId(e.target.value);
+                setError('');
+              }}
+              onKeyPress={handleKeyPress}
+              error={!!error}
+              helperText={error || 'Example: john_doe, student_123, or jsmith'}
+              placeholder="Enter your user ID"
+            />
+          </Box>
+        ) : (
+          <Box>
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                mb: 2
+              }}
+            >
+              <Typography variant="body2" sx={{ color: '#57606a' }}>
+                Participant ID:{' '}
+                <Box component="span" sx={{ fontWeight: 700, color: '#24292f' }}>
+                  {userId.trim()}
+                </Box>
               </Typography>
-              <RadioGroup
-                value={videoId}
-                onChange={e => setVideoId(e.target.value)}
-                sx={{ mb: 3 }}
+              <Button
+                size="small"
+                sx={{
+                  textTransform: 'none',
+                  fontSize: '0.8rem',
+                  color: '#0969da'
+                }}
+                onClick={handleChangeUserId}
               >
-                <FormControlLabel
-                  value="EF4A4OtQprg"
-                  control={<Radio />}
-                  label="Seattle Pet Names"
-                />
-                <FormControlLabel
-                  value="1xsbTs9-a50"
-                  control={<Radio />}
-                  label="Franchise Revenue"
-                />
-                <FormControlLabel
-                  value="-1x8Kpyndss"
-                  control={<Radio />}
-                  label="Coffee Ratings"
-                />
-              </RadioGroup>
-            </>
-          ) : (
-            <Box sx={{ mt: 2, mb: 2 }}>
-              {assignedVideoId && (
-                <Typography variant="body2" sx={{ mt: 1, fontWeight: 600 }}>
-                  Next video:{' '}
-                  {videoLabels?.[assignedVideoId] || assignedVideoId}
-                </Typography>
-              )}
+                Change
+              </Button>
             </Box>
-          )}
-          {isValidUserId(userId) && (
             <Box
               sx={{
                 p: 2,
@@ -383,14 +353,6 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
               <Typography variant="subtitle2" sx={{ mb: 1 }}>
                 Study Progress
               </Typography>
-              {isLoadingProgress && (
-                <Typography variant="body2">Loading progress...</Typography>
-              )}
-              {progressError && (
-                <Typography variant="body2" color="error">
-                  {progressError}
-                </Typography>
-              )}
               {studyProgress && (
                 <>
                   <Typography variant="body2" sx={{ mb: 0.5 }}>
@@ -470,7 +432,9 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
                             variant="contained"
                             size="small"
                             sx={{ ...primaryBtnSx, mt: 0.4 }}
-                            disabled={!posttestCode.trim() || isVerifyingPosttest}
+                            disabled={
+                              !posttestCode.trim() || isVerifyingPosttest
+                            }
                             onClick={async () => {
                               setIsVerifyingPosttest(true);
                               setPosttestCodeError('');
@@ -519,93 +483,114 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
                 </>
               )}
             </Box>
-          )}
-          {needsPretest && (
-            <Box
-              sx={{
-                p: 2,
-                mb: 2,
-                border: '1px solid #d32f2f',
-                borderRadius: 1,
-                backgroundColor: '#fff8f8'
-              }}
-            >
-              <Typography variant="subtitle2" sx={{ mb: 1 }}>
-                Pre-test required before video access
-              </Typography>
-              <Typography variant="body2" sx={{ mb: 1.5 }}>
-                Please finish the Qualtrics pre-test first. After submitting
-                it, you will receive a completion code — enter it below to
-                continue.
-              </Typography>
-              <Button
-                variant="outlined"
-                size="small"
-                onClick={() =>
-                  window.open(
-                    appendUserId(pretestUrl, userId.trim()),
-                    '_blank'
-                  )
-                }
-                sx={{ ...secondaryBtnSx, mb: 1.5 }}
-              >
-                Open Pre-test
-              </Button>
-              <TextField
-                fullWidth
-                size="small"
-                label="Pre-test completion code"
-                value={pretestCode}
-                error={!!pretestCodeError}
-                helperText={pretestCodeError || ''}
-                onChange={e => {
-                  setPretestCode(e.target.value);
-                  setPretestCodeError('');
+            {!pretestCompleted && (
+              <Box
+                sx={{
+                  p: 2,
+                  mb: 2,
+                  border: '1px solid #d32f2f',
+                  borderRadius: 1,
+                  backgroundColor: '#fff8f8'
                 }}
-              />
-            </Box>
-          )}
-          <TextField
-            autoFocus
-            fullWidth
-            label="User ID"
-            variant="outlined"
-            value={userId}
-            onChange={e => {
-              setUserId(e.target.value);
-              setError('');
-            }}
-            onKeyPress={handleKeyPress}
-            error={!!error}
-            helperText={error || 'Example: john_doe, student_123, or jsmith'}
-            placeholder="Enter your user ID"
-          />
-        </Box>
+              >
+                <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                  Pre-test required before video access
+                </Typography>
+                <Typography variant="body2" sx={{ mb: 1.5 }}>
+                  Please finish the Qualtrics pre-test first. After submitting
+                  it, you will receive a completion code — enter it below to
+                  continue.
+                </Typography>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={() =>
+                    window.open(appendUserId(pretestUrl, userId.trim()), '_blank')
+                  }
+                  sx={{ ...secondaryBtnSx, mb: 1.5 }}
+                >
+                  Open Pre-test
+                </Button>
+                <TextField
+                  fullWidth
+                  size="small"
+                  label="Pre-test completion code"
+                  value={pretestCode}
+                  error={!!pretestCodeError}
+                  helperText={pretestCodeError || ''}
+                  onChange={e => {
+                    setPretestCode(e.target.value);
+                    setPretestCodeError('');
+                  }}
+                />
+              </Box>
+            )}
+            {!isAssignedMode ? (
+              <>
+                <Typography variant="body2" sx={{ mb: 1 }}>
+                  Please select a video topic:
+                </Typography>
+                <RadioGroup
+                  value={videoId}
+                  onChange={e => setVideoId(e.target.value)}
+                  sx={{ mb: 1 }}
+                >
+                  <FormControlLabel
+                    value="EF4A4OtQprg"
+                    control={<Radio />}
+                    label="Seattle Pet Names"
+                  />
+                  <FormControlLabel
+                    value="1xsbTs9-a50"
+                    control={<Radio />}
+                    label="Franchise Revenue"
+                  />
+                  <FormControlLabel
+                    value="-1x8Kpyndss"
+                    control={<Radio />}
+                    label="Coffee Ratings"
+                  />
+                </RadioGroup>
+              </>
+            ) : (
+              assignedVideoId && (
+                <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                  Next video: {videoLabels?.[assignedVideoId] || assignedVideoId}
+                </Typography>
+              )
+            )}
+            {error && (
+              <Typography variant="body2" color="error" sx={{ mt: 1 }}>
+                {error}
+              </Typography>
+            )}
+          </Box>
+        )}
       </DialogContent>
       <DialogActions sx={{ px: 4, pb: 3, pt: 1 }}>
-        {!needsPretest ? (
+        {step === 'id' ? (
           <Button
-            onClick={handleSubmit}
+            onClick={handleNextStep}
             variant="contained"
             sx={primaryBtnSx}
-            disabled={
-              !userId.trim() ||
-              (!isAssignedMode && !effectiveVideoId) ||
-              isLoading
-            }
+            disabled={!userId.trim() || isLoading}
           >
             {isLoading ? (
               <CircularProgress size={18} sx={{ color: 'white' }} />
             ) : (
-              'Start Learning'
+              'Next Step'
             )}
           </Button>
         ) : (
           <Button
-            onClick={handleConfirmPretest}
+            onClick={handleContinue}
             variant="contained"
             sx={primaryBtnSx}
-            disabled={!pretestCode.trim() || isLoading}
+            disabled={
+              isLoading ||
+              (!isAssignedMode && !effectiveVideoId) ||
+              (!pretestCompleted && !pretestCode.trim())
+            }
           >
             {isLoading ? (
               <CircularProgress size={18} sx={{ color: 'white' }} />
