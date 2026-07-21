@@ -306,29 +306,41 @@ def extract_blank_answers(masked: str, full: str):
 # All knowledge items mapped to the same concept_id share one BKT mastery curve,
 # which is how mastery transfers across the three study videos.
 #
-# The tag file lives next to the running process (i.e., the user's home dir
-# under TLJH) and is hot-reloaded on every lookup — researchers can patch it
-# mid-pilot without restarting the server.
-_CONCEPT_TAGS_PATH = "concept_tags.json"
+# Checked in order; the first file that exists wins. The bundled package copy
+# is the default, so tags ship with the extension and deploy automatically on
+# update — no manual copying into each participant's home directory (getting
+# that wrong silently degrades every skill ID back to the position-based
+# fallback, which is easy to miss). The /etc and CWD paths are overrides for
+# patching mid-pilot / local development. Hot-reloaded on every lookup.
+_CONCEPT_TAGS_PATHS = [
+    "/etc/tutorly/concept_tags.json",
+    "concept_tags.json",
+    _package_data_path("concept_tags.json"),
+]
 _concept_tags_cache: dict = {}
-_concept_tags_mtime: float = 0.0
+_concept_tags_key = None  # (path, mtime) of the currently loaded file
 
 
 def _load_concept_tags() -> dict:
     """Load concept_tags.json from disk, with hot-reload via mtime check."""
-    global _concept_tags_cache, _concept_tags_mtime
-    try:
-        mtime = os.path.getmtime(_CONCEPT_TAGS_PATH)
-    except OSError:
-        # File doesn't exist — no cross-video transfer, just fall back to
-        # position-based skill IDs. Not an error.
-        if _concept_tags_cache:
-            _concept_tags_cache = {}
-            _concept_tags_mtime = 0.0
-        return _concept_tags_cache
-    if mtime != _concept_tags_mtime:
+    global _concept_tags_cache, _concept_tags_key
+    path = mtime = None
+    for candidate in _CONCEPT_TAGS_PATHS:
         try:
-            with open(_CONCEPT_TAGS_PATH) as f:
+            mtime = os.path.getmtime(candidate)
+            path = candidate
+            break
+        except OSError:
+            continue
+    if path is None:
+        # No tag file anywhere — no cross-video transfer, just fall back to
+        # position-based skill IDs. Not an error.
+        _concept_tags_cache = {}
+        _concept_tags_key = None
+        return _concept_tags_cache
+    if (path, mtime) != _concept_tags_key:
+        try:
+            with open(path) as f:
                 data = json.load(f)
             # Accept either {"tags": {...}, "vocabulary": [...]} or a plain
             # {video: {seg: {ki: concept}}} layout. Normalize to the tags map.
@@ -336,12 +348,13 @@ def _load_concept_tags() -> dict:
                 _concept_tags_cache = data["tags"] or {}
             else:
                 _concept_tags_cache = data or {}
-            _concept_tags_mtime = mtime
-            print(f"Loaded concept_tags.json ({sum(len(s) for v in _concept_tags_cache.values() for s in v.values())} tags)")
+            _concept_tags_key = (path, mtime)
+            n = sum(len(s) for v in _concept_tags_cache.values() for s in v.values())
+            print(f"Loaded concept tags from {path} ({n} tags)")
         except (OSError, ValueError) as exc:
-            print(f"Warning: could not read concept_tags.json: {exc}")
+            print(f"Warning: could not read {path}: {exc}")
             _concept_tags_cache = {}
-            _concept_tags_mtime = 0.0
+            _concept_tags_key = None
     return _concept_tags_cache
 
 
