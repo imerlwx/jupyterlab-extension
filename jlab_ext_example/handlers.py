@@ -207,8 +207,22 @@ def get_user_session(uid: str) -> dict:
             "code_line_buffer": "",
             "code_line_blanks_buffer": "",
             "correct_answer_buffer": "",
+            # Lines already taught in the current segment, so two knowledge
+            # items don't drill the student on the same line twice. Reset
+            # whenever taught_lines_key changes (see _segment_taught_lines).
+            "taught_lines_key": None,
+            "taught_lines": set(),
         }
     return USER_SESSIONS[uid]
+
+
+def _segment_taught_lines(session, video_id, segment_index):
+    """Return the set of code-line indices already taught in this segment."""
+    key = (video_id, str(segment_index))
+    if session.get("taught_lines_key") != key:
+        session["taught_lines_key"] = key
+        session["taught_lines"] = set()
+    return session["taught_lines"]
 
 
 # T1.2: per-interaction noise parameters. slip/guess/transit are properties of
@@ -1087,7 +1101,11 @@ class ChatHandler(APIHandler):
                     # Scaffolding only needs the plain line to explain — no
                     # blanked version, so use the lighter line-only helper.
                     code_line = get_code_line_by_step(
-                        video_id, segment_index, all_code, move_detail["knowledge"]
+                        video_id,
+                        segment_index,
+                        all_code,
+                        move_detail["knowledge"],
+                        _segment_taught_lines(session, video_id, segment_index),
                     )
                     input_data["code-line"] = code_line
                     input_data["requirement"] = (
@@ -1104,7 +1122,11 @@ class ChatHandler(APIHandler):
                 elif interaction == "fill-in-blanks":
                     # results = conversation({"input": str(input_data)})["text"]
                     code_line, code_line_with_blanks = get_code_with_blank_by_step(
-                        video_id, segment_index, all_code, move_detail["knowledge"]
+                        video_id,
+                        segment_index,
+                        all_code,
+                        move_detail["knowledge"],
+                        _segment_taught_lines(session, video_id, segment_index),
                     )
                     session["code_line_buffer"] = code_line
                     session["code_line_blanks_buffer"] = code_line_with_blanks
@@ -1127,7 +1149,11 @@ class ChatHandler(APIHandler):
                     results = chat_bot.ask({"input": str(input_data)})
                     if "code-line" in move_detail["parameters"]:
                         code_line = get_code_line_by_step(
-                            video_id, segment_index, all_code, move_detail["knowledge"]
+                            video_id,
+                            segment_index,
+                            all_code,
+                            move_detail["knowledge"],
+                            _segment_taught_lines(session, video_id, segment_index),
                         )
                         results = (
                             results
@@ -1534,6 +1560,11 @@ class UpdateSeqHandler(APIHandler):
                     )
                 )
         session["cur_seq"] = new_cur_seq
+        # Fresh teaching sequence for this segment — forget which code lines
+        # the previous sequence used, so a rebuild (e.g. after a refresh)
+        # starts from the best-matching lines again.
+        session["taught_lines_key"] = None
+        session["taught_lines"] = set()
         print("CUR_SEQ after update:", session["cur_seq"])
 
 
@@ -3070,33 +3101,68 @@ def get_code_with_blank(video_id, segment_index, code_json):
     return code_with_blanks
 
 
-def _find_code_line_indices(code_lines, knowledge):
+# A quoted term that the line actually CALLS (`top_n(`) is a far stronger
+# signal than one it merely mentions (`species` appearing as an argument).
+# Scoring them equally made shared variable names dominate: e.g. for the
+# knowledge "use 'group_by' and 'top_n' on 'species'", the line
+# `count(species, primary_breed, ...)` scored the same as `top_n(10, percent)`
+# and won on line order, so the student practiced the wrong line.
+_FUNCTION_CALL_WEIGHT = 3
+_MENTION_WEIGHT = 1
+
+
+def _term_score(term, line):
+    """Score one quoted term against one code line (call > mention > absent)."""
+    if not term:
+        return 0
+    escaped = re.escape(term)
+    if re.search(rf"\b{escaped}\s*\(", line):
+        return _FUNCTION_CALL_WEIGHT
+    if re.search(rf"\b{escaped}\b", line):
+        return _MENTION_WEIGHT
+    return 0
+
+
+def _find_code_line_indices(code_lines, knowledge, used_lines=None):
     """Find the code-line index/indices for a knowledge item DETERMINISTICALLY.
 
     The knowledge string names the relevant functions/attributes in single
     quotes (e.g. 'geom_boxplot', 'country'), and those appear verbatim in the
-    code — so we match by substring instead of making an LLM call. Each line
-    is scored by how many of the knowledge's quoted items it contains; the
-    best one or two matching lines are returned (in source order). Falls back
-    to [0] if nothing matches. This replaces a per-move LLM round-trip (it was
+    code — so we match by scoring instead of making an LLM call. Falls back to
+    [0] if nothing matches. This replaces a per-move LLM round-trip (it was
     also a frequent source of hallucinated out-of-range indices).
+
+    Two rules keep different knowledge items from landing on the same line:
+      * If any line calls one of the named functions, lines that only mention
+        a shared variable are dropped entirely rather than filling the second
+        slot with a near-irrelevant line.
+      * `used_lines` (the lines already taught in this segment) are pushed to
+        the back, so a line is only repeated when nothing else matches.
     """
     attrs = [a for a in get_function_attribute_by_knowledge(knowledge) if a]
-    if not attrs or not code_lines:
-        return [0] if code_lines else []
+    if not code_lines:
+        return []
+    if not attrs:
+        return [0]
+    used = used_lines or set()
     scored = []
     for i, line in enumerate(code_lines):
-        score = sum(1 for a in attrs if a in line)
+        score = sum(_term_score(a, line) for a in attrs)
         if score > 0:
             scored.append((score, i))
     if not scored:
         return [0]
-    # Highest-match lines first; keep up to 2, returned in source order.
-    scored.sort(key=lambda si: (-si[0], si[1]))
-    return sorted(i for _, i in scored[:2])
+    best = max(score for score, _ in scored)
+    threshold = _FUNCTION_CALL_WEIGHT if best >= _FUNCTION_CALL_WEIGHT else 1
+    candidates = [(score, i) for score, i in scored if score >= threshold]
+    # Unseen lines first, then strongest match, then source order.
+    candidates.sort(key=lambda si: (si[1] in used, -si[0], si[1]))
+    return sorted(i for _, i in candidates[:2])
 
 
-def get_code_line_by_step(video_id, segment_index, code_json, knowledge):
+def get_code_line_by_step(
+    video_id, segment_index, code_json, knowledge, used_lines=None
+):
     """Return just the PLAIN code line(s) matching a knowledge item.
 
     Used by Scaffolding (annotated-code), which only needs to show/explain a
@@ -3106,11 +3172,15 @@ def get_code_line_by_step(video_id, segment_index, code_json, knowledge):
     """
     code_block = code_json[str(segment_index)]
     code_lines = code_block.split("\\n")[1:-1]
-    line_index = _find_code_line_indices(code_lines, knowledge)
+    line_index = _find_code_line_indices(code_lines, knowledge, used_lines)
+    if used_lines is not None:
+        used_lines.update(line_index)
     return "\n".join(code_lines[i] for i in line_index)
 
 
-def get_code_with_blank_by_step(video_id, segment_index, code_json, knowledge):
+def get_code_with_blank_by_step(
+    video_id, segment_index, code_json, knowledge, used_lines=None
+):
     """Return (plain code line(s), blanked code line(s)) for a knowledge item.
 
     Used by Coaching (fill-in-blanks), which needs the blanked version for the
@@ -3124,10 +3194,14 @@ def get_code_with_blank_by_step(video_id, segment_index, code_json, knowledge):
     # LLM-generated and may have a different line count than the original.
     max_idx = min(len(code_lines), len(code_lines_with_blanks))
     line_index = [
-        i for i in _find_code_line_indices(code_lines, knowledge) if i < max_idx
+        i
+        for i in _find_code_line_indices(code_lines, knowledge, used_lines)
+        if i < max_idx
     ]
     if not line_index and max_idx > 0:
         line_index = [0]
+    if used_lines is not None:
+        used_lines.update(line_index)
     combined_code = "\n".join(code_lines[i] for i in line_index)
     combined_code_with_blank = "\n".join(
         code_lines_with_blanks[i] for i in line_index
