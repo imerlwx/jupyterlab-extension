@@ -119,6 +119,97 @@ def llm_chat(
         text = re.sub(r"\s*```$", "", text)
     return text
 
+
+def _repair_json(text):
+    """Best-effort parse of an LLM JSON reply. Returns a dict/list or None.
+
+    Gemini occasionally stops mid-object (hitting the output limit), leaving
+    JSON that is complete except for its closing brace. The frontend's
+    JSON.parse then fails and the card silently degrades into a raw-JSON chat
+    message, so recover here instead.
+    """
+    if not text:
+        return None
+    text = text.strip()
+    try:
+        return json.loads(text)
+    except ValueError:
+        pass
+    start = text.find("{")
+    if start == -1:
+        return None
+    s = text[start:]
+    # Trailing prose after the object.
+    end = s.rfind("}")
+    if end != -1:
+        try:
+            return json.loads(s[: end + 1])
+        except ValueError:
+            pass
+    # Truncated: walk the text to see whether we merely lost the closers.
+    depth = 0
+    in_str = False
+    esc = False
+    last_pair_end = None
+    for i, ch in enumerate(s):
+        if esc:
+            esc = False
+            continue
+        if ch == "\\":
+            esc = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch in "{[":
+            depth += 1
+        elif ch in "}]":
+            depth -= 1
+        elif ch == "," and depth == 1:
+            last_pair_end = i
+    if not in_str and depth > 0:
+        try:
+            return json.loads(s + "}" * depth)
+        except ValueError:
+            pass
+    # Cut back to the last complete key/value pair and close the object.
+    if last_pair_end is not None:
+        try:
+            return json.loads(s[:last_pair_end] + "}")
+        except ValueError:
+            pass
+    return None
+
+
+def llm_json(system_prompt, user_message, required_keys=(), model=None, retries=1):
+    """Call the LLM and return parsed JSON, repairing/retrying as needed.
+
+    Returns a dict (possibly missing keys) or None if nothing usable came
+    back. Callers render a card from the result, so returning valid JSON
+    matters more than returning the first response verbatim.
+    """
+    kwargs = {"response_mime_type": "application/json"}
+    if model:
+        kwargs["model"] = model
+    for attempt in range(retries + 1):
+        raw = llm_chat(
+            system_prompt=system_prompt, user_message=user_message, **kwargs
+        )
+        parsed = _repair_json(raw)
+        if isinstance(parsed, dict) and (
+            not required_keys or any(k in parsed for k in required_keys)
+        ):
+            missing = [k for k in required_keys if not parsed.get(k)]
+            if missing and attempt < retries:
+                print(f"llm_json: missing {missing}; retrying.")
+                continue
+            return parsed
+        if attempt < retries:
+            print("llm_json: unparseable response; retrying.")
+    return parsed if isinstance(parsed, dict) else None
+
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY") or YOUTUBE_API_KEY
 if not YOUTUBE_API_KEY:
     print("⚠️  YOUTUBE_API_KEY is not set. YouTube API features may not work.")
@@ -1058,12 +1149,17 @@ class ChatHandler(APIHandler):
                         + ' Please respond with the following json structure without the ```json``` title: {"question": "question", "choices": ["choice", "choice", "choice", "choice"], "correct answer": "choice", "rationale": "one sentence explaining why the correct answer is right"}'
                     )
                     # results = conversation({"input": str(input_data)})["text"]
-                    results = chat_bot.ask({"input": str(input_data)})
-                    try:
-                        session["correct_answer_buffer"] = json.loads(results)[
-                            "correct answer"
-                        ]
-                    except (ValueError, KeyError, TypeError):
+                    raw = chat_bot.ask({"input": str(input_data)})
+                    # Same repair as the Modeling cards: a truncated reply
+                    # would otherwise render as raw JSON in the transcript.
+                    parsed = _repair_json(raw)
+                    if isinstance(parsed, dict) and parsed.get("question"):
+                        results = json.dumps(parsed)
+                        session["correct_answer_buffer"] = parsed.get(
+                            "correct answer", ""
+                        )
+                    else:
+                        results = raw
                         session["correct_answer_buffer"] = ""
                 elif interaction in ("expert-reading", "task-intent"):
                     # Modeling cards. "expert-reading" (concept segments)
@@ -1073,16 +1169,40 @@ class ChatHandler(APIHandler):
                     # Both return JSON the frontend renders into a card.
                     # No BKT update fires — Modeling is teaching, not
                     # assessment.
-                    results = llm_chat(
-                        system_prompt="You are a tutoring system. Respond with valid JSON only.",
-                        user_message=pedagogy,
-                        response_mime_type="application/json",
+                    #
+                    # Go through llm_json so a truncated/prose-wrapped reply is
+                    # repaired here. The frontend falls back to dumping the raw
+                    # body as a chat message when JSON.parse fails, which is how
+                    # a half-finished object ends up visible to the student.
+                    card_keys = (
+                        ("task_goal", "approach", "rationale")
+                        if interaction == "task-intent"
+                        else ("where_to_look", "what_to_compare", "what_to_notice")
                     )
+                    payload = llm_json(
+                        "You are a tutoring system. Respond with valid JSON only.",
+                        pedagogy,
+                        required_keys=card_keys,
+                    )
+                    if payload is None:
+                        # Never emit unparseable text: render an empty card
+                        # rather than leaking JSON into the transcript.
+                        payload = {k: "" for k in card_keys}
+                        print(
+                            f"{interaction}: no usable JSON from the LLM; "
+                            "sending an empty card."
+                        )
+                    results = json.dumps(payload)
                 elif interaction == "structured-text":
                     # Generates a writing prompt + slot labels for the student.
                     # The full JSON is returned as the message body and parsed by
-                    # the frontend renderer.
-                    results = chat_bot.ask({"input": str(input_data)})
+                    # the frontend renderer — repair it first so a truncated
+                    # reply doesn't surface as raw JSON.
+                    raw = chat_bot.ask({"input": str(input_data)})
+                    parsed = _repair_json(raw)
+                    results = (
+                        json.dumps(parsed) if isinstance(parsed, dict) else raw
+                    )
                 elif interaction == "compare-with-expert":
                     # Generates expert interpretation + comparison fields. We
                     # also echo the student's answer into the JSON so the
