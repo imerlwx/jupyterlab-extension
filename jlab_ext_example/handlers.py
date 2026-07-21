@@ -2185,12 +2185,39 @@ def get_csv_from_youtube_video(video_id):
     return csv_list
 
 
+# Transcripts for the study videos are bundled with the package (see
+# tools/fetch_transcripts.py). YouTube blocks transcript requests coming from
+# cloud-provider IPs, so a live fetch from the GCP VM raises RequestBlocked —
+# which used to surface as a 500 the moment a segment's knowledge wasn't
+# already cached. Reading the bundled copy removes that network dependency
+# entirely; the live API is kept only as a fallback for non-study videos.
+_transcript_cache: dict = {}
+
+
+def _load_bundled_transcript(video_id):
+    """Return the bundled raw transcript for a video, or None if not bundled."""
+    if video_id in _transcript_cache:
+        return _transcript_cache[video_id]
+    path = _package_data_path(os.path.join("transcripts", f"{video_id}.json"))
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        data = None
+    _transcript_cache[video_id] = data
+    return data
+
+
 def get_transcript(video_id, start=0, end=900):
     """Get the transcript file corresponding to a video from the database."""
-    ytt_api = YouTubeTranscriptApi()
-    fetched_transcript = ytt_api.fetch(video_id)
-    data = fetched_transcript.to_raw_data()  # Convert to list of dicts
-    transcript = [i for i in data if i["start"] >= start and i["start"] < end]
+    data = _load_bundled_transcript(video_id)
+    if data is None:
+        ytt_api = YouTubeTranscriptApi()
+        fetched_transcript = ytt_api.fetch(video_id)
+        data = fetched_transcript.to_raw_data()  # Convert to list of dicts
+    # Copy the cues we keep: callers mutate them (deleting "duration"), which
+    # would otherwise corrupt the in-memory bundled transcript for later calls.
+    transcript = [dict(i) for i in data if i["start"] >= start and i["start"] < end]
     for item in transcript:
         del item["duration"]
 
