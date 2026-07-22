@@ -1605,6 +1605,16 @@ class UpdateSeqHandler(APIHandler):
                     content_type == "concept" and fixed_method == "Articulation"
                 )
 
+                # Programming Reflection is show-code — it displays the WHOLE
+                # segment's code as a gestalt wrap-up, not a per-knowledge line.
+                # Repeating it for every knowledge item just dumps the same full
+                # code block several times, so cap it at a single Reflection
+                # after the Modeling opener (same "teach one item then stop"
+                # shape as concept_articulation_light).
+                programming_reflection_single = (
+                    content_type == "programming" and fixed_method == "Reflection"
+                )
+
                 def _fixed_item_methods():
                     # Concept Articulation is structured-text, which needs a
                     # paired compare-with-expert Reflection so the student's
@@ -1620,8 +1630,11 @@ class UpdateSeqHandler(APIHandler):
                             {"knowledge": k, "method": ["Modeling"]}
                         )
                         continue
-                    # Light concept-Articulation: only the first non-opener item.
-                    if concept_articulation_light and i > 1:
+                    # Light concept-Articulation / single programming Reflection:
+                    # only the first non-opener item, then stop.
+                    if (
+                        concept_articulation_light or programming_reflection_single
+                    ) and i > 1:
                         break
                     fixed_method_entries.append(
                         {"knowledge": k, "method": _fixed_item_methods()}
