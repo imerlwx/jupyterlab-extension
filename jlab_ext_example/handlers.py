@@ -1596,30 +1596,46 @@ class UpdateSeqHandler(APIHandler):
                 if fixed_method not in action_set:
                     fixed_method = "Coaching"  # safety net
 
-                # Concept Articulation (structured-text) is heavy — writing a
-                # full open answer for every knowledge item would be a lot. So
-                # for concept Articulation segments we keep it LIGHT: teach
-                # only the first non-opener item (one structured-text answer +
-                # its compare-with-expert feedback).
+                # Some moves are inherently SEGMENT-LEVEL, not per-knowledge, so
+                # teaching them once per knowledge item is redundant or heavy.
+                # For these we teach exactly ONE non-opener item then stop:
+                #
+                #  * Concept Articulation (structured-text): writing a full open
+                #    answer for every item is a lot — keep it to one.
+                #  * Concept Reflection (compare-with-expert): needs a student
+                #    answer to compare against, so pair it with an Articulation
+                #    (Modeling → Articulation → Reflection), matching how
+                #    full_coggen always precedes Reflection with Articulation.
+                #  * Programming Reflection (show-code): displays the WHOLE
+                #    segment's code, so repeating it just dumps the same block.
+                #  * Exploration (plain-text novel task): each one requires the
+                #    student to type a response to advance; several per segment
+                #    is a heavy, repetitive ask — one open extension is enough.
                 concept_articulation_light = (
                     content_type == "concept" and fixed_method == "Articulation"
                 )
-
-                # Programming Reflection is show-code — it displays the WHOLE
-                # segment's code as a gestalt wrap-up, not a per-knowledge line.
-                # Repeating it for every knowledge item just dumps the same full
-                # code block several times, so cap it at a single Reflection
-                # after the Modeling opener (same "teach one item then stop"
-                # shape as concept_articulation_light).
+                concept_reflection_pair = (
+                    content_type == "concept" and fixed_method == "Reflection"
+                )
                 programming_reflection_single = (
                     content_type == "programming" and fixed_method == "Reflection"
                 )
+                exploration_single = fixed_method == "Exploration"
+                single_item_segment = (
+                    concept_articulation_light
+                    or concept_reflection_pair
+                    or programming_reflection_single
+                    or exploration_single
+                )
 
                 def _fixed_item_methods():
-                    # Concept Articulation is structured-text, which needs a
-                    # paired compare-with-expert Reflection so the student's
-                    # written answer gets feedback (same as full_coggen).
-                    if fixed_method == "Articulation" and content_type == "concept":
+                    # Concept Articulation AND concept Reflection both render as
+                    # a structured-text answer followed by compare-with-expert
+                    # feedback, so the student's written answer gets a response.
+                    if content_type == "concept" and fixed_method in (
+                        "Articulation",
+                        "Reflection",
+                    ):
                         return ["Articulation", "Reflection"]
                     return [fixed_method]
 
@@ -1630,11 +1646,8 @@ class UpdateSeqHandler(APIHandler):
                             {"knowledge": k, "method": ["Modeling"]}
                         )
                         continue
-                    # Light concept-Articulation / single programming Reflection:
-                    # only the first non-opener item, then stop.
-                    if (
-                        concept_articulation_light or programming_reflection_single
-                    ) and i > 1:
+                    # Segment-level moves: teach only the first non-opener item.
+                    if single_item_segment and i > 1:
                         break
                     fixed_method_entries.append(
                         {"knowledge": k, "method": _fixed_item_methods()}
