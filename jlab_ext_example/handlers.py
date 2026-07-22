@@ -724,7 +724,7 @@ prog_action = {
         {
             "action": "Encourage the student to independently apply the {knowledge} to a novel task using {interaction}",
             "interaction": "plain-text",
-            "prompt": "[Use one sentence to pose a related but new task that requires the student to adapt the {knowledge} to a different context, such as applying the same function to a different column or dataset][Encourage the student to try writing the code in the notebook on their own]",
+            "prompt": "[Use one sentence to pose a related but new task that requires the student to adapt the {knowledge} to a different context, such as applying the same function to a different column or dataset][Tell the student to try writing the code in the notebook on their own, and to reply here when they have finished so we can move on]",
             "parameters": ["knowledge"],
             "need-response": True,
         }
