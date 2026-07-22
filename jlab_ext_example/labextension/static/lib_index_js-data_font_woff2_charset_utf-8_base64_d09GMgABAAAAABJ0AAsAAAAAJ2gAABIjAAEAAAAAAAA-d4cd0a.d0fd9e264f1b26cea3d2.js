@@ -320,6 +320,12 @@ const ChatComponent = (props) => {
         // const kernel = props.getCurrentNotebookKernel();
         // setKernelType(kernel.name);
         setKernelType('ir');
+        // Gap 2: mark the start of this learning session so time-on-task has a
+        // start_time. Fire-and-forget — logging must never block the chat.
+        (0,_handler__WEBPACK_IMPORTED_MODULE_10__.requestAPI)('log_session_start', {
+            body: JSON.stringify({ userId, videoId, sessionId }),
+            method: 'POST'
+        }).catch(err => console.error('Failed to log session start:', err));
         (0,_handler__WEBPACK_IMPORTED_MODULE_10__.requestAPI)('segments', {
             body: JSON.stringify({
                 videoId,
@@ -764,6 +770,18 @@ const ChatComponent = (props) => {
             ]);
         }
     };
+    // Gap 2: record the end of this learning session so time-on-task has an
+    // end_time. Called on a clean finish and on page unload; `reason` lets the
+    // analyst tell a completed session from an abandoned/idle one.
+    const logSessionEnd = (reason) => {
+        if (!userId || !videoId) {
+            return;
+        }
+        (0,_handler__WEBPACK_IMPORTED_MODULE_10__.requestAPI)('log_session_end', {
+            body: JSON.stringify({ userId, videoId, sessionId, reason }),
+            method: 'POST'
+        }).catch(err => console.error('Failed to log session end:', err));
+    };
     const handleFinishVideo = () => {
         if (videoFinished) {
             return;
@@ -777,6 +795,7 @@ const ChatComponent = (props) => {
             method: 'POST'
         })
             .then(() => {
+            logSessionEnd('finished_video');
             void maybePromptPosttest(videoId);
         })
             .catch(err => {
@@ -790,6 +809,25 @@ const ChatComponent = (props) => {
         userIdRef.current = userId;
         segmentsRef.current = segments;
     }, [currentSegmentIndex, videoId, canGoOn, userId, segments]);
+    // Gap 2: log session end when the participant closes/leaves the page, so an
+    // abandoned session still gets an end_time. Uses a beacon (a normal request
+    // is cancelled during unload) and reads ids from refs so the listener,
+    // registered once, always sees the current session. `pagehide` is more
+    // reliable than `beforeunload` on mobile/bfcache.
+    (0,react__WEBPACK_IMPORTED_MODULE_1__.useEffect)(() => {
+        const handlePageHide = () => {
+            if (userIdRef.current && videoIdRef.current) {
+                (0,_handler__WEBPACK_IMPORTED_MODULE_10__.beaconAPI)('log_session_end', {
+                    userId: userIdRef.current,
+                    videoId: videoIdRef.current,
+                    sessionId,
+                    reason: 'unload'
+                });
+            }
+        };
+        window.addEventListener('pagehide', handlePageHide);
+        return () => window.removeEventListener('pagehide', handlePageHide);
+    }, [sessionId]);
     (0,react__WEBPACK_IMPORTED_MODULE_1__.useEffect)(() => {
         // This effect runs when videoId changes
         if (videoId && isReadyToSend) {
@@ -2521,6 +2559,7 @@ const UserIDDialog = ({ open, pretestUrl, videoSelectionMode = 'manual', videoLa
 
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   beaconAPI: () => (/* binding */ beaconAPI),
 /* harmony export */   requestAPI: () => (/* binding */ requestAPI)
 /* harmony export */ });
 /* harmony import */ var _jupyterlab_coreutils__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! @jupyterlab/coreutils */ "webpack/sharing/consume/default/@jupyterlab/coreutils");
@@ -2561,6 +2600,39 @@ async function requestAPI(endPoint = '', init = {}) {
         throw new _jupyterlab_services__WEBPACK_IMPORTED_MODULE_1__.ServerConnection.ResponseError(response, data.message || data);
     }
     return data;
+}
+/**
+ * Best-effort POST that survives page unload, via navigator.sendBeacon.
+ *
+ * A normal fetch started in a `pagehide`/`beforeunload` handler is usually
+ * cancelled by the browser, so it can't be used to log session end on close.
+ * sendBeacon queues the request outside the page lifecycle. It can't set
+ * headers, so the XSRF token is passed as the `_xsrf` query argument (Jupyter
+ * accepts it there); the auth cookie is sent automatically for same-origin.
+ * Returns false if the beacon could not be queued.
+ */
+function beaconAPI(endPoint, body) {
+    var _a;
+    if (typeof navigator === 'undefined' || !navigator.sendBeacon) {
+        return false;
+    }
+    const settings = _jupyterlab_services__WEBPACK_IMPORTED_MODULE_1__.ServerConnection.makeSettings();
+    let requestUrl = _jupyterlab_coreutils__WEBPACK_IMPORTED_MODULE_0__.URLExt.join(settings.baseUrl, 'jlab_ext_example', endPoint);
+    const xsrf = (_a = document.cookie
+        .split('; ')
+        .find(row => row.startsWith('_xsrf='))) === null || _a === void 0 ? void 0 : _a.split('=')[1];
+    if (xsrf) {
+        requestUrl += `?_xsrf=${encodeURIComponent(xsrf)}`;
+    }
+    try {
+        // text/plain avoids a CORS preflight and matches the other handlers,
+        // which read the raw JSON body.
+        const blob = new Blob([JSON.stringify(body)], { type: 'text/plain' });
+        return navigator.sendBeacon(requestUrl, blob);
+    }
+    catch (error) {
+        return false;
+    }
 }
 
 
@@ -2677,4 +2749,4 @@ module.exports = "data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGlu
 /***/ })
 
 }]);
-//# sourceMappingURL=lib_index_js-data_font_woff2_charset_utf-8_base64_d09GMgABAAAAABJ0AAsAAAAAJ2gAABIjAAEAAAAAAAA-d4cd0a.3b2f5eead541bb7c961d.js.map
+//# sourceMappingURL=lib_index_js-data_font_woff2_charset_utf-8_base64_d09GMgABAAAAABJ0AAsAAAAAJ2gAABIjAAEAAAAAAAA-d4cd0a.d0fd9e264f1b26cea3d2.js.map

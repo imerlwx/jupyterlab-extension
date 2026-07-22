@@ -1371,7 +1371,15 @@ class ChatHandler(APIHandler):
                 content=results,
                 video_id=video_id,
                 segment_index=segment_index,
-                metadata={"interaction": interaction, "need_response": need_response},
+                metadata={
+                    "interaction": interaction,
+                    "need_response": need_response,
+                    # Gap 1: the CogApp move this message realizes, so the
+                    # conversation can be joined to teaching_methods without
+                    # guessing the move from the (ambiguous) interaction type.
+                    "method": move_detail.get("method") if move_detail else None,
+                    "skill": move_detail.get("skill_id") if move_detail else None,
+                },
             )
             self.finish(json.dumps(response_data))
         else:
@@ -1403,6 +1411,7 @@ class UpdateSeqHandler(APIHandler):
         segment_index = data["segmentIndex"]
         learning_obj = data["category"]
         user_id = data.get("userId", "unknown")
+        session_id = data.get("sessionId", "unknown")
         session = get_user_session(user_id)
         # Hydrate BKT once per process for this user; cheap if already loaded.
         if not session["bkt_params"]:
@@ -1680,6 +1689,35 @@ class UpdateSeqHandler(APIHandler):
                     )
                 )
         session["cur_seq"] = new_cur_seq
+
+        # Gap 1: log the teaching MOVE chosen for each item, with the mastery
+        # the planner saw at decision time. This is what RQ2.1 / Measure 3.2
+        # need — aligning move choice against knowledge state — and can't be
+        # recovered from chat_logs, where several moves share one interaction
+        # type (e.g. multiple-choice is Scaffolding OR Coaching OR
+        # Articulation). Mastery is read BEFORE any teaching this segment, so
+        # it reflects the state the decision was based on, not the post-answer
+        # value that bkt_updates records.
+        for entry in new_cur_seq:
+            skill_id = entry["skill_id"]
+            skill_state = bkt_params.get(skill_id, {})
+            firebase_logger.log_teaching_method(
+                user_id=user_id,
+                session_id=session_id,
+                method=entry.get("method"),
+                video_id=video_id,
+                segment_index=segment_index,
+                context={
+                    "condition": user_condition,
+                    "skill": skill_id,
+                    "interaction": entry.get("interaction"),
+                    "knowledge": entry.get("knowledge"),
+                    "mastery_at_decision": skill_state.get("probMastery", 0.1),
+                    "n_observations_at_decision": skill_state.get(
+                        "n_observations", 0
+                    ),
+                },
+            )
         # Fresh teaching sequence for this segment — forget which code lines
         # the previous sequence used, so a rebuild (e.g. after a refresh)
         # starts from the best-matching lines again.
@@ -4179,6 +4217,41 @@ class LogSessionStartHandler(APIHandler):
         self.finish(json.dumps({"status": "success", "message": "Session logged"}))
 
 
+class LogSessionEndHandler(APIHandler):
+    """Handler for logging session end to Firebase (Gap 2: time-on-task).
+
+    Fires when the participant finishes a video or leaves the page. Records
+    end_time so a session's duration is start_time..end_time. Because a
+    session_id is minted per page load, one video ("learning session" in the
+    protocol) can span several sessions across a resume — the analyst
+    reconciles them by video_id (stamped on every session's user_metadata),
+    summing the per-session durations. `reason` distinguishes a clean finish
+    from a page-close so partial/idle sessions can be filtered.
+    """
+
+    @tornado.web.authenticated
+    def post(self):
+        data = self.get_json_body()
+        user_id = data.get("userId", "unknown")
+        session_id = data.get("sessionId", "unknown")
+        video_id = data.get("videoId", None)
+        reason = data.get("reason", "unload")
+
+        firebase_logger.log_session_end(
+            user_id=user_id,
+            session_id=session_id,
+            session_summary={
+                "video_id": video_id,
+                "reason": reason,
+                "end_timestamp": firebase_logger.get_timestamp(),
+            },
+        )
+
+        self.finish(
+            json.dumps({"status": "success", "message": "Session end logged"})
+        )
+
+
 class LogCodeExecutionHandler(APIHandler):
     """Handler for logging code execution to Firebase"""
 
@@ -4264,6 +4337,13 @@ def setup_handlers(web_app):
         base_url, "jlab_ext_example", "log_session_start"
     )
     handlers = [(log_session_pattern, LogSessionStartHandler)]
+    web_app.add_handlers(host_pattern, handlers)
+
+    # Add route for logging session end to Firebase
+    log_session_end_pattern = url_path_join(
+        base_url, "jlab_ext_example", "log_session_end"
+    )
+    handlers = [(log_session_end_pattern, LogSessionEndHandler)]
     web_app.add_handlers(host_pattern, handlers)
 
     # Add route for logging code execution to Firebase

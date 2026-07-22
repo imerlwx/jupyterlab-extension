@@ -7,7 +7,7 @@ import React, {
   CSSProperties
 } from 'react';
 // import ReactMarkdown from 'react-markdown';
-import { requestAPI } from './handler';
+import { requestAPI, beaconAPI } from './handler';
 // import '@chatscope/chat-ui-kit-styles/dist/default/styles.min.css';
 import {
   MainContainer,
@@ -388,6 +388,12 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
       // const kernel = props.getCurrentNotebookKernel();
       // setKernelType(kernel.name);
       setKernelType('ir');
+      // Gap 2: mark the start of this learning session so time-on-task has a
+      // start_time. Fire-and-forget — logging must never block the chat.
+      requestAPI<any>('log_session_start', {
+        body: JSON.stringify({ userId, videoId, sessionId }),
+        method: 'POST'
+      }).catch(err => console.error('Failed to log session start:', err));
       requestAPI<any>('segments', {
         body: JSON.stringify({
           videoId,
@@ -879,6 +885,19 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     }
   };
 
+  // Gap 2: record the end of this learning session so time-on-task has an
+  // end_time. Called on a clean finish and on page unload; `reason` lets the
+  // analyst tell a completed session from an abandoned/idle one.
+  const logSessionEnd = (reason: string) => {
+    if (!userId || !videoId) {
+      return;
+    }
+    requestAPI<any>('log_session_end', {
+      body: JSON.stringify({ userId, videoId, sessionId, reason }),
+      method: 'POST'
+    }).catch(err => console.error('Failed to log session end:', err));
+  };
+
   const handleFinishVideo = () => {
     if (videoFinished) {
       return;
@@ -892,6 +911,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
       method: 'POST'
     })
       .then(() => {
+        logSessionEnd('finished_video');
         void maybePromptPosttest(videoId);
       })
       .catch(err => {
@@ -906,6 +926,26 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     userIdRef.current = userId;
     segmentsRef.current = segments;
   }, [currentSegmentIndex, videoId, canGoOn, userId, segments]);
+
+  // Gap 2: log session end when the participant closes/leaves the page, so an
+  // abandoned session still gets an end_time. Uses a beacon (a normal request
+  // is cancelled during unload) and reads ids from refs so the listener,
+  // registered once, always sees the current session. `pagehide` is more
+  // reliable than `beforeunload` on mobile/bfcache.
+  useEffect(() => {
+    const handlePageHide = () => {
+      if (userIdRef.current && videoIdRef.current) {
+        beaconAPI('log_session_end', {
+          userId: userIdRef.current,
+          videoId: videoIdRef.current,
+          sessionId,
+          reason: 'unload'
+        });
+      }
+    };
+    window.addEventListener('pagehide', handlePageHide);
+    return () => window.removeEventListener('pagehide', handlePageHide);
+  }, [sessionId]);
 
   useEffect(() => {
     // This effect runs when videoId changes
