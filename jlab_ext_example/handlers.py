@@ -513,24 +513,37 @@ def plan_methods_for_knowledge(
     which produced one expert-reading card per declarative fact — e.g. five
     Modeling cards in a concept segment.)
     """
+    # Very-high mastery → Exploration: the student has repeatedly demonstrated
+    # the skill, so move them past assessment to independent application (pose
+    # a novel task / open analytical question). Requires BOTH high mastery and
+    # enough evidence (n_obs), so we don't jump to open-ended work on a lucky
+    # early streak. plan_methods() caps this to one Exploration per segment.
+    EXPLORATION_MASTERY = 0.9
+    EXPLORATION_MIN_OBS = 3
+
     if video_content_type == "programming":
         # Programming tier table (single method per knowledge, checked in
         # this priority order — the first matching tier wins):
         # 1. Declarative knowledge string                      → [Modeling]
         # 2. mastery < 0.3 AND n_obs < 1                       → [Scaffolding]
         # 3. 0.3 ≤ mastery < 0.7 OR n_obs < 3                  → [Coaching]
-        # 4. mastery ≥ 0.7 OR (n_obs ≥ 3 AND mastery ≥ 0.3)    → [Articulation]
-        # 5. mastery < 0.3 AND n_obs ≥ 3 (chronic-fail)        → [Scaffolding, Coaching]
+        # 4. mastery ≥ 0.9 AND n_obs ≥ 3 (very high)           → [Exploration]
+        # 5. mastery ≥ 0.7 OR (n_obs ≥ 3 AND mastery ≥ 0.3)    → [Articulation]
+        # 6. mastery < 0.3 AND n_obs ≥ 3 (chronic-fail)        → [Scaffolding, Coaching]
         # Last knowledge item also gets a trailing Reflection (show-code
-        # gestalt wrap-up). Programming Articulation is an MC with its own
-        # built-in reveal, so it doesn't need a paired Reflection.
+        # gestalt wrap-up) — EXCEPT Exploration, where the student works a
+        # novel task on their own, so the reference code isn't shown.
+        # Programming Articulation is an MC with its own built-in reveal, so
+        # it doesn't need a paired Reflection.
         #
-        # Once a Scaffolding turn has been consumed, ChatHandler bumps n_obs 
-        # to 1, See the Scaffolding-consumption hook in ChatHandler. 
+        # Once a Scaffolding turn has been consumed, ChatHandler bumps n_obs
+        # to 1, See the Scaffolding-consumption hook in ChatHandler.
         if mastery < 0.3 and n_observations < 1:
             methods = ["Scaffolding"]
         elif (0.3 <= mastery < 0.7) or n_observations < 3:
             methods = ["Coaching"]
+        elif mastery >= EXPLORATION_MASTERY and n_observations >= EXPLORATION_MIN_OBS:
+            methods = ["Exploration"]
         elif mastery >= 0.7 or (n_observations >= 3 and mastery >= 0.3):
             methods = ["Articulation"]
         else:
@@ -541,7 +554,13 @@ def plan_methods_for_knowledge(
             # back to Scaffolding alone would put them right back into the
             # same dead-end the n_obs bump was meant to fix.
             methods = ["Scaffolding", "Coaching"]
-        if is_last_in_segment and methods[-1] != "Reflection":
+        # Trailing show-code Reflection for the segment's last item, but not
+        # after Exploration (open task — showing the answer undercuts it).
+        if (
+            is_last_in_segment
+            and methods[-1] != "Reflection"
+            and methods[-1] != "Exploration"
+        ):
             methods.append("Reflection")
     else:
         # Concept tier table. Scaffolding in concept_action is multiple-
@@ -553,10 +572,13 @@ def plan_methods_for_knowledge(
         # 2. n_obs == 0  OR  mastery < 0.3               → [Scaffolding]
         # 3. 0.3 ≤ mastery < 0.5  OR  n_obs < 2          → [Coaching]
         # 4. 0.5 ≤ mastery < 0.7                         → [Coaching, Articulation]
-        # 5. mastery ≥ 0.7                               → [Articulation]
+        # 5. mastery ≥ 0.9 AND n_obs ≥ 3 (very high)     → [Exploration]
+        # 6. mastery ≥ 0.7                               → [Articulation]
         # Any plan ending in Articulation automatically appends Reflection
         # (so the student always gets feedback on open-text answers).
-        if mastery > 0.7 or (n_observations >= 3 and mastery >= 0.3):
+        if mastery >= EXPLORATION_MASTERY and n_observations >= EXPLORATION_MIN_OBS:
+            methods = ["Exploration"]
+        elif mastery > 0.7 or (n_observations >= 3 and mastery >= 0.3):
             methods = ["Articulation"]
         elif mastery < 0.3 or n_observations < 1:
             methods = ["Scaffolding"]
@@ -608,6 +630,22 @@ def plan_methods(
                 is_last_in_segment=(i == n - 1),
             )
         out.append({"knowledge": knowledge, "method": method})
+
+    # Cap Exploration at one per segment: it poses an open novel task the
+    # student must respond to, so several in a row is a heavy, repetitive ask.
+    # Keep the first Exploration; downgrade any later ones to Articulation (the
+    # next move down), pairing a Reflection for concept so the open answer
+    # still gets feedback.
+    seen_exploration = False
+    for entry in out:
+        if entry["method"] == ["Exploration"]:
+            if seen_exploration:
+                if video_content_type == "programming":
+                    entry["method"] = ["Articulation"]
+                else:
+                    entry["method"] = ["Articulation", "Reflection"]
+            else:
+                seen_exploration = True
 
     return out
 
@@ -1655,9 +1693,13 @@ class UpdateSeqHandler(APIHandler):
 
                 # Programming: end the segment with a show-code Reflection
                 # (the gestalt wrap-up), matching full_coggen. Skip if the
-                # last item is already a Reflection (e.g. segments 7-8).
+                # last item is already a Reflection (e.g. segments 7-8), and
+                # skip on an Exploration segment — there the student attempts a
+                # novel task on their own and replies when done; showing the
+                # reference code afterwards would undercut the open-ended point.
                 if (
                     content_type == "programming"
+                    and not exploration_single
                     and len(fixed_method_entries) > 1
                     and fixed_method_entries[-1]["method"][-1] != "Reflection"
                 ):
