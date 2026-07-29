@@ -1592,12 +1592,15 @@ class UpdateSeqHandler(APIHandler):
             knowledge = get_knowledge(
                 video_id, video_type, learning_obj, segment_index, code_block
             )
-            # For quiz condition: a multiple-choice question + expert-comparison
-            # feedback. The MC is CONTENT-AWARE (code-focused for programming
-            # segments, chart-focused for concept segments), and feedback uses
-            # the same compare-with-expert card as full_coggen. The MC json
-            # schema is appended by ChatHandler's multiple-choice branch, so we
-            # only describe the question here.
+            # For quiz condition: a single CONTENT-AWARE multiple-choice
+            # question (code-focused for programming segments, chart-focused
+            # for concept segments). No separate Reflection card — the MC
+            # card already reveals the correct answer and its rationale in a
+            # feedback box on submit, so a compare-with-expert afterwards just
+            # repeated it. One quiz item per segment also matches the
+            # condition's purpose: testing whether ONE well-implemented move
+            # suffices. The MC json schema is appended by ChatHandler's
+            # multiple-choice branch, so we only describe the question here.
             if user_condition == "quiz":
                 if isinstance(knowledge, list) and len(knowledge) > 0:
                     quiz_knowledge = knowledge[0]
@@ -1629,23 +1632,6 @@ class UpdateSeqHandler(APIHandler):
                                 "prompt": mc_prompt,
                                 "parameters": ["knowledge"],
                                 "need-response": True,
-                            },
-                            {
-                                "method": "Reflection",
-                                "action": "Show the student a brief comparison with an expert interpretation using {interaction}",
-                                "interaction": "compare-with-expert",
-                                "prompt": (
-                                    "Given the student's answer: {student-answer}\n"
-                                    "Produce a brief comparison with an expert "
-                                    "interpretation of {knowledge}. Respond as JSON "
-                                    "without ```json``` fences:\n"
-                                    '{"expertAnswer": "one or two sentences giving '
-                                    'the expert\'s interpretation", "feedback": '
-                                    '"one sentence acknowledging what the student '
-                                    'got right and pointing to one thing to refine"}'
-                                ),
-                                "parameters": ["student-answer", "knowledge"],
-                                "need-response": False,
                             },
                         ],
                     }
