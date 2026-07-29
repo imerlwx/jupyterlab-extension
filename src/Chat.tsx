@@ -189,6 +189,13 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
   const [lastNeedResponse, setLastNeedResponse] = useState<boolean | null>(
     null
   );
+  // True while an Exploration prompt is waiting for a typed chat reply.
+  // Exploration is the one need_response move with NO submit widget — the
+  // student answers by typing in the chat box. Without this, running a
+  // notebook cell (exactly what Exploration asks for) fires the /go_on check
+  // in onCellExecuted, CUR_SEQ is already empty, so "Go on to next clip"
+  // lit up and the student could skip the task without ever replying.
+  const [awaitingReply, setAwaitingReply] = useState(false);
   const [currentSegmentIndex, setCurrentSegmentIndex] = useState(0);
   // const [lastActivityTime, setLastActivityTime] = useState<number>(Date.now());
   const [kernelType, setKernelType] = useState('ir');
@@ -767,6 +774,13 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                 ? null
                 : !!response.need_response
             );
+            // Only 'plain-text' (Exploration) needs a typed reply; every other
+            // need_response move has a widget that advances on submit. The
+            // reply path returns 'plain text' (space, not hyphen), so a
+            // student's answer clears this rather than re-arming it.
+            setAwaitingReply(
+              !!response.need_response && response.interaction === 'plain-text'
+            );
           })
           .catch(reason => {
             console.error(`Error on POST /jlab_ext_example/chats .\n${reason}`);
@@ -789,6 +803,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
   // Function to handle "Go On" button click
   const handleGoOn = () => {
     setCanGoOn(false); // Disable the button
+    setAwaitingReply(false); // new segment: nothing pending a reply yet
     if (currentSegmentIndex < segments.length - 1) {
       setCurrentSegmentIndex(currentSegmentIndex + 1);
       const nextSegment = segments[currentSegmentIndex + 1];
@@ -2873,8 +2888,11 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
             lastNeedResponse === false &&
             !isTyping &&
             videoId !== '';
+          // An Exploration prompt still awaiting its typed reply blocks
+          // advancing, so the student can't skip the task by running a cell
+          // (which flips canGoOn via onCellExecuted's /go_on check).
           const goOnEnabled = !isOnLastSegment
-            ? canGoOn && !isTyping && videoId !== ''
+            ? canGoOn && !isTyping && videoId !== '' && !awaitingReply
             : (() => {
               // "I have finished this video" enables once the LAST segment's
               // teaching is exhausted (canGoOn) — the same gate as "Go on to
@@ -2887,7 +2905,8 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                 dslReady &&
                 !isTyping &&
                 videoId !== '' &&
-                !videoFinished
+                !videoFinished &&
+                !awaitingReply
               );
             })();
           const enabled = inSegment ? nextEnabled : goOnEnabled;

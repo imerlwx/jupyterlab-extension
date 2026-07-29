@@ -274,12 +274,12 @@ def normalize_video_id(video_id):
 def normalize_video_id_list(video_ids):
     return [normalize_video_id(video_id) for video_id in video_ids]
 
-# Global state variables. Things that are genuinely per-process (loaded
-# once, identical across users) stay as globals: chat_bot, video_type.
-# Per-user mutable state — BKT, CUR_SEQ, the in-flight correctness buffers —
-# lives in USER_SESSIONS, see get_user_session().
+# Global state variables. Only things that are genuinely per-process (loaded
+# once, identical across users) stay as globals: video_type.
+# Per-user mutable state — BKT, CUR_SEQ, the in-flight correctness buffers,
+# and the chat bot (which carries CONVERSATION MEMORY) — lives in
+# USER_SESSIONS, see get_user_session().
 user_id = ""
-chat_bot = None
 video_type = "Exploratory Data Analysis (EDA)"
 
 # Code blocks are PER VIDEO and must be fetched by video_id, never held in a
@@ -339,6 +339,13 @@ def get_user_session(uid: str) -> dict:
             "code_line_buffer": "",
             "code_line_blanks_buffer": "",
             "correct_answer_buffer": "",
+            # The LLM chat wrapper, which carries this user's conversation
+            # memory. Per-user rather than a module global: under TLJH each
+            # participant already gets their own process, but a shared global
+            # would silently cross-contaminate conversations the moment two
+            # participants were ever served by one process (as happens when
+            # testing two accounts against a single local server).
+            "chat_bot": None,
             # Lines already taught in the current segment, so two knowledge
             # items don't drill the student on the same line twice. Reset
             # whenever taught_lines_key changes (see _segment_taught_lines).
@@ -964,7 +971,7 @@ class SegmentHandler(APIHandler):
 class ChatHandler(APIHandler):
     @tornado.web.authenticated
     def post(self):
-        global chat_bot, video_type
+        global video_type
 
         # Existing video_id logic
         data = self.get_json_body()
@@ -1013,8 +1020,11 @@ class ChatHandler(APIHandler):
         if not session["bkt_params"]:
             session["bkt_params"] = init_bkt_params(user_id_req)
 
-        if chat_bot is None:
-            initialize_chat_server(kernelType)
+        # Per-user chat bot: its ConversationBufferMemory holds this
+        # participant's dialogue history, so it must not be a module global.
+        if session["chat_bot"] is None:
+            session["chat_bot"] = initialize_chat_server(kernelType)
+        chat_bot = session["chat_bot"]
 
         # T2.1: score the structured-text articulation that just arrived.
         # The articulation move was popped on the previous turn (and its
@@ -2355,9 +2365,13 @@ class CustomChatBotWithMemory:
 
 
 def initialize_chat_server(kernelType):
-    """Initialize the chat server."""
-    global chat_bot
-    chat_bot = CustomChatBotWithMemory(kernel_type=kernelType)
+    """Create a chat bot instance.
+
+    Returns the bot rather than assigning a module global — the caller stores
+    it on the per-user session (see get_user_session), so one user's
+    conversation memory can never leak into another's.
+    """
+    return CustomChatBotWithMemory(kernel_type=kernelType)
 
 
 def iso8601_duration_as_seconds(duration):
