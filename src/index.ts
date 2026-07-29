@@ -4,16 +4,31 @@ import {
 } from '@jupyterlab/application';
 import { MainAreaWidget } from '@jupyterlab/apputils';
 import { ILauncher } from '@jupyterlab/launcher';
-import { reactIcon } from '@jupyterlab/ui-components';
+import { LabIcon } from '@jupyterlab/ui-components';
 import { INotebookTracker } from '@jupyterlab/notebook';
-import { DataTableWidget } from './DataTable';
 import { ChatWidget } from './Chat';
+
+/**
+ * Tutorly launcher icon (a graduation cap). Defined inline as an SVG string so
+ * it needs no webpack svg-loader configuration. Uses the app's blue accent.
+ */
+const tutorlyIconSvg = `
+<svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <path d="M12 3 1 9l11 6 11-6-11-6z" fill="#0969da"/>
+  <path d="M5 12.2V16c0 .4.2.7.5.9C7 17.7 9.4 19 12 19s5-1.3 6.5-2.1c.3-.2.5-.5.5-.9v-3.8l-7 3.8-7-3.8z" fill="#2a7de1"/>
+  <path d="M21 9v5.5" stroke="#0969da" stroke-width="1.4" stroke-linecap="round"/>
+</svg>
+`;
+
+const tutorlyIcon = new LabIcon({
+  name: 'tutorly:icon',
+  svgstr: tutorlyIconSvg
+});
 
 /**
  * The command IDs used by the react-widget plugin.
  */
 namespace CommandIDs {
-  export const createDataTable = 'create-datatable-widget';
   export const createChat = 'create-chat-widget';
 }
 
@@ -32,44 +47,26 @@ const plugin: JupyterFrontEndPlugin<void> = {
     notebookTracker: INotebookTracker
   ) => {
     const { commands } = app;
-    // Create shared instances
+    // Create shared instance
     const sharedChatWidget = new ChatWidget(notebookTracker);
-
-    const createDataTableCommand = CommandIDs.createDataTable;
-    commands.addCommand(createDataTableCommand, {
-      caption: 'Create a new Data Table Widget',
-      label: 'Data Table Widget',
-      icon: args => (args['isPalette'] ? undefined : reactIcon),
-      execute: () => {
-        // Use the shared instance when creating the DataTableWidget
-        const content = new DataTableWidget(sharedChatWidget);
-        const widget = new MainAreaWidget<DataTableWidget>({ content });
-        widget.title.label = 'Data Table Widget';
-        widget.title.icon = reactIcon;
-        app.shell.add(widget, 'main');
-      }
-    });
 
     const createChatCommand = CommandIDs.createChat;
     commands.addCommand(createChatCommand, {
-      caption: 'Create a new Chat Widget',
-      label: 'Chat Widget',
-      icon: args => (args['isPalette'] ? undefined : reactIcon),
+      caption: 'Open Tutorly',
+      label: 'Tutorly',
+      icon: args => (args['isPalette'] ? undefined : tutorlyIcon),
       execute: () => {
         // Use the shared instance when creating the ChatWidget
         const widget = new MainAreaWidget<ChatWidget>({
           content: sharedChatWidget
         });
-        widget.title.label = 'Chat Widget';
-        widget.title.icon = reactIcon;
+        widget.title.label = 'Tutorly';
+        widget.title.icon = tutorlyIcon;
         app.shell.add(widget, 'main');
       }
     });
 
     if (launcher) {
-      launcher.add({
-        command: createDataTableCommand
-      });
       launcher.add({
         command: createChatCommand
       });
