@@ -3327,43 +3327,72 @@ def get_code_with_blank(video_id, segment_index, code_json):
     return code_with_blanks
 
 
-# A quoted term that the line actually CALLS (`top_n(`) is a far stronger
-# signal than one it merely mentions (`species` appearing as an argument).
-# Scoring them equally made shared variable names dominate: e.g. for the
-# knowledge "use 'group_by' and 'top_n' on 'species'", the line
-# `count(species, primary_breed, ...)` scored the same as `top_n(10, percent)`
-# and won on line order, so the student practiced the wrong line.
-_FUNCTION_CALL_WEIGHT = 3
+# Scoring one quoted term against one line:
+#  * CALL (`filter(`)        — the strongest signal the line does that action
+#  * DEFINITION (`x = ...`)  — where a variable is created (vs merely used)
+#  * MENTION (`x` anywhere)  — a weak signal; the variable is referenced
+# A single `=` after the term is a definition, but `==`, `>=`, `<=` are not,
+# so those are excluded (e.g. `species == "Dog"` mentions `species`, it does
+# not define it).
+_CALL_WEIGHT = 3
+_DEFINITION_WEIGHT = 2
 _MENTION_WEIGHT = 1
 
 
 def _term_score(term, line):
-    """Score one quoted term against one code line (call > mention > absent)."""
+    """Score one quoted term against one code line (call > definition > mention)."""
     if not term:
         return 0
     escaped = re.escape(term)
     if re.search(rf"\b{escaped}\s*\(", line):
-        return _FUNCTION_CALL_WEIGHT
+        return _CALL_WEIGHT
+    if re.search(rf"\b{escaped}\s*(?:=(?!=)|<-)", line):
+        return _DEFINITION_WEIGHT
     if re.search(rf"\b{escaped}\b", line):
         return _MENTION_WEIGHT
     return 0
+
+
+def _paren_balance(line):
+    return line.count("(") - line.count(")")
+
+
+def _statement_head(code_lines, anchor):
+    """Walk up from `anchor` to the line that starts its statement.
+
+    A line is a continuation of the one above it when that line ends with a
+    pipe/plus/comma/open-paren (R pipelines and multi-line calls). Stops at a
+    blank line or a real statement start. Used to show the pipe source (e.g.
+    `name_breed_counts %>%`) as context above a blanked continuation line.
+    """
+    i = anchor
+    while i > 0:
+        prev = code_lines[i - 1].rstrip()
+        if prev and prev.endswith(("%>%", "|>", "+", ",", "(")):
+            i -= 1
+        else:
+            break
+    return i
 
 
 def _find_code_line_indices(code_lines, knowledge, used_lines=None):
     """Find the code-line index/indices for a knowledge item DETERMINISTICALLY.
 
     The knowledge string names the relevant functions/attributes in single
-    quotes (e.g. 'geom_boxplot', 'country'), and those appear verbatim in the
-    code — so we match by scoring instead of making an LLM call. Falls back to
-    [0] if nothing matches. This replaces a per-move LLM round-trip (it was
-    also a frequent source of hallucinated out-of-range indices).
+    quotes (e.g. 'filter', 'name_breed_counts'), and those appear verbatim in
+    the code — so we match by scoring instead of making an LLM call.
 
-    Two rules keep different knowledge items from landing on the same line:
-      * If any line calls one of the named functions, lines that only mention
-        a shared variable are dropped entirely rather than filling the second
-        slot with a near-irrelevant line.
-      * `used_lines` (the lines already taught in this segment) are pushed to
-        the back, so a line is only repeated when nothing else matches.
+    Returns ONE coherent statement, never two lines from different parts of
+    the code:
+      * Anchor on the single best-scoring line. Ties between equally-named
+        function calls (e.g. two `filter(` lines) are broken by proximity to
+        the knowledge's other named variables — the `filter` on
+        `name_breed_counts` wins over an unrelated `filter` elsewhere — and by
+        `used_lines` (a line already taught this segment is pushed back).
+      * Extend downward only as far as needed to close the anchor's
+        parentheses, so a multi-line call (`filter(a >= 200,` / `b >= 200)`)
+        stays together but distant lines never join it.
+    Falls back to [0] if nothing matches.
     """
     attrs = [a for a in get_function_attribute_by_knowledge(knowledge) if a]
     if not code_lines:
@@ -3371,19 +3400,35 @@ def _find_code_line_indices(code_lines, knowledge, used_lines=None):
     if not attrs:
         return [0]
     used = used_lines or set()
-    scored = []
-    for i, line in enumerate(code_lines):
-        score = sum(_term_score(a, line) for a in attrs)
-        if score > 0:
-            scored.append((score, i))
-    if not scored:
+    base = [sum(_term_score(a, line) for a in attrs) for line in code_lines]
+    if not any(base):
         return [0]
-    best = max(score for score, _ in scored)
-    threshold = _FUNCTION_CALL_WEIGHT if best >= _FUNCTION_CALL_WEIGHT else 1
-    candidates = [(score, i) for score, i in scored if score >= threshold]
-    # Unseen lines first, then strongest match, then source order.
-    candidates.sort(key=lambda si: (si[1] in used, -si[0], si[1]))
-    return sorted(i for _, i in candidates[:2])
+    # Proximity bonus: a scoring line gets credit when one of the knowledge's
+    # terms sits on an immediately adjacent (piped) line — this is what pulls
+    # the `filter` next to `name_breed_counts %>%` ahead of a lookalike filter.
+    total = list(base)
+    for i in range(len(code_lines)):
+        if base[i] == 0:
+            continue
+        for j in (i - 1, i + 1):
+            if 0 <= j < len(code_lines) and any(
+                _term_score(a, code_lines[j]) for a in attrs
+            ):
+                total[i] += 1
+    order = sorted(
+        (i for i in range(len(code_lines)) if base[i] > 0),
+        key=lambda i: (i in used, -total[i], i),
+    )
+    anchor = order[0]
+    # Extend downward to balance the anchor statement's parentheses.
+    block = [anchor]
+    bal = _paren_balance(code_lines[anchor])
+    j = anchor + 1
+    while bal > 0 and j < len(code_lines):
+        block.append(j)
+        bal += _paren_balance(code_lines[j])
+        j += 1
+    return sorted(block)
 
 
 def get_code_line_by_step(
@@ -3410,7 +3455,11 @@ def get_code_with_blank_by_step(
     """Return (plain code line(s), blanked code line(s)) for a knowledge item.
 
     Used by Coaching (fill-in-blanks), which needs the blanked version for the
-    student to fill in.
+    student to fill in. When the selected statement is a pipe continuation, the
+    pipe-source line (e.g. `name_breed_counts %>%`) is prepended as PLAIN
+    context so the blank isn't shown out of nowhere. That context line is
+    identical in the plain and blanked strings (no blanks of its own), so it
+    doesn't affect answer scoring.
     """
     code_with_blanks = get_code_with_blank(video_id, segment_index, code_json)
     code_block = code_json[str(segment_index)]
@@ -3428,10 +3477,21 @@ def get_code_with_blank_by_step(
         line_index = [0]
     if used_lines is not None:
         used_lines.update(line_index)
-    combined_code = "\n".join(code_lines[i] for i in line_index)
-    combined_code_with_blank = "\n".join(
-        code_lines_with_blanks[i] for i in line_index
-    )
+
+    plain_lines = [code_lines[i] for i in line_index]
+    blank_lines = [code_lines_with_blanks[i] for i in line_index]
+
+    # Prepend the pipe-source as plain context when the block starts on an
+    # immediately-following continuation line (head is right above the anchor).
+    if line_index:
+        anchor = line_index[0]
+        head = _statement_head(code_lines, anchor)
+        if head not in line_index and 0 <= anchor - head <= 1:
+            plain_lines.insert(0, code_lines[head])
+            blank_lines.insert(0, code_lines[head])  # plain in both
+
+    combined_code = "\n".join(plain_lines)
+    combined_code_with_blank = "\n".join(blank_lines)
     return combined_code, combined_code_with_blank
 
 
