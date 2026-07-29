@@ -4,6 +4,7 @@ import re
 import ast
 import json
 import math
+import random
 import isodate
 import hashlib
 import datetime
@@ -209,6 +210,46 @@ def llm_json(system_prompt, user_message, required_keys=(), model=None, retries=
         if attempt < retries:
             print("llm_json: unparseable response; retrying.")
     return parsed if isinstance(parsed, dict) else None
+
+
+# Multiple-choice quality guidance, appended to every MC-generation prompt.
+# LLMs have two strong tells: they make the correct option the longest / most
+# detailed, and they place it first. The length tell is a content problem we
+# can only ask the model to avoid; the position tell we fix deterministically
+# by shuffling in _normalize_mc (so it holds even when the model ignores this).
+_MC_DESIGN_GUIDANCE = (
+    " Design the four options to be of SIMILAR length, grammatical form, and "
+    "level of detail — the correct answer must not be noticeably longer or "
+    "more elaborate than the distractors, which is a common giveaway. Every "
+    "distractor must be plausible (a realistic misconception), not obviously "
+    "wrong or a joke. Do not reveal the answer through its wording or detail."
+)
+
+_MC_SCHEMA_INSTRUCTION = (
+    ' Please respond with the following json structure without the ```json``` '
+    'title: {"question": "question", "choices": ["choice", "choice", "choice", '
+    '"choice"], "correct answer": "choice", "rationale": "one sentence '
+    'explaining why the correct answer is right"}'
+)
+
+
+def _normalize_mc(parsed):
+    """Shuffle MC choices so the correct answer isn't always in position 1.
+
+    Returns (payload_dict, correct_answer_str). Comparison downstream is by the
+    choice STRING (selected == correct answer), so reordering the list never
+    affects scoring — it only removes the position bias. The correct-answer
+    string is left untouched; if the model didn't echo it verbatim among the
+    choices, we leave the order as-is rather than guess.
+    """
+    correct = parsed.get("correct answer", "")
+    choices = parsed.get("choices")
+    if isinstance(choices, list) and len(choices) > 1:
+        shuffled = list(choices)
+        random.shuffle(shuffled)
+        parsed["choices"] = shuffled
+    return parsed, correct
+
 
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY") or YOUTUBE_API_KEY
 if not YOUTUBE_API_KEY:
@@ -1184,7 +1225,8 @@ class ChatHandler(APIHandler):
                 elif interaction == "multiple-choice":
                     input_data["pedagogy"] = (
                         input_data["pedagogy"]
-                        + ' Please respond with the following json structure without the ```json``` title: {"question": "question", "choices": ["choice", "choice", "choice", "choice"], "correct answer": "choice", "rationale": "one sentence explaining why the correct answer is right"}'
+                        + _MC_DESIGN_GUIDANCE
+                        + _MC_SCHEMA_INSTRUCTION
                     )
                     # results = conversation({"input": str(input_data)})["text"]
                     raw = chat_bot.ask({"input": str(input_data)})
@@ -1192,10 +1234,10 @@ class ChatHandler(APIHandler):
                     # would otherwise render as raw JSON in the transcript.
                     parsed = _repair_json(raw)
                     if isinstance(parsed, dict) and parsed.get("question"):
+                        # Shuffle so the correct answer isn't always first.
+                        parsed, correct = _normalize_mc(parsed)
                         results = json.dumps(parsed)
-                        session["correct_answer_buffer"] = parsed.get(
-                            "correct answer", ""
-                        )
+                        session["correct_answer_buffer"] = correct
                     else:
                         results = raw
                         session["correct_answer_buffer"] = ""
