@@ -1592,20 +1592,30 @@ class UpdateSeqHandler(APIHandler):
             knowledge = get_knowledge(
                 video_id, video_type, learning_obj, segment_index, code_block
             )
-            # For quiz condition: a single CONTENT-AWARE multiple-choice
-            # question (code-focused for programming segments, chart-focused
-            # for concept segments). No separate Reflection card — the MC
-            # card already reveals the correct answer and its rationale in a
-            # feedback box on submit, so a compare-with-expert afterwards just
-            # repeated it. One quiz item per segment also matches the
-            # condition's purpose: testing whether ONE well-implemented move
-            # suffices. The MC json schema is appended by ChatHandler's
-            # multiple-choice branch, so we only describe the question here.
+            # For quiz condition: ONE CONTENT-AWARE multiple-choice question
+            # PER KNOWLEDGE ITEM (code-focused for programming segments,
+            # chart-focused for concept segments).
+            #
+            # Per-knowledge, not per-segment: the segments carry ~4.5 knowledge
+            # items each, so quizzing only knowledge[0] exposed quiz
+            # participants to ~22% of the content the cogapp conditions cover,
+            # while the post-tests assess the whole video. That confounds dose
+            # with method — a lower score could mean "quizzing teaches less"
+            # OR simply "they were taught less". Matching the coverage keeps
+            # content roughly constant so the contrast isolates the pedagogy.
+            # The condition stays a single-move control: every item is taught
+            # by the same move (MC), with no Modeling opener.
+            #
+            # No separate Reflection card — the MC card already reveals the
+            # correct answer and its rationale in a feedback box on submit, so
+            # a compare-with-expert afterwards just repeated it. The MC json
+            # schema is appended by ChatHandler's multiple-choice branch, so we
+            # only describe the question here.
             if user_condition == "quiz":
                 if isinstance(knowledge, list) and len(knowledge) > 0:
-                    quiz_knowledge = knowledge[0]
+                    quiz_items = knowledge
                 else:
-                    quiz_knowledge = "the concepts covered in this segment"
+                    quiz_items = ["the concepts covered in this segment"]
 
                 if code_block != "":
                     mc_prompt = (
@@ -1621,9 +1631,11 @@ class UpdateSeqHandler(APIHandler):
                         "in the chart or the potential reason behind it."
                     )
 
+                # One section per knowledge item, so UpdateSeqHandler assigns
+                # each its own skill_id (same indexing as the other conditions).
                 sections = [
                     {
-                        "knowledge": quiz_knowledge,
+                        "knowledge": item,
                         "actions": [
                             {
                                 "method": "Coaching",
@@ -1635,6 +1647,7 @@ class UpdateSeqHandler(APIHandler):
                             },
                         ],
                     }
+                    for item in quiz_items
                 ]
             # For fixed_cogapp condition (CogApp without a student model):
             # mirror full_coggen's STRUCTURE — a Modeling opener on the first
