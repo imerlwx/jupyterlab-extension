@@ -66,12 +66,24 @@ def load_updates(args):
         firebase_admin.initialize_app(
             credentials.Certificate(cred), {"databaseURL": url}
         )
-        return db.reference("bkt_updates").get() or {}
-    path = os.path.join(args.export_dir, "bkt_updates.json")
-    if not os.path.exists(path):
-        sys.exit(f"{path} not found. Run tools/export_firebase_data.py first.")
-    with open(path) as f:
-        return json.load(f) or {}
+    def read_node(name):
+        if args.live:
+            return db.reference(name).get() or {}
+        path = os.path.join(args.export_dir, name + ".json")
+        if not os.path.exists(path):
+            return {}
+        with open(path) as f:
+            return json.load(f) or {}
+
+    updates = read_node("bkt_updates")  # Historical records remain readable.
+    for user, sessions in read_node("interactions").items():
+        for session, events in sessions.items():
+            for key, event in events.items():
+                data = event.get("data", {})
+                if "new_mastery" in data:
+                    updates.setdefault(user, {}).setdefault(session, {})[key] = {
+                        **data, "timestamp": event.get("timestamp")}
+    return updates
 
 
 def main():
