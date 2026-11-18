@@ -1107,7 +1107,7 @@ const ChatComponent = (props) => {
         }, [videoId, currentSegmentIndex]);
         (0,react__WEBPACK_IMPORTED_MODULE_1__.useEffect)(() => {
             // Only run the check if this code block's ID hasn't been checked yet
-            if (!checkedCode.includes(id)) {
+            if (initialCode.includes('___') && !checkedCode.includes(id)) {
                 // Only run the check if all blanks haven't been confirmed as filled
                 const blanksRemaining = code.includes('___');
                 if (!blanksRemaining) {
@@ -1459,7 +1459,7 @@ const ChatComponent = (props) => {
         // at the bottom of the chat panel, so MessageComponent just renders
         // the bubble with no overlay chrome.
         if (message.direction === 'incoming') {
-            return (react__WEBPACK_IMPORTED_MODULE_1___default().createElement(_chatscope_chat_ui_kit_react__WEBPACK_IMPORTED_MODULE_2__.Message, { key: message.sentTime, model: {
+            return (react__WEBPACK_IMPORTED_MODULE_1___default().createElement(_chatscope_chat_ui_kit_react__WEBPACK_IMPORTED_MODULE_2__.Message, { key: message.sentTime, style: { marginBottom: '10px' }, model: {
                     message: message.message,
                     direction: message.direction,
                     sender: message.sender,
@@ -1804,10 +1804,11 @@ const ChatComponent = (props) => {
                                 } }, "Open Post-test"),
                             react__WEBPACK_IMPORTED_MODULE_1___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_5__.Box, { sx: {
                                     display: 'flex',
+                                    flexWrap: 'wrap',
                                     alignItems: 'flex-start',
                                     gap: 1
                                 } },
-                                react__WEBPACK_IMPORTED_MODULE_1___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_5__.TextField, { size: "small", label: "Completion code", value: posttestCodeInputs[message.id] || '', disabled: !!message.posttestConfirmed, error: !!posttestCodeErrors[message.id], helperText: posttestCodeErrors[message.id] || '', onChange: e => {
+                                react__WEBPACK_IMPORTED_MODULE_1___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_5__.TextField, { size: "small", label: "Completion code", sx: { flex: '1 1 200px', minWidth: 0, '& .MuiFormHelperText-root': { overflowWrap: 'anywhere' } }, value: posttestCodeInputs[message.id] || '', disabled: !!message.posttestConfirmed, error: !!posttestCodeErrors[message.id], helperText: posttestCodeErrors[message.id] || '', onChange: e => {
                                         setPosttestCodeInputs(prev => ({
                                             ...prev,
                                             [message.id]: e.target.value
@@ -1818,12 +1819,12 @@ const ChatComponent = (props) => {
                                         }));
                                     } }),
                                 react__WEBPACK_IMPORTED_MODULE_1___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_5__.Button, { variant: "contained", size: "small", disabled: !!message.posttestConfirmed ||
-                                        !(posttestCodeInputs[message.id] || '').trim(), sx: { ...cardPrimaryBtnSx, mt: 0.4 }, onClick: () => {
+                                        !(posttestCodeInputs[message.id] || '').trim(), sx: { ...cardPrimaryBtnSx, mt: 0.4, flexShrink: 0, whiteSpace: 'nowrap' }, onClick: () => {
                                         void handleMarkPosttestComplete(userId, message.posttestVideoId || videoId, message.id, (posttestCodeInputs[message.id] || '').trim());
                                     } }, message.posttestConfirmed
                                     ? 'Post-test Recorded'
                                     : 'Finish Session & Return to Prolific')))),
-                        message.code && (react__WEBPACK_IMPORTED_MODULE_1___default().createElement("div", { style: { width: '61.8%', marginBottom: '8px' } }, message.interaction === 'fill-in-blanks' ? (react__WEBPACK_IMPORTED_MODULE_1___default().createElement(CodeEditorWithBlanks, { id: message.id, initialCode: message.code, code: codes[message.id] || message.code, onCodeChange: newCode => setCodes(prev => ({
+                        message.code && (react__WEBPACK_IMPORTED_MODULE_1___default().createElement("div", { style: { width: '61.8%', marginBottom: '10px' } }, message.interaction === 'fill-in-blanks' ? (react__WEBPACK_IMPORTED_MODULE_1___default().createElement(CodeEditorWithBlanks, { id: message.id, initialCode: message.code, code: codes[message.id] || message.code, onCodeChange: newCode => setCodes(prev => ({
                                 ...prev,
                                 [message.id]: newCode
                             })), videoId: videoId, currentSegmentIndex: currentSegmentIndex, onReadyToSend: handleCodeBlockReadyToSend })) : (react__WEBPACK_IMPORTED_MODULE_1___default().createElement("pre", { style: {
@@ -2443,7 +2444,11 @@ const UserIDDialog = ({ open, onClose, currentVideo, videoSelectionMode = 'manua
                 px: 4,
                 py: 3
             } },
-            react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Typography, { id: "user-id-dialog-title", sx: { fontSize: '1.4rem', fontWeight: 700, lineHeight: 1.2 } }, reviewing ? 'Study progress' : 'Welcome to Tutorly'),
+            react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Box, { sx: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap' } },
+                react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Typography, { id: "user-id-dialog-title", sx: { fontSize: '1.4rem', fontWeight: 700, lineHeight: 1.2 } },
+                    reviewing ? 'Study progress' : 'Welcome to Tutorly',
+                    reviewing && isLoading && react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.CircularProgress, { size: 14, color: "inherit", sx: { ml: 1 } })),
+                step !== 'id' && (react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Button, { component: "a", size: "small", variant: "outlined", color: "inherit", sx: { textTransform: 'none' }, href: (studyProgress === null || studyProgress === void 0 ? void 0 : studyProgress.studyGuideUrl) || undefined, target: "_blank", rel: "noopener noreferrer", disabled: !(studyProgress === null || studyProgress === void 0 ? void 0 : studyProgress.studyGuideUrl) }, "How to use Tutorly"))),
             react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Typography, { sx: { fontSize: '0.9rem', opacity: 0.92, mt: 0.5 } }, "Your personal AI tutor for exploratory data analysis")),
         react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.DialogContent, { sx: { px: 4, py: 3 } }, step === 'id' ? (react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Box, null,
             react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Typography, { variant: "body2", sx: { color: '#57606a', lineHeight: 1.5, mb: 2 } }, "Enter your Prolific ID, using the same ID as your initial Qualtrics questionnaire and all study sessions."),
@@ -2472,82 +2477,78 @@ const UserIDDialog = ({ open, onClose, currentVideo, videoSelectionMode = 'manua
                     border: '1px solid #d8d8d8',
                     borderRadius: 1,
                     backgroundColor: '#fafafa'
-                } },
-                react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Typography, { variant: "subtitle2", sx: { mb: 1 } },
-                    "Study Progress",
-                    reviewing && isLoading && react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.CircularProgress, { size: 14, sx: { ml: 1 } })),
-                react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Button, { component: "a", size: "small", variant: "outlined", sx: { ...secondaryBtnSx, mb: 1 }, href: (studyProgress === null || studyProgress === void 0 ? void 0 : studyProgress.studyGuideUrl) || undefined, target: "_blank", rel: "noopener noreferrer", disabled: !(studyProgress === null || studyProgress === void 0 ? void 0 : studyProgress.studyGuideUrl) }, "How to use Tutorly"),
-                studyProgress && (react__WEBPACK_IMPORTED_MODULE_0___default().createElement((react__WEBPACK_IMPORTED_MODULE_0___default().Fragment), null,
-                    react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Typography, { variant: "body2", sx: { mb: 0.5 } },
-                        "Pre-test:",
-                        studyProgress.pretestCompleted
-                            ? renderStatusBadge('Completed', 'success')
-                            : renderStatusBadge('Pending', 'warning')),
-                    studyProgress.videoOrder.map((id, index) => {
-                        const videoDone = studyProgress.finishedVideos.includes(id);
-                        const postDone = studyProgress.completedVideos.includes(id);
-                        const videoLabel = videoLabels[id] || id;
-                        const statusLabel = videoDone
-                            ? postDone
-                                ? 'Video + Post-test Completed'
-                                : 'Video Completed, Post-test Pending'
-                            : id === (currentVideo === null || currentVideo === void 0 ? void 0 : currentVideo.id) ? 'In Progress' : 'Not Started';
-                        const statusTone = videoDone
-                            ? postDone
-                                ? 'success'
-                                : 'warning'
-                            : 'neutral';
-                        return (react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Box, { key: id, sx: { mb: 1 } },
-                            react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Typography, { variant: "body2" },
-                                "Video ",
-                                index + 1,
-                                " (",
-                                videoLabel,
-                                "):",
-                                renderStatusBadge(statusLabel, statusTone)),
-                            id === (currentVideo === null || currentVideo === void 0 ? void 0 : currentVideo.id) && currentVideo.totalSegments > 0 && (react__WEBPACK_IMPORTED_MODULE_0___default().createElement((react__WEBPACK_IMPORTED_MODULE_0___default().Fragment), null,
-                                react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.LinearProgress, { variant: "determinate", sx: { mt: 1 }, "aria-label": "Current video lesson progress", value: currentVideo.finished || videoDone ? 100 :
-                                        100 * Math.max(0, Math.min(currentVideo.segmentIndex, currentVideo.totalSegments)) / currentVideo.totalSegments }),
-                                react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Typography, { variant: "caption" }, currentVideo.finished || videoDone ? 'Lesson completed' :
-                                    `Current segment: ${Math.min(currentVideo.segmentIndex + 1, currentVideo.totalSegments)} of ${currentVideo.totalSegments}`)))));
-                    }),
-                    studyProgress.pendingPosttest.available &&
-                        studyProgress.pendingPosttest.questionnaireId &&
-                        studyProgress.pendingPosttest.videoId && (react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Box, { sx: { mt: 1.5 } },
-                        react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Typography, { variant: "body2", sx: { mb: 1 } }, "Pending post-test available now. After submitting it, enter the completion code shown at the end of the survey."),
-                        react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Button, { variant: "outlined", size: "small", sx: { ...secondaryBtnSx, mb: 1.5 }, onClick: () => window.open(appendUserId(posttestUrls[studyProgress.pendingPosttest.questionnaireId], userId.trim()), '_blank') }, "Open Pending Post-test"),
-                        react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Box, { sx: {
-                                display: 'flex',
-                                alignItems: 'flex-start',
-                                gap: 1
-                            } },
-                            react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.TextField, { size: "small", label: "Completion code", value: posttestCode, error: !!posttestCodeError, helperText: posttestCodeError || '', onChange: e => {
-                                    setPosttestCode(e.target.value);
-                                    setPosttestCodeError('');
-                                } }),
-                            react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Button, { variant: "contained", size: "small", sx: { ...primaryBtnSx, mt: 0.4 }, disabled: !posttestCode.trim() || isVerifyingPosttest || isLoading, onClick: async () => {
-                                    setIsVerifyingPosttest(true);
-                                    setPosttestCodeError('');
-                                    try {
-                                        const result = await onMarkPendingPosttestComplete(userId.trim(), studyProgress.pendingPosttest.videoId, posttestCode.trim());
-                                        if (!result.verified) {
-                                            setPosttestCodeError(result.message ||
-                                                'That code doesn’t match. Please try again.');
-                                            return;
-                                        }
-                                        setPosttestCode('');
-                                        const updated = await onGetStudyProgress(userId.trim());
-                                        setStudyProgress(updated);
+                } }, studyProgress && (react__WEBPACK_IMPORTED_MODULE_0___default().createElement((react__WEBPACK_IMPORTED_MODULE_0___default().Fragment), null,
+                react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Typography, { variant: "body2", sx: { mb: 0.5 } },
+                    "Pre-test:",
+                    studyProgress.pretestCompleted
+                        ? renderStatusBadge('Completed', 'success')
+                        : renderStatusBadge('Pending', 'warning')),
+                studyProgress.videoOrder.map((id, index) => {
+                    const videoDone = studyProgress.finishedVideos.includes(id);
+                    const postDone = studyProgress.completedVideos.includes(id);
+                    const videoLabel = videoLabels[id] || id;
+                    const statusLabel = videoDone
+                        ? postDone
+                            ? 'Video + Post-test Completed'
+                            : 'Video Completed, Post-test Pending'
+                        : id === (currentVideo === null || currentVideo === void 0 ? void 0 : currentVideo.id) ? 'In Progress' : 'Not Started';
+                    const statusTone = videoDone
+                        ? postDone
+                            ? 'success'
+                            : 'warning'
+                        : 'neutral';
+                    return (react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Box, { key: id, sx: { mb: 1 } },
+                        react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Typography, { variant: "body2" },
+                            "Video ",
+                            index + 1,
+                            " (",
+                            videoLabel,
+                            "):",
+                            renderStatusBadge(statusLabel, statusTone)),
+                        id === (currentVideo === null || currentVideo === void 0 ? void 0 : currentVideo.id) && currentVideo.totalSegments > 0 && (react__WEBPACK_IMPORTED_MODULE_0___default().createElement((react__WEBPACK_IMPORTED_MODULE_0___default().Fragment), null,
+                            react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.LinearProgress, { variant: "determinate", sx: { mt: 1 }, "aria-label": "Current video lesson progress", value: currentVideo.finished || videoDone ? 100 :
+                                    100 * Math.max(0, Math.min(currentVideo.segmentIndex, currentVideo.totalSegments)) / currentVideo.totalSegments }),
+                            react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Typography, { variant: "caption" }, currentVideo.finished || videoDone ? 'Lesson completed' :
+                                `Current segment: ${Math.min(currentVideo.segmentIndex + 1, currentVideo.totalSegments)} of ${currentVideo.totalSegments}`)))));
+                }),
+                studyProgress.pendingPosttest.available &&
+                    studyProgress.pendingPosttest.questionnaireId &&
+                    studyProgress.pendingPosttest.videoId && (react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Box, { sx: { mt: 1.5 } },
+                    react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Typography, { variant: "body2", sx: { mb: 1 } }, "Pending post-test available now. After submitting it, enter the completion code shown at the end of the survey."),
+                    react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Button, { variant: "outlined", size: "small", sx: { ...secondaryBtnSx, mb: 1.5 }, onClick: () => window.open(appendUserId(posttestUrls[studyProgress.pendingPosttest.questionnaireId], userId.trim()), '_blank') }, "Open Pending Post-test"),
+                    react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Box, { sx: {
+                            display: 'flex',
+                            flexWrap: 'wrap',
+                            alignItems: 'flex-start',
+                            gap: 1
+                        } },
+                        react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.TextField, { size: "small", label: "Completion code", sx: { flex: '1 1 200px', minWidth: 0, '& .MuiFormHelperText-root': { overflowWrap: 'anywhere' } }, value: posttestCode, error: !!posttestCodeError, helperText: posttestCodeError || '', onChange: e => {
+                                setPosttestCode(e.target.value);
+                                setPosttestCodeError('');
+                            } }),
+                        react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Button, { variant: "contained", size: "small", sx: { ...primaryBtnSx, mt: 0.4, flexShrink: 0, whiteSpace: 'nowrap' }, disabled: !posttestCode.trim() || isVerifyingPosttest || isLoading, onClick: async () => {
+                                setIsVerifyingPosttest(true);
+                                setPosttestCodeError('');
+                                try {
+                                    const result = await onMarkPendingPosttestComplete(userId.trim(), studyProgress.pendingPosttest.videoId, posttestCode.trim());
+                                    if (!result.verified) {
+                                        setPosttestCodeError(result.message ||
+                                            'That code doesn’t match. Please try again.');
+                                        return;
                                     }
-                                    catch (err) {
-                                        console.error('Failed to verify post-test code:', err);
-                                        setPosttestCodeError('Failed to verify the code. Please try again.');
-                                    }
-                                    finally {
-                                        setIsVerifyingPosttest(false);
-                                    }
-                                } }, "Finish Session & Return to Prolific")))),
-                    studyProgress.studyCompleted && (react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Typography, { variant: "body2", sx: { mt: 1 } }, "All study tasks are completed."))))),
+                                    setPosttestCode('');
+                                    const updated = await onGetStudyProgress(userId.trim());
+                                    setStudyProgress(updated);
+                                }
+                                catch (err) {
+                                    console.error('Failed to verify post-test code:', err);
+                                    setPosttestCodeError('Failed to verify the code. Please try again.');
+                                }
+                                finally {
+                                    setIsVerifyingPosttest(false);
+                                }
+                            } }, "Finish Session & Return to Prolific")))),
+                studyProgress.studyCompleted && (react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Typography, { variant: "body2", sx: { mt: 1 } }, "All study tasks are completed."))))),
             !reviewing && !pretestCompleted && (react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Box, { sx: {
                     p: 2,
                     mb: 2,
@@ -2795,4 +2796,4 @@ var _utils = __webpack_require__(/*! @mui/material/utils */ "./node_modules/@mui
 /***/ })
 
 }]);
-//# sourceMappingURL=lib_index_js.3fc223d7d98dd087daeb.js.map
+//# sourceMappingURL=lib_index_js.5d432314f13111288c5c.js.map

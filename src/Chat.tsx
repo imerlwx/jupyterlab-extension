@@ -1303,7 +1303,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
 
     useEffect(() => {
       // Only run the check if this code block's ID hasn't been checked yet
-      if (!checkedCode.includes(id)) {
+      if (initialCode.includes('___') && !checkedCode.includes(id)) {
         // Only run the check if all blanks haven't been confirmed as filled
         const blanksRemaining = code.includes('___');
         if (!blanksRemaining) {
@@ -1891,6 +1891,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
       return (
         <Message
           key={message.sentTime}
+          style={{ marginBottom: '10px' }}
           model={{
             message: message.message,
             direction: message.direction,
@@ -2436,6 +2437,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                           <Box
                             sx={{
                               display: 'flex',
+                              flexWrap: 'wrap',
                               alignItems: 'flex-start',
                               gap: 1
                             }}
@@ -2443,6 +2445,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                             <TextField
                               size="small"
                               label="Completion code"
+                              sx={{ flex: '1 1 200px', minWidth: 0, '& .MuiFormHelperText-root': { overflowWrap: 'anywhere' } }}
                               value={posttestCodeInputs[message.id] || ''}
                               disabled={!!message.posttestConfirmed}
                               error={!!posttestCodeErrors[message.id]}
@@ -2465,7 +2468,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                                 !!message.posttestConfirmed ||
                                 !(posttestCodeInputs[message.id] || '').trim()
                               }
-                              sx={{ ...cardPrimaryBtnSx, mt: 0.4 }}
+                              sx={{ ...cardPrimaryBtnSx, mt: 0.4, flexShrink: 0, whiteSpace: 'nowrap' }}
                               onClick={() => {
                                 void handleMarkPosttestComplete(
                                   userId,
@@ -2483,7 +2486,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                         </Box>
                       )}
                     {message.code && (
-                      <div style={{ width: '61.8%', marginBottom: '8px' }}>
+                      <div style={{ width: '61.8%', marginBottom: '10px' }}>
                         {message.interaction === 'fill-in-blanks' ? (
                           <CodeEditorWithBlanks
                             id={message.id}

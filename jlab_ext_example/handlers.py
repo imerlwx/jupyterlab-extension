@@ -875,7 +875,7 @@ concept_action = {
         {
             "action": "Encourage the student to independently extend their understanding of {knowledge} by forming and investigating their own analytical questions using {interaction}",
             "interaction": "plain-text",
-            "prompt": "[Use one sentence to prompt the student to think about how the {knowledge} could apply to a different dataset or lead to a different conclusion][Ask the student to formulate their own question or hypothesis and briefly explain their reasoning]",
+            "prompt": "[If the {knowledge} is about interpreting the plot or formalizing a hypothesis, use one sentence to prompt the student to think about a hypothesis or question related to the {knowledge} in the same dataset. If the {knowledge} is about a technique or skill, use one sentence to prompt the student to think about the reason or a new way to apply the {knowledge} in a different question inside this dataset][Use one sentence to encourage the student to write their own question or hypothesis in the chat]",
             "parameters": ["knowledge"],
             "need-response": True,
         }
@@ -1313,7 +1313,7 @@ class ChatHandler(APIHandler):
                     results = (
                         results
                         + "\n"
-                        + "```R"
+                        + "```R\n"
                         + code_line
                         + "```"
                     )
@@ -1328,9 +1328,12 @@ class ChatHandler(APIHandler):
                     )
                     session["code_line_buffer"] = code_line
                     session["code_line_blanks_buffer"] = code_line_with_blanks
+                    input_data["code-line"] = code_line
                     input_data["code-line-with-blanks"] = code_line_with_blanks
                     input_data["requirement"] = (
-                        "Don't include the 'code-line-with-blanks' in the response"
+                        "Describe only the blanks in the supplied code-line-with-blanks. "
+                        "Use code-line as the solution; give a conceptual hint without "
+                        "naming the missing answers. Do not include code in the response."
                     )
                     results = chat_bot.ask({"input": str(input_data)})
                     results = (
@@ -1338,7 +1341,7 @@ class ChatHandler(APIHandler):
                         # + " Please fill in the blanks in the code below"
                         # + " Try to understand the following lines."
                         + "\n"
-                        + "```R"
+                        + "```R\n"
                         + code_line_with_blanks
                         + "```"
                     )
@@ -1357,7 +1360,7 @@ class ChatHandler(APIHandler):
                             results
                             + " If you don't have any questions and are ready to continue, click the continue icon on the right"
                             + "\n"
-                            + "```R"
+                            + "```R\n"
                             + code_line
                             + "```"
                         )
@@ -2807,6 +2810,13 @@ def get_knowledge(video_id, video_type, learning_obj, segment_index, code_block)
         except (ValueError, SyntaxError):
             cached = None
         if cached:
+            # Older coffee knowledge names the horizontal-only error-bar API.
+            if "geom_errorbarh(" not in code_block and "geom_errorbar(" in code_block:
+                cached = [k.replace("'geom_errorbarh'", "'geom_errorbar'") for k in cached]
+            # Distinguish ordering countries by quality from ordering by count.
+            if video_id == "-1x8Kpyndss" and segment_index == 3:
+                cached = [k.replace("by their ratings&", "by 'total_cup_points'&") for k in cached]
+            conn.close()
             return cached
         print(
             f"knowledge_cache row for {video_id}::{segment_index} is "
@@ -2836,6 +2846,7 @@ def get_knowledge(video_id, video_type, learning_obj, segment_index, code_block)
                                 For example, The task is comparing the distribution of median earnings across different major categories using a box plot and adjusting the visualization for better readability and interpretation."
                                 Procedural knowledge: "To achieve + [specific goal] + one need to + [action/verb] + [specific function/tool] + on + [specific attribute/object] + because + [reason/purpose]."
                                 The [specfic goal] and [action/verb] + [specific function/tool] should be quoted in a && sign. The [specific function/tool] and [specific attribute/object] should be quoted in a pair of single quotes.
+                                Use only function names present in the supplied code, and quote each attribute separately. When a function occurs more than once, name the relevant input and ordering variables explicitly.
                                 For example, "To &achieve an ordered factor level& based on the 'Median', one need to &use 'fct_reorder'& on 'Major_category', making it easier to compare distributions."
                                 Your response should be in a list format:
                                 [
@@ -3444,13 +3455,15 @@ def _find_code_line_indices(code_lines, knowledge, used_lines=None):
         function calls (e.g. two `filter(` lines) are broken by proximity to
         the knowledge's other named variables — the `filter` on
         `name_breed_counts` wins over an unrelated `filter` elsewhere — and by
-        `used_lines` (a line already taught this segment is pushed back).
-      * Extend downward only as far as needed to close the anchor's
+        `used_lines` (avoid repetition only when relevance scores tie).
+      * Include the enclosing call and extend downward to close its
         parentheses, so a multi-line call (`filter(a >= 200,` / `b >= 200)`)
         stays together but distant lines never join it.
     Falls back to [0] if nothing matches.
     """
     attrs = [a for a in get_function_attribute_by_knowledge(knowledge) if a]
+    action = re.search(r"&use\b(.*?)&", knowledge, re.IGNORECASE)
+    functions = get_function_attribute_by_knowledge(action.group(1)) if action else attrs
     if not code_lines:
         return []
     if not attrs:
@@ -3473,9 +3486,17 @@ def _find_code_line_indices(code_lines, knowledge, used_lines=None):
                 total[i] += 1
     order = sorted(
         (i for i in range(len(code_lines)) if base[i] > 0),
-        key=lambda i: (i in used, -total[i], i),
+        key=lambda i: (
+            -sum(_term_score(f, code_lines[i]) == _CALL_WEIGHT for f in functions),
+            -total[i], i in used, i,
+        ),
     )
     anchor = order[0]
+    # A matching argument may be inside a multi-line mutate/summarize call.
+    depth = sum(_paren_balance(line) for line in code_lines[:anchor])
+    while anchor > 0 and depth > 0:
+        anchor -= 1
+        depth -= _paren_balance(code_lines[anchor])
     # Extend downward to balance the anchor statement's parentheses.
     block = [anchor]
     bal = _paren_balance(code_lines[anchor])
@@ -3517,25 +3538,18 @@ def get_code_with_blank_by_step(
     identical in the plain and blanked strings (no blanks of its own), so it
     doesn't affect answer scoring.
     """
-    code_with_blanks = get_code_with_blank(video_id, segment_index, code_json)
     code_block = code_json[str(segment_index)]
     code_lines = code_block.split("\\n")[1:-1]
-    code_lines_with_blanks = code_with_blanks.split("\n")[1:-1]
-    # Clamp to indices valid for BOTH lists — the blanked version is
-    # LLM-generated and may have a different line count than the original.
-    max_idx = min(len(code_lines), len(code_lines_with_blanks))
-    line_index = [
-        i
-        for i in _find_code_line_indices(code_lines, knowledge, used_lines)
-        if i < max_idx
-    ]
-    if not line_index and max_idx > 0:
-        line_index = [0]
+    line_index = _find_code_line_indices(code_lines, knowledge, used_lines)
+    plain_lines = [code_lines[i] for i in line_index]
+    # Mask this knowledge's exact terms in the source, preserving line alignment.
+    terms = sorted(set(filter(None, get_function_attribute_by_knowledge(knowledge))), key=len, reverse=True)
+    pattern = r"(?<![\w.])(?:" + "|".join(re.escape(t) for t in terms) + r")(?![\w.])"
+    blank_lines = [re.sub(pattern, "___", line) for line in plain_lines] if terms else []
+    if not any("___" in line for line in blank_lines):
+        raise ValueError("No matching code terms for this Coaching exercise")
     if used_lines is not None:
         used_lines.update(line_index)
-
-    plain_lines = [code_lines[i] for i in line_index]
-    blank_lines = [code_lines_with_blanks[i] for i in line_index]
 
     # Prepend the pipe-source as plain context when the block starts on an
     # immediately-following continuation line (head is right above the anchor).

@@ -300,12 +300,27 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
           py: 3
         }}
       >
-        <Typography
-          id="user-id-dialog-title"
-          sx={{ fontSize: '1.4rem', fontWeight: 700, lineHeight: 1.2 }}
-        >
-          {reviewing ? 'Study progress' : 'Welcome to Tutorly'}
-        </Typography>
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap' }}>
+          <Typography
+            id="user-id-dialog-title"
+            sx={{ fontSize: '1.4rem', fontWeight: 700, lineHeight: 1.2 }}
+          >
+            {reviewing ? 'Study progress' : 'Welcome to Tutorly'}
+            {reviewing && isLoading && <CircularProgress size={14} color="inherit" sx={{ ml: 1 }} />}
+          </Typography>
+          {step !== 'id' && (
+            <Button
+              component="a"
+              size="small" variant="outlined" color="inherit"
+              sx={{ textTransform: 'none' }}
+              href={studyProgress?.studyGuideUrl || undefined}
+              target="_blank" rel="noopener noreferrer"
+              disabled={!studyProgress?.studyGuideUrl}
+            >
+              How to use Tutorly
+            </Button>
+          )}
+        </Box>
         <Typography sx={{ fontSize: '0.9rem', opacity: 0.92, mt: 0.5 }}>
           Your personal AI tutor for exploratory data analysis
         </Typography>
@@ -374,19 +389,6 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
                 backgroundColor: '#fafafa'
               }}
             >
-              <Typography variant="subtitle2" sx={{ mb: 1 }}>
-                Study Progress
-                {reviewing && isLoading && <CircularProgress size={14} sx={{ ml: 1 }} />}
-              </Typography>
-              <Button
-                component="a"
-                size="small" variant="outlined" sx={{ ...secondaryBtnSx, mb: 1 }}
-                href={studyProgress?.studyGuideUrl || undefined}
-                target="_blank" rel="noopener noreferrer"
-                disabled={!studyProgress?.studyGuideUrl}
-              >
-                How to use Tutorly
-              </Button>
               {studyProgress && (
                 <>
                   <Typography variant="body2" sx={{ mb: 0.5 }}>
@@ -461,6 +463,7 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
                         <Box
                           sx={{
                             display: 'flex',
+                            flexWrap: 'wrap',
                             alignItems: 'flex-start',
                             gap: 1
                           }}
@@ -468,6 +471,7 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
                           <TextField
                             size="small"
                             label="Completion code"
+                            sx={{ flex: '1 1 200px', minWidth: 0, '& .MuiFormHelperText-root': { overflowWrap: 'anywhere' } }}
                             value={posttestCode}
                             error={!!posttestCodeError}
                             helperText={posttestCodeError || ''}
@@ -479,7 +483,7 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
                           <Button
                             variant="contained"
                             size="small"
-                            sx={{ ...primaryBtnSx, mt: 0.4 }}
+                            sx={{ ...primaryBtnSx, mt: 0.4, flexShrink: 0, whiteSpace: 'nowrap' }}
                             disabled={
                               !posttestCode.trim() || isVerifyingPosttest || isLoading
                             }
