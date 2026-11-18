@@ -55,7 +55,6 @@ const secondaryBtnSx = {
 
 interface IUserIDDialogProps {
   open: boolean;
-  pretestUrl: string;
   videoSelectionMode?: 'manual' | 'assigned';
   videoLabels: Record<string, string>;
   posttestUrls: Record<number, string>;
@@ -73,6 +72,7 @@ interface IUserIDDialogProps {
 }
 
 interface IStudyProgress {
+  studyGuideUrl?: string;
   pretestCompleted: boolean;
   videoOrder: string[];
   finishedVideos: string[];
@@ -88,7 +88,6 @@ interface IStudyProgress {
 
 export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
   open,
-  pretestUrl,
   videoSelectionMode = 'manual',
   videoLabels,
   posttestUrls,
@@ -194,7 +193,9 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
       await onSubmit(userId.trim(), effectiveVideoId || '');
     } catch (err) {
       console.error('Failed to continue to videos:', err);
-      setError('Something went wrong. Please try again.');
+      setError(
+        err instanceof Error ? err.message : 'Something went wrong. Please try again.'
+      );
     } finally {
       setIsLoading(false);
     }
@@ -294,13 +295,13 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
               variant="body2"
               sx={{ color: '#57606a', lineHeight: 1.5, mb: 2 }}
             >
-              To get started, enter the participant ID we provided. We use it
-              to track your learning progress and personalize the session.
+              Enter your Prolific ID, using the same ID as your initial
+              Qualtrics questionnaire and all study sessions.
             </Typography>
             <TextField
               autoFocus
               fullWidth
-              label="User ID"
+              label="Prolific ID"
               variant="outlined"
               value={userId}
               onChange={e => {
@@ -309,8 +310,8 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
               }}
               onKeyPress={handleKeyPress}
               error={!!error}
-              helperText={error || 'Example: john_doe, student_123, or jsmith'}
-              placeholder="Enter your user ID"
+              helperText={error || 'Copy your participant ID from Prolific.'}
+              placeholder="Enter your Prolific ID"
             />
           </Box>
         ) : (
@@ -353,6 +354,15 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
               <Typography variant="subtitle2" sx={{ mb: 1 }}>
                 Study Progress
               </Typography>
+              <Button
+                component="a"
+                size="small" variant="outlined" sx={{ ...secondaryBtnSx, mb: 1 }}
+                href={studyProgress?.studyGuideUrl || undefined}
+                target="_blank" rel="noopener noreferrer"
+                disabled={!studyProgress?.studyGuideUrl}
+              >
+                How to use Tutorly
+              </Button>
               {studyProgress && (
                 <>
                   <Typography variant="body2" sx={{ mb: 0.5 }}>
@@ -470,7 +480,7 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
                               }
                             }}
                           >
-                            Submit Code
+                            Finish Session & Return to Prolific
                           </Button>
                         </Box>
                       </Box>
@@ -494,23 +504,14 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
                 }}
               >
                 <Typography variant="subtitle2" sx={{ mb: 1 }}>
-                  Pre-test required before video access
+                  Enter your pre-test completion code
                 </Typography>
                 <Typography variant="body2" sx={{ mb: 1.5 }}>
-                  Please finish the Qualtrics pre-test first. After submitting
-                  it, you will receive a completion code — enter it below to
-                  continue.
+                  Enter the code shown at the end of your initial Qualtrics
+                  questionnaire to begin learning. Use the same Prolific ID
+                  you used for that questionnaire. If you have not completed
+                  it, return to the Wave 1 study link on Prolific first.
                 </Typography>
-                <Button
-                  variant="outlined"
-                  size="small"
-                  onClick={() =>
-                    window.open(appendUserId(pretestUrl, userId.trim()), '_blank')
-                  }
-                  sx={{ ...secondaryBtnSx, mb: 1.5 }}
-                >
-                  Open Pre-test
-                </Button>
                 <TextField
                   fullWidth
                   size="small"

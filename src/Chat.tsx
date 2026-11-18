@@ -25,7 +25,7 @@ import {
   Notebook,
   KernelError
 } from '@jupyterlab/notebook';
-import YouTube, { YouTubeEvent } from 'react-youtube';
+import YouTube from 'react-youtube';
 import {
   Button,
   Box,
@@ -102,6 +102,7 @@ interface IMessage {
   interaction: string | null;
   code: string | null;
   posttestQuestionnaireId?: number;
+  posttestVideoId?: string;
   posttestUrl?: string;
   posttestConfirmed?: boolean;
 }
@@ -145,8 +146,6 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     '-1x8Kpyndss': 'Coffee Ratings'
   };
 
-  const PRETEST_QUALTRICS_URL =
-    'https://stanforduniversity.qualtrics.com/jfe/form/SV_5sEuT23Z0EFjXBY';
   const POSTTEST_QUALTRICS_URLS: Record<number, string> = {
     1: 'https://stanforduniversity.qualtrics.com/jfe/form/SV_3CB4p2UZ6anRHTg',
     2: 'https://stanforduniversity.qualtrics.com/jfe/form/SV_3WSu6Jb2vlggT0q',
@@ -160,6 +159,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     () => `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
   );
   const [showUserIDDialog, setShowUserIDDialog] = useState(true);
+  const [studyGuideUrl, setStudyGuideUrl] = useState('');
   const [userCondition, setUserCondition] = useState<string>('');
   const [segments, setSegments] = useState<ISegment[]>([]);
   const [messages, setMessages] = useState<IMessage[]>([
@@ -473,15 +473,93 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     [props, setSegments, setMessages, setIsTyping]
   );
 
-  const handleReady = (event: YouTubeEvent<number>) => {
-    setPlayer(event.target);
-  };
+  const videoTracking = useRef<Record<number, {
+    target: { getCurrentTime(): number; getPlayerState(): number;
+      getPlaybackRate(): number; getDuration(): number };
+    videoId: string; segmentIndex: number;
+    start: number; end: number; position: number; time: number;
+    state: number; rate: number; visible: boolean;
+  }>>({});
+
+  const watchedRanges = useRef<Record<string, [number, number][]>>({});
+
+  // Small, timestamped intervals let analysis reconstruct coverage/replays across
+  // popup reopens and page loads. A position jump is never counted as watching.
+  const trackVideo = useCallback((index: number, event: string) => {
+    const t = videoTracking.current[index];
+    if (!t || !userIdRef.current) return;
+    const now = performance.now();
+    const position = Math.max(t.start, Math.min(t.end, t.target.getCurrentTime()));
+    const elapsed = Math.max(0, (now - t.time) / 1000);
+    const delta = position - t.position;
+    const expected = t.state === 1 ? elapsed * t.rate : 0;
+    const seek = delta < -1 ? 'backward' : delta > expected + 1.5 ? 'forward' : null;
+    // Long sampling gaps (e.g. suspended tabs) are unknown, not watched time.
+    const watched = t.state === 1 && elapsed <= 15 && !seek
+      ? Math.min(elapsed, Math.max(0, delta) / t.rate) : 0;
+    const key = `${t.videoId}:${t.segmentIndex}:${t.start}`;
+    const ranges = watchedRanges.current[key] || [];
+    const replayed = watched > 0 ? ranges.reduce((sum, [a, b]) =>
+      sum + Math.max(0, Math.min(b, position) - Math.max(a, t.position)), 0) : 0;
+    if (watched > 0) {
+      ranges.push([t.position, position]);
+      watchedRanges.current[key] = ranges.sort((a, b) => a[0] - b[0]).reduce<[number, number][]>((merged, range) => {
+        const last = merged[merged.length - 1];
+        if (last && range[0] <= last[1]) last[1] = Math.max(last[1], range[1]);
+        else merged.push([...range]);
+        return merged;
+      }, []);
+    }
+    const state = t.target.getPlayerState();
+    const rate = t.target.getPlaybackRate();
+    const visible = document.visibilityState === 'visible';
+    const payload = {
+      userId: userIdRef.current, sessionId, videoId: t.videoId,
+      segmentIndex: t.segmentIndex,
+      playback: {
+        event, player_id: index, client_time: new Date().toISOString(),
+        segment_start: t.start, segment_end: t.end,
+        from_position: t.position, position, elapsed_seconds: elapsed,
+        previous_state: t.state, state, previous_rate: t.rate, playback_rate: rate,
+        previously_visible: t.visible, visible, seek,
+        estimated_watch_seconds: watched,
+        replayed_video_seconds: replayed,
+        visible_watch_seconds: t.visible ? watched : 0,
+        uncertain_gap: elapsed > 15
+      }
+    };
+    Object.assign(t, { position, time: now, state, rate, visible });
+    if (!beaconAPI('log_video_playback', payload)) {
+      void requestAPI('log_video_playback', {
+        method: 'POST', body: JSON.stringify(payload)
+      }).catch(err => console.error('Video tracking failed:', err));
+    }
+  }, [sessionId]);
+
+  useEffect(() => {
+    const sample = (event: string) => {
+      Object.keys(videoTracking.current).forEach(key => trackVideo(Number(key), event));
+    };
+    const timer = window.setInterval(() => sample('sample'), 5000);
+    const visibility = () => sample('visibility');
+    const leaving = () => sample('pagehide');
+    document.addEventListener('visibilitychange', visibility);
+    window.addEventListener('pagehide', leaving);
+    return () => {
+      sample('unmount');
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', visibility);
+      window.removeEventListener('pagehide', leaving);
+    };
+  }, [trackVideo]);
 
   const openPopup = (index: number) => {
     setPopupStates(prevStates => ({ ...prevStates, [index]: true }));
   };
 
   const closePopup = (index: number) => {
+    trackVideo(index, 'close');
+    delete videoTracking.current[index];
     setPopupStates(prevStates => ({ ...prevStates, [index]: false }));
   };
 
@@ -1880,26 +1958,22 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
       }
     }
 
+    // Keep the dialog open until balanced assignment succeeds.
+    try {
+      const response = await requestAPI<any>('get_condition', {
+        body: JSON.stringify({ userId: submittedUserId }),
+        method: 'POST'
+      });
+      setUserCondition(response.condition);
+    } catch (err) {
+      throw new Error(
+        'Study setup is temporarily unavailable. Please try again shortly.'
+      );
+    }
     setUserId(submittedUserId);
     setVideoId(finalVideoId);
     setVideoFinished(false);
     setShowUserIDDialog(false);
-    console.log(`User ID set: ${submittedUserId}, Session ID: ${sessionId}`);
-
-    // Fetch user's experimental condition
-    requestAPI<any>('get_condition', {
-      body: JSON.stringify({ userId: submittedUserId }),
-      method: 'POST'
-    })
-      .then(response => {
-        setUserCondition(response.condition);
-        console.log(`User assigned to condition: ${response.condition}`);
-      })
-      .catch(err => {
-        console.error('Failed to get user condition:', err);
-        // Default to full_coggen if error
-        setUserCondition('full_coggen');
-      });
     initializeChat(finalVideoId, submittedUserId);
     console.log(
       `User ID set: ${submittedUserId}, Video ID: ${finalVideoId}, Condition: ${userCondition}, Session ID: ${sessionId}`
@@ -1925,10 +1999,12 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
   };
 
   const handleGetStudyProgress = async (submittedUserId: string) => {
-    return requestAPI<any>('get_study_progress', {
+    const progress = await requestAPI<any>('get_study_progress', {
       body: JSON.stringify({ userId: submittedUserId }),
       method: 'POST'
     });
+    setStudyGuideUrl(progress.studyGuideUrl || '');
+    return progress;
   };
 
   const handleMarkPendingPosttestComplete = async (
@@ -1945,6 +2021,16 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
       }),
       method: 'POST'
     });
+    if (response.verified) {
+      if (!response.prolificCompletionUrl) {
+        return {
+          verified: false,
+          message:
+            'Your completion is saved, but the Prolific link is not configured. Please contact the researcher, then submit this code again.'
+        };
+      }
+      window.location.assign(response.prolificCompletionUrl);
+    }
     return {
       verified: !!response.verified,
       message: response.message || ''
@@ -1957,15 +2043,11 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     messageId: string,
     completionCode: string
   ): Promise<void> => {
-    const response = await requestAPI<any>('mark_posttest_complete', {
-      body: JSON.stringify({
-        userId: submittedUserId,
-        videoId: completedVideoId,
-        sessionId: sessionId,
-        code: completionCode
-      }),
-      method: 'POST'
-    });
+    const response = await handleMarkPendingPosttestComplete(
+      submittedUserId,
+      completedVideoId,
+      completionCode
+    );
 
     if (!response.verified) {
       setPosttestCodeErrors(prev => ({
@@ -1988,7 +2070,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
       {
         id: `msg-${Date.now()}`,
         message:
-          'Thanks! Your post-test completion has been recorded. You can continue with your next assigned video session when ready.',
+          'Your post-test completion is saved. Returning to Prolific to finish this session.',
         sentTime: 'just now',
         direction: 'incoming',
         sender: 'Tutorly',
@@ -2053,6 +2135,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
           interaction: 'post-test',
           code: null,
           posttestQuestionnaireId: questionnaireId,
+          posttestVideoId: completedVideoId,
           posttestUrl: questionnaireUrl,
           posttestConfirmed: false
         }
@@ -2063,10 +2146,9 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
   };
 
   return (
-    <div style={{ position: 'relative', height: '100%', width: '100%' }}>
+    <div style={{ position: 'relative', height: '100%', width: '100%', display: 'flex', flexDirection: 'column' }}>
       <UserIDDialog
         open={showUserIDDialog}
-        pretestUrl={PRETEST_QUALTRICS_URL}
         posttestUrls={POSTTEST_QUALTRICS_URLS}
         videoLabels={VIDEO_LABELS}
         videoSelectionMode={USE_RANDOM_VIDEO_ASSIGNMENT ? 'assigned' : 'manual'}
@@ -2075,7 +2157,12 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
         onGetStudyProgress={handleGetStudyProgress}
         onMarkPendingPosttestComplete={handleMarkPendingPosttestComplete}
       />
-      <MainContainer style={{ height: '100%', width: '100%' }}>
+      <Button component="a" size="small" sx={{ alignSelf: 'flex-end', flexShrink: 0 }}
+        href={studyGuideUrl || undefined} target="_blank" rel="noopener noreferrer"
+        disabled={!studyGuideUrl}>
+        How to use Tutorly
+      </Button>
+      <MainContainer style={{ flex: 1, minHeight: 0, width: '100%' }}>
         {/* <ModalComponent isOpen={isModalOpen} onClose={handleModalClose} /> */}
         <ChatContainer
           id="chatContainerId"
@@ -2381,7 +2468,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                               onClick={() => {
                                 void handleMarkPosttestComplete(
                                   userId,
-                                  videoId,
+                                  message.posttestVideoId || videoId,
                                   message.id,
                                   (posttestCodeInputs[message.id] || '').trim()
                                 );
@@ -2389,7 +2476,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                             >
                               {message.posttestConfirmed
                                 ? 'Post-test Recorded'
-                                : 'Submit Code'}
+                                : 'Finish Session & Return to Prolific'}
                             </Button>
                           </Box>
                         </Box>
@@ -2843,7 +2930,26 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                                   rel: 0
                                 }
                               }}
-                              onReady={handleReady}
+                              onReady={event => {
+                                // Events expose the raw, synchronous IFrame player.
+                                const target = event.target as unknown as (typeof videoTracking.current)[number]['target'];
+                                setPlayer(target);
+                                videoTracking.current[i] = {
+                                  target, videoId: message.videoId!,
+                                  segmentIndex: segmentsRef.current.findIndex(
+                                    segment => segment.start === message.start && segment.end === message.end
+                                  ),
+                                  start: message.start || 0,
+                                  end: message.end ?? target.getDuration(),
+                                  position: message.start || 0, time: performance.now(),
+                                  state: -1, rate: target.getPlaybackRate(),
+                                  visible: document.visibilityState === 'visible'
+                                };
+                                trackVideo(i, 'open');
+                              }}
+                              onStateChange={() => trackVideo(i, 'state_change')}
+                              onPlaybackRateChange={() => trackVideo(i, 'rate_change')}
+                              onError={() => trackVideo(i, 'error')}
                               onEnd={event => {
                                 if (
                                   message.category !== 'Introduction' &&

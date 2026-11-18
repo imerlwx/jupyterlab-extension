@@ -11,6 +11,34 @@ for the frontend extension.
 
 - JupyterLab >= 4.0.0
 
+## Prolific completion redirects
+
+Set `"study_guide_url": "https://..."` in `survey_codes.json` to enable the
+**How to use Tutorly** buttons in Study Progress and above the chat. The guide
+opens in a new tab. Leave it blank to disable the buttons. Use a publicly
+viewable HTTPS link; the setting reloads when study progress is fetched.
+
+Add the following field to the existing `survey_codes.json`, keeping its
+`pretest` and `posttest` fields. On the deployed server, edit
+`/etc/tutorly/survey_codes.json` (preferred over the local development file).
+Enter Prolific's generated codes, not the full URLs:
+
+```json
+"prolific": { "1": "", "2": "", "3": "", "screen_out": "" }
+```
+
+Keys `1`–`3` mean completed session order, not questionnaire version or video ID.
+After the final **Finish Session & Return to Prolific** button verifies and saves
+the posttest, Tutorly navigates to
+`https://app.prolific.com/submissions/complete?cc=CODE` for that wave.
+Blank codes leave completion saved and display an error; configure the code and
+retry the button. Configuration changes reload without rebuilding the extension.
+
+`screen_out` is a reference setting for the Qualtrics screening branch: paste
+`https://app.prolific.com/submissions/complete?cc=YOUR_SCREEN_OUT_CODE` into that
+branch's End of Survey redirect. Tutorly does not receive screening answers or
+configure Qualtrics automatically. Test all three redirects before recruitment.
+
 ## Install
 
 After git clone this repo, open this directory in any IDE.

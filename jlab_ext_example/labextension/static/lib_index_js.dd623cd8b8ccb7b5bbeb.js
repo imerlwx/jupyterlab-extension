@@ -102,7 +102,6 @@ const ChatComponent = (props) => {
         '1xsbTs9-a50': 'Franchise Revenue',
         '-1x8Kpyndss': 'Coffee Ratings'
     };
-    const PRETEST_QUALTRICS_URL = 'https://stanforduniversity.qualtrics.com/jfe/form/SV_5sEuT23Z0EFjXBY';
     const POSTTEST_QUALTRICS_URLS = {
         1: 'https://stanforduniversity.qualtrics.com/jfe/form/SV_3CB4p2UZ6anRHTg',
         2: 'https://stanforduniversity.qualtrics.com/jfe/form/SV_3WSu6Jb2vlggT0q',
@@ -113,6 +112,7 @@ const ChatComponent = (props) => {
     const [userId, setUserId] = (0,react__WEBPACK_IMPORTED_MODULE_1__.useState)('');
     const [sessionId] = (0,react__WEBPACK_IMPORTED_MODULE_1__.useState)(() => `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`);
     const [showUserIDDialog, setShowUserIDDialog] = (0,react__WEBPACK_IMPORTED_MODULE_1__.useState)(true);
+    const [studyGuideUrl, setStudyGuideUrl] = (0,react__WEBPACK_IMPORTED_MODULE_1__.useState)('');
     const [userCondition, setUserCondition] = (0,react__WEBPACK_IMPORTED_MODULE_1__.useState)('');
     const [segments, setSegments] = (0,react__WEBPACK_IMPORTED_MODULE_1__.useState)([]);
     const [messages, setMessages] = (0,react__WEBPACK_IMPORTED_MODULE_1__.useState)([
@@ -397,13 +397,84 @@ const ChatComponent = (props) => {
             console.error(`Error on POST /jlab_ext_example/chats .\n${reason}`);
         });
     }, [props, setSegments, setMessages, setIsTyping]);
-    const handleReady = (event) => {
-        setPlayer(event.target);
-    };
+    const videoTracking = (0,react__WEBPACK_IMPORTED_MODULE_1__.useRef)({});
+    const watchedRanges = (0,react__WEBPACK_IMPORTED_MODULE_1__.useRef)({});
+    // Small, timestamped intervals let analysis reconstruct coverage/replays across
+    // popup reopens and page loads. A position jump is never counted as watching.
+    const trackVideo = (0,react__WEBPACK_IMPORTED_MODULE_1__.useCallback)((index, event) => {
+        const t = videoTracking.current[index];
+        if (!t || !userIdRef.current)
+            return;
+        const now = performance.now();
+        const position = Math.max(t.start, Math.min(t.end, t.target.getCurrentTime()));
+        const elapsed = Math.max(0, (now - t.time) / 1000);
+        const delta = position - t.position;
+        const expected = t.state === 1 ? elapsed * t.rate : 0;
+        const seek = delta < -1 ? 'backward' : delta > expected + 1.5 ? 'forward' : null;
+        // Long sampling gaps (e.g. suspended tabs) are unknown, not watched time.
+        const watched = t.state === 1 && elapsed <= 15 && !seek
+            ? Math.min(elapsed, Math.max(0, delta) / t.rate) : 0;
+        const key = `${t.videoId}:${t.segmentIndex}:${t.start}`;
+        const ranges = watchedRanges.current[key] || [];
+        const replayed = watched > 0 ? ranges.reduce((sum, [a, b]) => sum + Math.max(0, Math.min(b, position) - Math.max(a, t.position)), 0) : 0;
+        if (watched > 0) {
+            ranges.push([t.position, position]);
+            watchedRanges.current[key] = ranges.sort((a, b) => a[0] - b[0]).reduce((merged, range) => {
+                const last = merged[merged.length - 1];
+                if (last && range[0] <= last[1])
+                    last[1] = Math.max(last[1], range[1]);
+                else
+                    merged.push([...range]);
+                return merged;
+            }, []);
+        }
+        const state = t.target.getPlayerState();
+        const rate = t.target.getPlaybackRate();
+        const visible = document.visibilityState === 'visible';
+        const payload = {
+            userId: userIdRef.current, sessionId, videoId: t.videoId,
+            segmentIndex: t.segmentIndex,
+            playback: {
+                event, player_id: index, client_time: new Date().toISOString(),
+                segment_start: t.start, segment_end: t.end,
+                from_position: t.position, position, elapsed_seconds: elapsed,
+                previous_state: t.state, state, previous_rate: t.rate, playback_rate: rate,
+                previously_visible: t.visible, visible, seek,
+                estimated_watch_seconds: watched,
+                replayed_video_seconds: replayed,
+                visible_watch_seconds: t.visible ? watched : 0,
+                uncertain_gap: elapsed > 15
+            }
+        };
+        Object.assign(t, { position, time: now, state, rate, visible });
+        if (!(0,_handler__WEBPACK_IMPORTED_MODULE_10__.beaconAPI)('log_video_playback', payload)) {
+            void (0,_handler__WEBPACK_IMPORTED_MODULE_10__.requestAPI)('log_video_playback', {
+                method: 'POST', body: JSON.stringify(payload)
+            }).catch(err => console.error('Video tracking failed:', err));
+        }
+    }, [sessionId]);
+    (0,react__WEBPACK_IMPORTED_MODULE_1__.useEffect)(() => {
+        const sample = (event) => {
+            Object.keys(videoTracking.current).forEach(key => trackVideo(Number(key), event));
+        };
+        const timer = window.setInterval(() => sample('sample'), 5000);
+        const visibility = () => sample('visibility');
+        const leaving = () => sample('pagehide');
+        document.addEventListener('visibilitychange', visibility);
+        window.addEventListener('pagehide', leaving);
+        return () => {
+            sample('unmount');
+            window.clearInterval(timer);
+            document.removeEventListener('visibilitychange', visibility);
+            window.removeEventListener('pagehide', leaving);
+        };
+    }, [trackVideo]);
     const openPopup = (index) => {
         setPopupStates(prevStates => ({ ...prevStates, [index]: true }));
     };
     const closePopup = (index) => {
+        trackVideo(index, 'close');
+        delete videoTracking.current[index];
         setPopupStates(prevStates => ({ ...prevStates, [index]: false }));
     };
     const handleRadioChange = (event) => {
@@ -1444,25 +1515,21 @@ const ChatComponent = (props) => {
                 return;
             }
         }
+        // Keep the dialog open until balanced assignment succeeds.
+        try {
+            const response = await (0,_handler__WEBPACK_IMPORTED_MODULE_10__.requestAPI)('get_condition', {
+                body: JSON.stringify({ userId: submittedUserId }),
+                method: 'POST'
+            });
+            setUserCondition(response.condition);
+        }
+        catch (err) {
+            throw new Error('Study setup is temporarily unavailable. Please try again shortly.');
+        }
         setUserId(submittedUserId);
         setVideoId(finalVideoId);
         setVideoFinished(false);
         setShowUserIDDialog(false);
-        console.log(`User ID set: ${submittedUserId}, Session ID: ${sessionId}`);
-        // Fetch user's experimental condition
-        (0,_handler__WEBPACK_IMPORTED_MODULE_10__.requestAPI)('get_condition', {
-            body: JSON.stringify({ userId: submittedUserId }),
-            method: 'POST'
-        })
-            .then(response => {
-            setUserCondition(response.condition);
-            console.log(`User assigned to condition: ${response.condition}`);
-        })
-            .catch(err => {
-            console.error('Failed to get user condition:', err);
-            // Default to full_coggen if error
-            setUserCondition('full_coggen');
-        });
         initializeChat(finalVideoId, submittedUserId);
         console.log(`User ID set: ${submittedUserId}, Video ID: ${finalVideoId}, Condition: ${userCondition}, Session ID: ${sessionId}`);
     };
@@ -1481,10 +1548,12 @@ const ChatComponent = (props) => {
         };
     };
     const handleGetStudyProgress = async (submittedUserId) => {
-        return (0,_handler__WEBPACK_IMPORTED_MODULE_10__.requestAPI)('get_study_progress', {
+        const progress = await (0,_handler__WEBPACK_IMPORTED_MODULE_10__.requestAPI)('get_study_progress', {
             body: JSON.stringify({ userId: submittedUserId }),
             method: 'POST'
         });
+        setStudyGuideUrl(progress.studyGuideUrl || '');
+        return progress;
     };
     const handleMarkPendingPosttestComplete = async (submittedUserId, completedVideoId, completionCode) => {
         const response = await (0,_handler__WEBPACK_IMPORTED_MODULE_10__.requestAPI)('mark_posttest_complete', {
@@ -1496,21 +1565,22 @@ const ChatComponent = (props) => {
             }),
             method: 'POST'
         });
+        if (response.verified) {
+            if (!response.prolificCompletionUrl) {
+                return {
+                    verified: false,
+                    message: 'Your completion is saved, but the Prolific link is not configured. Please contact the researcher, then submit this code again.'
+                };
+            }
+            window.location.assign(response.prolificCompletionUrl);
+        }
         return {
             verified: !!response.verified,
             message: response.message || ''
         };
     };
     const handleMarkPosttestComplete = async (submittedUserId, completedVideoId, messageId, completionCode) => {
-        const response = await (0,_handler__WEBPACK_IMPORTED_MODULE_10__.requestAPI)('mark_posttest_complete', {
-            body: JSON.stringify({
-                userId: submittedUserId,
-                videoId: completedVideoId,
-                sessionId: sessionId,
-                code: completionCode
-            }),
-            method: 'POST'
-        });
+        const response = await handleMarkPendingPosttestComplete(submittedUserId, completedVideoId, completionCode);
         if (!response.verified) {
             setPosttestCodeErrors(prev => ({
                 ...prev,
@@ -1524,7 +1594,7 @@ const ChatComponent = (props) => {
             ...prevMessages,
             {
                 id: `msg-${Date.now()}`,
-                message: 'Thanks! Your post-test completion has been recorded. You can continue with your next assigned video session when ready.',
+                message: 'Your post-test completion is saved. Returning to Prolific to finish this session.',
                 sentTime: 'just now',
                 direction: 'incoming',
                 sender: 'Tutorly',
@@ -1579,6 +1649,7 @@ const ChatComponent = (props) => {
                     interaction: 'post-test',
                     code: null,
                     posttestQuestionnaireId: questionnaireId,
+                    posttestVideoId: completedVideoId,
                     posttestUrl: questionnaireUrl,
                     posttestConfirmed: false
                 }
@@ -1588,9 +1659,10 @@ const ChatComponent = (props) => {
             console.error('Failed to retrieve post-test assignment:', error);
         }
     };
-    return (react__WEBPACK_IMPORTED_MODULE_1___default().createElement("div", { style: { position: 'relative', height: '100%', width: '100%' } },
-        react__WEBPACK_IMPORTED_MODULE_1___default().createElement(_UserIDDialog__WEBPACK_IMPORTED_MODULE_13__.UserIDDialog, { open: showUserIDDialog, pretestUrl: PRETEST_QUALTRICS_URL, posttestUrls: POSTTEST_QUALTRICS_URLS, videoLabels: VIDEO_LABELS, videoSelectionMode: USE_RANDOM_VIDEO_ASSIGNMENT ? 'assigned' : 'manual', onSubmit: handleUserIDSubmit, onMarkPretestComplete: handleMarkPretestComplete, onGetStudyProgress: handleGetStudyProgress, onMarkPendingPosttestComplete: handleMarkPendingPosttestComplete }),
-        react__WEBPACK_IMPORTED_MODULE_1___default().createElement(_chatscope_chat_ui_kit_react__WEBPACK_IMPORTED_MODULE_2__.MainContainer, { style: { height: '100%', width: '100%' } },
+    return (react__WEBPACK_IMPORTED_MODULE_1___default().createElement("div", { style: { position: 'relative', height: '100%', width: '100%', display: 'flex', flexDirection: 'column' } },
+        react__WEBPACK_IMPORTED_MODULE_1___default().createElement(_UserIDDialog__WEBPACK_IMPORTED_MODULE_13__.UserIDDialog, { open: showUserIDDialog, posttestUrls: POSTTEST_QUALTRICS_URLS, videoLabels: VIDEO_LABELS, videoSelectionMode: USE_RANDOM_VIDEO_ASSIGNMENT ? 'assigned' : 'manual', onSubmit: handleUserIDSubmit, onMarkPretestComplete: handleMarkPretestComplete, onGetStudyProgress: handleGetStudyProgress, onMarkPendingPosttestComplete: handleMarkPendingPosttestComplete }),
+        react__WEBPACK_IMPORTED_MODULE_1___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_5__.Button, { component: "a", size: "small", sx: { alignSelf: 'flex-end', flexShrink: 0 }, href: studyGuideUrl || undefined, target: "_blank", rel: "noopener noreferrer", disabled: !studyGuideUrl }, "How to use Tutorly"),
+        react__WEBPACK_IMPORTED_MODULE_1___default().createElement(_chatscope_chat_ui_kit_react__WEBPACK_IMPORTED_MODULE_2__.MainContainer, { style: { flex: 1, minHeight: 0, width: '100%' } },
             react__WEBPACK_IMPORTED_MODULE_1___default().createElement(_chatscope_chat_ui_kit_react__WEBPACK_IMPORTED_MODULE_2__.ChatContainer, { id: "chatContainerId", style: { height: '100%', width: '100%' } },
                 react__WEBPACK_IMPORTED_MODULE_1___default().createElement(_chatscope_chat_ui_kit_react__WEBPACK_IMPORTED_MODULE_2__.MessageList, { scrollBehavior: "auto", typingIndicator: isTyping ? react__WEBPACK_IMPORTED_MODULE_1___default().createElement(_chatscope_chat_ui_kit_react__WEBPACK_IMPORTED_MODULE_2__.TypingIndicator, { content: "Tutorly is typing" }) : null, style: {
                         height: 'calc(100% - 45px)',
@@ -1747,10 +1819,10 @@ const ChatComponent = (props) => {
                                     } }),
                                 react__WEBPACK_IMPORTED_MODULE_1___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_5__.Button, { variant: "contained", size: "small", disabled: !!message.posttestConfirmed ||
                                         !(posttestCodeInputs[message.id] || '').trim(), sx: { ...cardPrimaryBtnSx, mt: 0.4 }, onClick: () => {
-                                        void handleMarkPosttestComplete(userId, videoId, message.id, (posttestCodeInputs[message.id] || '').trim());
+                                        void handleMarkPosttestComplete(userId, message.posttestVideoId || videoId, message.id, (posttestCodeInputs[message.id] || '').trim());
                                     } }, message.posttestConfirmed
                                     ? 'Post-test Recorded'
-                                    : 'Submit Code')))),
+                                    : 'Finish Session & Return to Prolific')))),
                         message.code && (react__WEBPACK_IMPORTED_MODULE_1___default().createElement("div", { style: { width: '61.8%', marginBottom: '8px' } }, message.interaction === 'fill-in-blanks' ? (react__WEBPACK_IMPORTED_MODULE_1___default().createElement(CodeEditorWithBlanks, { id: message.id, initialCode: message.code, code: codes[message.id] || message.code, onCodeChange: newCode => setCodes(prev => ({
                                 ...prev,
                                 [message.id]: newCode
@@ -1987,7 +2059,22 @@ const ChatComponent = (props) => {
                                             controls: 0,
                                             rel: 0
                                         }
-                                    }, onReady: handleReady, onEnd: event => {
+                                    }, onReady: event => {
+                                        var _a;
+                                        // Events expose the raw, synchronous IFrame player.
+                                        const target = event.target;
+                                        setPlayer(target);
+                                        videoTracking.current[i] = {
+                                            target, videoId: message.videoId,
+                                            segmentIndex: segmentsRef.current.findIndex(segment => segment.start === message.start && segment.end === message.end),
+                                            start: message.start || 0,
+                                            end: (_a = message.end) !== null && _a !== void 0 ? _a : target.getDuration(),
+                                            position: message.start || 0, time: performance.now(),
+                                            state: -1, rate: target.getPlaybackRate(),
+                                            visible: document.visibilityState === 'visible'
+                                        };
+                                        trackVideo(i, 'open');
+                                    }, onStateChange: () => trackVideo(i, 'state_change'), onPlaybackRateChange: () => trackVideo(i, 'rate_change'), onError: () => trackVideo(i, 'error'), onEnd: event => {
                                         if (message.category !== 'Introduction' &&
                                             !isAlredaySend) {
                                             setIsAlredaySend(true);
@@ -2195,7 +2282,7 @@ const secondaryBtnSx = {
     borderColor: '#0969da',
     '&:hover': { background: '#ddf4ff', borderColor: '#0969da' }
 };
-const UserIDDialog = ({ open, pretestUrl, videoSelectionMode = 'manual', videoLabels, posttestUrls, onSubmit, onMarkPretestComplete, onGetStudyProgress, onMarkPendingPosttestComplete }) => {
+const UserIDDialog = ({ open, videoSelectionMode = 'manual', videoLabels, posttestUrls, onSubmit, onMarkPretestComplete, onGetStudyProgress, onMarkPendingPosttestComplete }) => {
     // Two-step flow: the participant first submits their ID ("id" step), and
     // only then sees their learning progress and the continue gate ("progress"
     // step). Progress is fetched once on the step transition, never while the
@@ -2277,7 +2364,7 @@ const UserIDDialog = ({ open, pretestUrl, videoSelectionMode = 'manual', videoLa
         }
         catch (err) {
             console.error('Failed to continue to videos:', err);
-            setError('Something went wrong. Please try again.');
+            setError(err instanceof Error ? err.message : 'Something went wrong. Please try again.');
         }
         finally {
             setIsLoading(false);
@@ -2340,11 +2427,11 @@ const UserIDDialog = ({ open, pretestUrl, videoSelectionMode = 'manual', videoLa
             react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Typography, { id: "user-id-dialog-title", sx: { fontSize: '1.4rem', fontWeight: 700, lineHeight: 1.2 } }, "Welcome to Tutorly"),
             react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Typography, { sx: { fontSize: '0.9rem', opacity: 0.92, mt: 0.5 } }, "Your personal AI tutor for exploratory data analysis")),
         react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.DialogContent, { sx: { px: 4, py: 3 } }, step === 'id' ? (react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Box, null,
-            react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Typography, { variant: "body2", sx: { color: '#57606a', lineHeight: 1.5, mb: 2 } }, "To get started, enter the participant ID we provided. We use it to track your learning progress and personalize the session."),
-            react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.TextField, { autoFocus: true, fullWidth: true, label: "User ID", variant: "outlined", value: userId, onChange: e => {
+            react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Typography, { variant: "body2", sx: { color: '#57606a', lineHeight: 1.5, mb: 2 } }, "Enter your Prolific ID, using the same ID as your initial Qualtrics questionnaire and all study sessions."),
+            react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.TextField, { autoFocus: true, fullWidth: true, label: "Prolific ID", variant: "outlined", value: userId, onChange: e => {
                     setUserId(e.target.value);
                     setError('');
-                }, onKeyPress: handleKeyPress, error: !!error, helperText: error || 'Example: john_doe, student_123, or jsmith', placeholder: "Enter your user ID" }))) : (react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Box, null,
+                }, onKeyPress: handleKeyPress, error: !!error, helperText: error || 'Copy your participant ID from Prolific.', placeholder: "Enter your Prolific ID" }))) : (react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Box, null,
             react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Box, { sx: {
                     display: 'flex',
                     alignItems: 'center',
@@ -2368,6 +2455,7 @@ const UserIDDialog = ({ open, pretestUrl, videoSelectionMode = 'manual', videoLa
                     backgroundColor: '#fafafa'
                 } },
                 react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Typography, { variant: "subtitle2", sx: { mb: 1 } }, "Study Progress"),
+                react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Button, { component: "a", size: "small", variant: "outlined", sx: { ...secondaryBtnSx, mb: 1 }, href: (studyProgress === null || studyProgress === void 0 ? void 0 : studyProgress.studyGuideUrl) || undefined, target: "_blank", rel: "noopener noreferrer", disabled: !(studyProgress === null || studyProgress === void 0 ? void 0 : studyProgress.studyGuideUrl) }, "How to use Tutorly"),
                 studyProgress && (react__WEBPACK_IMPORTED_MODULE_0___default().createElement((react__WEBPACK_IMPORTED_MODULE_0___default().Fragment), null,
                     react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Typography, { variant: "body2", sx: { mb: 0.5 } },
                         "Pre-test:",
@@ -2431,7 +2519,7 @@ const UserIDDialog = ({ open, pretestUrl, videoSelectionMode = 'manual', videoLa
                                     finally {
                                         setIsVerifyingPosttest(false);
                                     }
-                                } }, "Submit Code")))),
+                                } }, "Finish Session & Return to Prolific")))),
                     studyProgress.studyCompleted && (react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Typography, { variant: "body2", sx: { mt: 1 } }, "All study tasks are completed."))))),
             !pretestCompleted && (react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Box, { sx: {
                     p: 2,
@@ -2440,9 +2528,8 @@ const UserIDDialog = ({ open, pretestUrl, videoSelectionMode = 'manual', videoLa
                     borderRadius: 1,
                     backgroundColor: '#fff8f8'
                 } },
-                react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Typography, { variant: "subtitle2", sx: { mb: 1 } }, "Pre-test required before video access"),
-                react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Typography, { variant: "body2", sx: { mb: 1.5 } }, "Please finish the Qualtrics pre-test first. After submitting it, you will receive a completion code \u2014 enter it below to continue."),
-                react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Button, { variant: "outlined", size: "small", onClick: () => window.open(appendUserId(pretestUrl, userId.trim()), '_blank'), sx: { ...secondaryBtnSx, mb: 1.5 } }, "Open Pre-test"),
+                react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Typography, { variant: "subtitle2", sx: { mb: 1 } }, "Enter your pre-test completion code"),
+                react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Typography, { variant: "body2", sx: { mb: 1.5 } }, "Enter the code shown at the end of your initial Qualtrics questionnaire to begin learning. Use the same Prolific ID you used for that questionnaire. If you have not completed it, return to the Wave 1 study link on Prolific first."),
                 react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.TextField, { fullWidth: true, size: "small", label: "Pre-test completion code", value: pretestCode, error: !!pretestCodeError, helperText: pretestCodeError || '', onChange: e => {
                         setPretestCode(e.target.value);
                         setPretestCodeError('');
@@ -2681,4 +2768,4 @@ var _utils = __webpack_require__(/*! @mui/material/utils */ "./node_modules/@mui
 /***/ })
 
 }]);
-//# sourceMappingURL=lib_index_js.449715ab9d0eb0729533.js.map
+//# sourceMappingURL=lib_index_js.dd623cd8b8ccb7b5bbeb.js.map

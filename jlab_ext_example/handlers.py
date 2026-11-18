@@ -1508,6 +1508,10 @@ class UpdateSeqHandler(APIHandler):
 
         # Check user's condition
         user_condition = get_user_condition(user_id)
+        firebase_logger.log_interaction(
+            user_id, session_id, "video_segment_enter",
+            {"condition": user_condition}, video_id, segment_index,
+        )
 
         # For control condition, don't generate teaching sequences
         if user_condition == "control":
@@ -3575,8 +3579,7 @@ def get_user_condition(user_id):
       1. Already assigned (local cache.db) → return it (stable per user).
       2. Firebase permuted-block randomization → EXACT balance across the
          four cells (shared counter, concurrency-safe).
-      3. Fallback (Firebase unavailable) → deterministic md5 hash, which is
-         only approximately balanced.
+      3. Firebase unavailable → ask the participant to retry, without assigning.
 
     Conditions:
     - "control": No directed learning, just video + chat
@@ -3612,20 +3615,13 @@ def get_user_condition(user_id):
         conn.close()
         return condition
 
-    condition = None
-
     # 2. Real participants: exact-balance assignment via Firebase.
-    if condition is None:
-        condition = firebase_logger.assign_condition_balanced(user_id, conditions)
+    condition = firebase_logger.assign_condition_balanced(user_id, conditions)
 
-    # 4. Fallback if Firebase is unavailable: deterministic hash (approximate
-    #    balance only). Logged so you can spot it in the server output.
     if condition is None:
-        hash_val = int(hashlib.md5(user_id.encode()).hexdigest(), 16)
-        condition = conditions[hash_val % len(conditions)]
-        print(
-            f"⚠️  Firebase unavailable; fell back to HASH assignment for "
-            f"'{user_id}' (balance not guaranteed)."
+        conn.close()
+        raise tornado.web.HTTPError(
+            503, reason="Study setup is temporarily unavailable. Please try again shortly."
         )
 
     # Cache locally so repeat lookups for this user are fast and stable.
@@ -3700,6 +3696,17 @@ def _load_survey_codes() -> dict:
 
 def _normalize_survey_code(code) -> str:
     return str(code or "").strip().upper()
+
+
+def get_prolific_completion_url(wave):
+    # Wave is completion order, not the counterbalanced questionnaire ID.
+    code = _normalize_survey_code(
+        (_load_survey_codes().get("prolific") or {}).get(str(wave))
+    )
+    return (
+        f"https://app.prolific.com/submissions/complete?cc={code}"
+        if re.fullmatch(r"[A-Z0-9]+", code) else ""
+    )
 
 
 def verify_survey_code(stage: str, code: str, questionnaire_id=None):
@@ -3994,8 +4001,10 @@ def get_study_progress(user_id):
         if has_pending_posttest
         else None
     )
+    guide_url = str(_load_survey_codes().get("study_guide_url") or "").strip()
 
     return {
+        "studyGuideUrl": guide_url if re.match(r"^https?://", guide_url) else "",
         "pretestCompleted": progress["pretest_completed"],
         "videoOrder": video_order,
         "finishedVideos": finished_videos,
@@ -4323,6 +4332,9 @@ class MarkPosttestCompleteHandler(APIHandler):
                         "videoId": video_id,
                         "verified": True,
                         "message": "Post-test already recorded",
+                        "prolificCompletionUrl": get_prolific_completion_url(
+                            progress["completed_videos"].index(normalize_video_id(video_id)) + 1
+                        ),
                         "posttestIndex": progress["posttest_index"],
                         "completedVideos": progress["completed_videos"],
                     }
@@ -4380,6 +4392,7 @@ class MarkPosttestCompleteHandler(APIHandler):
                     "videoId": video_id,
                     "verified": True,
                     "message": "Post-test completion recorded",
+                    "prolificCompletionUrl": get_prolific_completion_url(status["posttestIndex"]),
                     **status,
                 }
             )
@@ -4446,6 +4459,19 @@ class LogSessionEndHandler(APIHandler):
         self.finish(
             json.dumps({"status": "success", "message": "Session end logged"})
         )
+
+
+class LogVideoPlaybackHandler(APIHandler):
+    @tornado.web.authenticated
+    def post(self):
+        data = self.get_json_body() or {}
+        user_id = data.get("userId", "unknown")
+        firebase_logger.log_interaction(
+            user_id, data.get("sessionId", "unknown"), "video_playback",
+            {**data.get("playback", {}), "condition": get_user_condition(user_id)},
+            data.get("videoId"), data.get("segmentIndex"),
+        )
+        self.finish({"status": "success"})
 
 
 class LogCodeExecutionHandler(APIHandler):
@@ -4541,6 +4567,11 @@ def setup_handlers(web_app):
     )
     handlers = [(log_session_end_pattern, LogSessionEndHandler)]
     web_app.add_handlers(host_pattern, handlers)
+
+    web_app.add_handlers(host_pattern, [(
+        url_path_join(base_url, "jlab_ext_example", "log_video_playback"),
+        LogVideoPlaybackHandler,
+    )])
 
     # Add route for logging code execution to Firebase
     log_code_pattern = url_path_join(base_url, "jlab_ext_example", "log_code_execution")
