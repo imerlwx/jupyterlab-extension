@@ -171,13 +171,18 @@ const ChatComponent = (props) => {
     const [errorInCode, setErrorInCode] = (0,react__WEBPACK_IMPORTED_MODULE_1__.useState)('');
     const [selectedChoice, setSelectedChoice] = (0,react__WEBPACK_IMPORTED_MODULE_1__.useState)('');
     const [answeredQuestions, setAnsweredQuestions] = (0,react__WEBPACK_IMPORTED_MODULE_1__.useState)({});
+    const structuredDrafts = (0,react__WEBPACK_IMPORTED_MODULE_1__.useRef)({});
     const [data, setData] = (0,react__WEBPACK_IMPORTED_MODULE_1__.useState)([]);
     const [selectedColumn, setSelectedColumn] = (0,react__WEBPACK_IMPORTED_MODULE_1__.useState)('');
     const [statistics, setStatistics] = (0,react__WEBPACK_IMPORTED_MODULE_1__.useState)(null);
     const [columnNames, setColumnNames] = (0,react__WEBPACK_IMPORTED_MODULE_1__.useState)([]);
     const [histogramData, setHistogramData] = (0,react__WEBPACK_IMPORTED_MODULE_1__.useState)([]);
-    const [codes, setCodes] = (0,react__WEBPACK_IMPORTED_MODULE_1__.useState)({});
+    const [blankAnswers, setBlankAnswers] = (0,react__WEBPACK_IMPORTED_MODULE_1__.useState)({});
     const [checkedCode, setCheckedCode] = (0,react__WEBPACK_IMPORTED_MODULE_1__.useState)([]);
+    const [codeErrors, setCodeErrors] = (0,react__WEBPACK_IMPORTED_MODULE_1__.useState)({});
+    const [blankFeedback, setBlankFeedback] = (0,react__WEBPACK_IMPORTED_MODULE_1__.useState)({});
+    const [submittingCodeId, setSubmittingCodeId] = (0,react__WEBPACK_IMPORTED_MODULE_1__.useState)(null);
+    const submittingCode = (0,react__WEBPACK_IMPORTED_MODULE_1__.useRef)(false);
     const [posttestPromptedVideos, setPosttestPromptedVideos] = (0,react__WEBPACK_IMPORTED_MODULE_1__.useState)({});
     // Per post-test-card completion-code entry and its validation error,
     // keyed by the chat message id of the post-test card.
@@ -598,9 +603,9 @@ const ChatComponent = (props) => {
             const effectiveUserId = userIdRef.current || userId;
             const effectiveVideoId = videoIdRef.current || videoId;
             const effectiveSegIdx = currentSegmentIndexRef.current;
-            // Update bkt when student has typed something in the chatbox
+            // Record the multiple-choice submission before advancing or reviewing.
             if (selectedChoice !== '') {
-                (0,_handler__WEBPACK_IMPORTED_MODULE_10__.requestAPI)('update_bkt', {
+                await (0,_handler__WEBPACK_IMPORTED_MODULE_10__.requestAPI)('update_bkt', {
                     body: JSON.stringify({
                         initialCode: '',
                         filledCode: '',
@@ -618,6 +623,13 @@ const ChatComponent = (props) => {
                     .catch(reason => {
                     console.error(`Error on POST /jlab_ext_example/update_bkt .\n${reason}`);
                 });
+                setSelectedChoice(''); // Next message must not resubmit this answer.
+            }
+            if (opts === null || opts === void 0 ? void 0 : opts.waitForReview) {
+                setCanGoOn(false);
+                setLastNeedResponse(false);
+                setIsTyping(false);
+                return;
             }
             // Go-On is now gated purely by whether CUR_SEQ is empty (which is
             // what /go_on checks). No per-category overrides: a segment can
@@ -1088,11 +1100,16 @@ const ChatComponent = (props) => {
         });
         return histogramData;
     }
-    const handleCodeBlockReadyToSend = (0,react__WEBPACK_IMPORTED_MODULE_1__.useCallback)(() => {
-        // Logic to handle sending or preparing to send the message
-        handleSend('');
+    const handleCodeBlockReadyToSend = (0,react__WEBPACK_IMPORTED_MODULE_1__.useCallback)((allCorrect) => {
+        if (allCorrect) {
+            handleSend('');
+            return;
+        }
+        // Leave incorrect-answer feedback visible until the participant continues.
+        setCanGoOn(false);
+        setLastNeedResponse(false);
     }, [handleSend]);
-    const CodeEditorWithBlanks = ({ id, initialCode, code, onCodeChange, videoId, currentSegmentIndex, onReadyToSend }) => {
+    const CodeEditorWithBlanks = ({ id, initialCode, answers, onAnswersChange, videoId, currentSegmentIndex, onReadyToSend }) => {
         var _a;
         const [commonChoices, setCommonChoices] = (0,react__WEBPACK_IMPORTED_MODULE_1__.useState)([]);
         // Open menu state: which blank's button is currently anchoring the menu.
@@ -1105,36 +1122,48 @@ const ChatComponent = (props) => {
             videoIdRef.current = videoId;
             currentSegmentIndexRef.current = currentSegmentIndex;
         }, [videoId, currentSegmentIndex]);
-        (0,react__WEBPACK_IMPORTED_MODULE_1__.useEffect)(() => {
-            // Only run the check if this code block's ID hasn't been checked yet
-            if (initialCode.includes('___') && !checkedCode.includes(id)) {
-                // Only run the check if all blanks haven't been confirmed as filled
-                const blanksRemaining = code.includes('___');
-                if (!blanksRemaining) {
-                    setCheckedCode(prevIds => [...prevIds, id]);
-                    (0,_handler__WEBPACK_IMPORTED_MODULE_10__.requestAPI)('update_bkt', {
-                        body: JSON.stringify({
-                            initialCode: initialCode,
-                            filledCode: code,
-                            selectedChoice: '',
-                            videoId: videoIdRef.current,
-                            segmentIndex: currentSegmentIndexRef.current,
-                            userId: userId,
-                            sessionId: sessionId
-                        }),
-                        method: 'POST'
-                    })
-                        .then(response => {
-                        console.log(response);
-                    })
-                        .catch(reason => {
-                        console.error(`Error on POST /jlab_ext_example/update_bkt .\n${reason}`);
-                    });
-                    // setAllBlanksFilled(true); // Set this to true to prevent future checks
-                    onReadyToSend(); // Call the parent callback instead of directly setting state
-                }
+        const submitted = checkedCode.includes(id);
+        const feedback = blankFeedback[id] || [];
+        const locked = submitted || submittingCodeId === id;
+        const parts = initialCode.split(/(___)/);
+        const blankCount = parts.filter(part => part === '___').length;
+        const complete = blankCount > 0 && Array.from({ length: blankCount }, (_, i) => answers[i]).every(Boolean);
+        const handleSubmit = async () => {
+            var _a;
+            if (!complete || submitted || submittingCode.current)
+                return;
+            submittingCode.current = true;
+            setSubmittingCodeId(id);
+            setCodeErrors(prev => ({ ...prev, [id]: '' }));
+            let index = 0;
+            const code = initialCode.replace(/___/g, () => answers[index++]);
+            try {
+                const response = await (0,_handler__WEBPACK_IMPORTED_MODULE_10__.requestAPI)('update_bkt', {
+                    body: JSON.stringify({
+                        initialCode: initialCode,
+                        filledCode: code,
+                        selectedChoice: '',
+                        videoId: videoIdRef.current,
+                        segmentIndex: currentSegmentIndexRef.current,
+                        userId: userId,
+                        sessionId: sessionId
+                    }),
+                    method: 'POST'
+                });
+                setBlankFeedback(prev => ({ ...prev, [id]: response.blank_feedback || [] }));
+                setCheckedCode(prev => [...prev, id]);
+                onReadyToSend(((_a = response.blank_feedback) === null || _a === void 0 ? void 0 : _a.length) === blankCount &&
+                    response.blank_feedback.every((item) => item.correct === true));
             }
-        }, [code, onReadyToSend, id, checkedCode]);
+            catch (reason) {
+                console.error('Failed to submit blanks:', reason);
+                setCodeErrors(prev => ({ ...prev, [id]: 'Could not save your answers. Please try again.' }));
+            }
+            finally {
+                submittingCode.current = false;
+                setSubmittingCodeId(null);
+            }
+        };
         (0,react__WEBPACK_IMPORTED_MODULE_1__.useEffect)(() => {
             if (videoId && currentSegmentIndex >= 0) {
                 (0,_handler__WEBPACK_IMPORTED_MODULE_10__.requestAPI)('fill_blank', {
@@ -1159,23 +1188,16 @@ const ChatComponent = (props) => {
             }
         }, [videoId, currentSegmentIndex]); // Dependencies on videoId and currentSegmentIndex to refetch when they change
         const handleSelectChoice = (choice) => {
-            if (menuAnchor === null) {
+            if (menuAnchor === null || locked) {
                 return;
             }
             const targetIdx = menuAnchor.blankIdx;
-            let count = -1;
-            const newCode = code.replace(/___/g, match => {
-                count++;
-                return count === targetIdx ? choice : match;
-            });
-            onCodeChange(newCode);
+            const nextAnswers = [...answers];
+            nextAnswers[targetIdx] = choice;
+            onAnswersChange(nextAnswers);
             setMenuAnchor(null);
         };
-        // Split the code on the placeholder. The capturing group keeps the
-        // placeholders themselves in the array so we can render each one as
-        // an interactive button without losing positions in the surrounding
-        // monospace text.
-        const parts = code.split(/(___)/);
+        // Keep each original blank as a button, even after choosing an answer.
         let blankCounter = -1;
         return (react__WEBPACK_IMPORTED_MODULE_1___default().createElement((react__WEBPACK_IMPORTED_MODULE_1___default().Fragment), null,
             react__WEBPACK_IMPORTED_MODULE_1___default().createElement("pre", { style: {
@@ -1194,7 +1216,8 @@ const ChatComponent = (props) => {
                 if (part === '___') {
                     blankCounter += 1;
                     const myIdx = blankCounter;
-                    return (react__WEBPACK_IMPORTED_MODULE_1___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_5__.Button, { key: `b-${i}`, size: "small", variant: "outlined", onClick: e => setMenuAnchor({
+                    const result = submitted ? feedback[myIdx] : undefined;
+                    return (react__WEBPACK_IMPORTED_MODULE_1___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_5__.Button, { key: `b-${i}`, size: "small", variant: "outlined", disabled: locked, "aria-label": `Blank ${myIdx + 1}: ${answers[myIdx] || 'choose an answer'}`, onClick: e => setMenuAnchor({
                             el: e.currentTarget,
                             blankIdx: myIdx
                         }), sx: {
@@ -1208,18 +1231,35 @@ const ChatComponent = (props) => {
                             color: '#0969da',
                             borderColor: '#0969da',
                             background: 'white',
-                            '&:hover': { background: '#ddf4ff' }
-                        } }, "___"));
+                            '&:hover': { background: '#ddf4ff' },
+                            ...(result && { '&.Mui-disabled': {
+                                    color: result.correct ? '#1e4620' : '#8a1c13',
+                                    backgroundColor: result.correct ? '#e6f4ea' : '#fdecea',
+                                    borderColor: result.correct ? '#b7e1c1' : '#f5c2c0'
+                                } })
+                        } }, answers[myIdx] || '___'));
                 }
                 return react__WEBPACK_IMPORTED_MODULE_1___default().createElement("span", { key: `t-${i}` }, part);
             })),
             react__WEBPACK_IMPORTED_MODULE_1___default().createElement(_mui_material_Menu__WEBPACK_IMPORTED_MODULE_11__["default"], { anchorEl: (_a = menuAnchor === null || menuAnchor === void 0 ? void 0 : menuAnchor.el) !== null && _a !== void 0 ? _a : null, open: menuAnchor !== null, onClose: () => setMenuAnchor(null), MenuListProps: { dense: true } }, commonChoices.length === 0 ? (react__WEBPACK_IMPORTED_MODULE_1___default().createElement(_mui_material_MenuItem__WEBPACK_IMPORTED_MODULE_12__["default"], { disabled: true }, "(loading choices\u2026)")) : (commonChoices.map((choice, index) => (react__WEBPACK_IMPORTED_MODULE_1___default().createElement(_mui_material_MenuItem__WEBPACK_IMPORTED_MODULE_12__["default"], { key: index, onClick: () => handleSelectChoice(choice), sx: {
                     fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
                     fontSize: '0.85rem'
-                } }, choice)))))));
+                } }, choice))))),
+            react__WEBPACK_IMPORTED_MODULE_1___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_5__.Button, { variant: "contained", size: "small", sx: { ...cardPrimaryBtnSx, mt: 1 }, disabled: !complete || locked, onClick: handleSubmit }, submitted ? 'Submitted' : submittingCodeId === id ? 'Submitting…' : 'Submit'),
+            submitted && (react__WEBPACK_IMPORTED_MODULE_1___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_5__.Box, { role: "status", sx: { mt: 1, fontSize: '0.85rem', color: '#24292f' } },
+                feedback.length === blankCount
+                    ? `${feedback.filter(item => item.correct).length} of ${blankCount} blanks correct.`
+                    : 'Your answer was saved, but detailed feedback is unavailable.',
+                feedback.map((item, index) => !item.correct && (react__WEBPACK_IMPORTED_MODULE_1___default().createElement("div", { key: index },
+                    "Blank ",
+                    index + 1,
+                    ": correct answer is ",
+                    react__WEBPACK_IMPORTED_MODULE_1___default().createElement("code", null, item.answer),
+                    "."))))),
+            codeErrors[id] && react__WEBPACK_IMPORTED_MODULE_1___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_5__.Typography, { role: "alert", color: "error", variant: "body2", sx: { mt: 1 } }, codeErrors[id])));
     };
-    const StructuredTextInput = ({ intro, slots, onSubmit, isSubmitted, submittedValue }) => {
-        const [values, setValues] = (0,react__WEBPACK_IMPORTED_MODULE_1__.useState)(() => slots.map(() => ''));
+    const StructuredTextInput = ({ messageId, intro, slots, onSubmit, isSubmitted }) => {
+        const [values, setValues] = (0,react__WEBPACK_IMPORTED_MODULE_1__.useState)(() => structuredDrafts.current[messageId] || slots.map(() => ''));
         const allEmpty = values.every(v => !v.trim());
         return (react__WEBPACK_IMPORTED_MODULE_1___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_5__.Box, { sx: {
                 width: '85%',
@@ -1238,13 +1278,11 @@ const ChatComponent = (props) => {
                     fontSize: '0.9rem'
                 } }, intro)),
             slots.map((slot, idx) => (react__WEBPACK_IMPORTED_MODULE_1___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_5__.Box, { key: idx, sx: { marginBottom: '8px' } },
-                react__WEBPACK_IMPORTED_MODULE_1___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_5__.Typography, { sx: {
-                        fontSize: '0.78rem',
-                        color: '#57606a',
-                        marginBottom: '2px',
-                        fontWeight: 500
-                    } }, slot),
-                react__WEBPACK_IMPORTED_MODULE_1___default().createElement("textarea", { value: isSubmitted ? '' : values[idx], onChange: e => setValues(v => v.map((x, i) => (i === idx ? e.target.value : x))), disabled: isSubmitted, placeholder: "Write your thoughts here\u2026", rows: 2, style: {
+                react__WEBPACK_IMPORTED_MODULE_1___default().createElement("textarea", { value: values[idx], onChange: e => {
+                        const next = values.map((x, i) => i === idx ? e.target.value : x);
+                        structuredDrafts.current[messageId] = next;
+                        setValues(next);
+                    }, disabled: isSubmitted, placeholder: slot, "aria-label": slot, rows: 2, style: {
                         width: '100%',
                         resize: 'vertical',
                         padding: '6px 8px',
@@ -1264,15 +1302,7 @@ const ChatComponent = (props) => {
                         .filter((line, i) => values[i].trim() !== '')
                         .join('\n\n');
                     onSubmit(combined);
-                }, disabled: isSubmitted || allEmpty, sx: { ...cardPrimaryBtnSx, marginTop: '6px' } }, isSubmitted ? 'Submitted' : 'Submit'),
-            isSubmitted && submittedValue && (react__WEBPACK_IMPORTED_MODULE_1___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_5__.Box, { sx: {
-                    marginTop: '10px',
-                    padding: '10px 12px',
-                    borderRadius: '8px',
-                    backgroundColor: '#eef2f7',
-                    fontSize: '0.85rem',
-                    whiteSpace: 'pre-wrap'
-                } }, submittedValue))));
+                }, disabled: isSubmitted || allEmpty, sx: { ...cardPrimaryBtnSx, marginTop: '6px' } }, isSubmitted ? 'Submitted' : 'Submit')));
     };
     const CompareWithExpert = ({ expertAnswer, feedback, similarity, difference, suggestion }) => {
         const hasLegacyFields = !!(similarity || difference || suggestion);
@@ -1468,7 +1498,7 @@ const ChatComponent = (props) => {
                 } }));
         }
         else {
-            return (react__WEBPACK_IMPORTED_MODULE_1___default().createElement(_chatscope_chat_ui_kit_react__WEBPACK_IMPORTED_MODULE_2__.Message, { key: message.sentTime, model: {
+            return (react__WEBPACK_IMPORTED_MODULE_1___default().createElement(_chatscope_chat_ui_kit_react__WEBPACK_IMPORTED_MODULE_2__.Message, { key: message.sentTime, style: { marginBottom: '10px' }, model: {
                     message: message.message,
                     direction: message.direction,
                     sender: message.sender,
@@ -1747,7 +1777,7 @@ const ChatComponent = (props) => {
                                                 ...prev,
                                                 [message.id]: selectedChoice
                                             }));
-                                            handleSend('');
+                                            handleSend('', { waitForReview: selectedChoice !== correctAnswer });
                                         }, disabled: !selectedChoice || isAnswered, sx: {
                                             ...cardPrimaryBtnSx,
                                             marginTop: '10px',
@@ -1773,7 +1803,7 @@ const ChatComponent = (props) => {
                                         rationale && react__WEBPACK_IMPORTED_MODULE_1___default().createElement("div", null, rationale))))));
                         })()) : isStructuredText && parsedMessage ? (react__WEBPACK_IMPORTED_MODULE_1___default().createElement(StructuredTextInput, { messageId: message.id, intro: parsedMessage.intro || '', slots: Array.isArray(parsedMessage.slots)
                                 ? parsedMessage.slots
-                                : [], isSubmitted: !!answeredQuestions[message.id], submittedValue: answeredQuestions[message.id], onSubmit: combined => {
+                                : [], isSubmitted: !!answeredQuestions[message.id], onSubmit: combined => {
                                 setAnsweredQuestions(prev => ({
                                     ...prev,
                                     [message.id]: combined
@@ -1824,9 +1854,9 @@ const ChatComponent = (props) => {
                                     } }, message.posttestConfirmed
                                     ? 'Post-test Recorded'
                                     : 'Finish Session & Return to Prolific')))),
-                        message.code && (react__WEBPACK_IMPORTED_MODULE_1___default().createElement("div", { style: { width: '61.8%', marginBottom: '10px' } }, message.interaction === 'fill-in-blanks' ? (react__WEBPACK_IMPORTED_MODULE_1___default().createElement(CodeEditorWithBlanks, { id: message.id, initialCode: message.code, code: codes[message.id] || message.code, onCodeChange: newCode => setCodes(prev => ({
+                        message.code && (react__WEBPACK_IMPORTED_MODULE_1___default().createElement("div", { style: { width: '61.8%', marginBottom: '10px' } }, message.interaction === 'fill-in-blanks' ? (react__WEBPACK_IMPORTED_MODULE_1___default().createElement(CodeEditorWithBlanks, { id: message.id, initialCode: message.code, answers: blankAnswers[message.id] || [], onAnswersChange: answers => setBlankAnswers(prev => ({
                                 ...prev,
-                                [message.id]: newCode
+                                [message.id]: answers
                             })), videoId: videoId, currentSegmentIndex: currentSegmentIndex, onReadyToSend: handleCodeBlockReadyToSend })) : (react__WEBPACK_IMPORTED_MODULE_1___default().createElement("pre", { style: {
                                 margin: 0,
                                 padding: '12px 14px',
@@ -1966,7 +1996,7 @@ const ChatComponent = (props) => {
                                         react__WEBPACK_IMPORTED_MODULE_1___default().createElement(recharts__WEBPACK_IMPORTED_MODULE_9__.Bar, { dataKey: "value", fill: "#0969da", radius: [4, 4, 0, 0] }))))))),
                         message.videoId && (react__WEBPACK_IMPORTED_MODULE_1___default().createElement("div", { style: {
                                 marginTop: '8px',
-                                paddingBottom: isTyping ? '20px' : '10px'
+                                paddingBottom: '10px'
                             } },
                             popupStates[i] ? (react__WEBPACK_IMPORTED_MODULE_1___default().createElement("div", { style: backdropStyle, onClick: () => closePopup(i) })) : null,
                             react__WEBPACK_IMPORTED_MODULE_1___default().createElement("div", { style: {
@@ -2091,7 +2121,7 @@ const ChatComponent = (props) => {
                 const isOnLastSegment = segments.length > 0 && currentSegmentIndex === segments.length - 1;
                 // Single morphing button. While the segment still has pending
                 // teaching messages (canGoOn=false), it acts as "Next message"
-                // and is enabled only when the latest message was read-only
+                // and is enabled after a read-only message or a submitted exercise
                 // (need_response=false). When the segment's CUR_SEQ is empty
                 // (canGoOn=true), it becomes the "Go on to next clip" button
                 // (or the "I have finished this video" final-segment variant).
@@ -2796,4 +2826,4 @@ var _utils = __webpack_require__(/*! @mui/material/utils */ "./node_modules/@mui
 /***/ })
 
 }]);
-//# sourceMappingURL=lib_index_js.5d432314f13111288c5c.js.map
+//# sourceMappingURL=lib_index_js.257bf73aa66803aaa518.js.map

@@ -222,13 +222,18 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
   const [answeredQuestions, setAnsweredQuestions] = useState<
     Record<string, string>
   >({});
+  const structuredDrafts = useRef<Record<string, string[]>>({});
   const [data, setData] = useState<DataRow[]>([]);
   const [selectedColumn, setSelectedColumn] = useState<string>('');
   const [statistics, setStatistics] = useState<IStatistics | null>(null);
   const [columnNames, setColumnNames] = useState<string[]>([]);
   const [histogramData, setHistogramData] = useState<any[]>([]);
-  const [codes, setCodes] = useState<{ [messageId: string]: string }>({});
+  const [blankAnswers, setBlankAnswers] = useState<Record<string, string[]>>({});
   const [checkedCode, setCheckedCode] = useState<string[]>([]);
+  const [codeErrors, setCodeErrors] = useState<Record<string, string>>({});
+  const [blankFeedback, setBlankFeedback] = useState<Record<string, { correct: boolean; answer: string }[]>>({});
+  const [submittingCodeId, setSubmittingCodeId] = useState<string | null>(null);
+  const submittingCode = useRef(false);
   const [posttestPromptedVideos, setPosttestPromptedVideos] = useState<
     Record<string, boolean>
   >({});
@@ -620,7 +625,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
   const handleSend = useCallback(
     async (
       question: string,
-      opts?: { articulationAnswer?: string; displayText?: string }
+      opts?: { articulationAnswer?: string; displayText?: string; waitForReview?: boolean }
     ) => {
       question = stripHTMLTags(question);
       const articulationAnswer = opts?.articulationAnswer ?? '';
@@ -701,9 +706,9 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
         const effectiveVideoId = videoIdRef.current || videoId;
         const effectiveSegIdx = currentSegmentIndexRef.current;
 
-        // Update bkt when student has typed something in the chatbox
+        // Record the multiple-choice submission before advancing or reviewing.
         if (selectedChoice !== '') {
-          requestAPI<any>('update_bkt', {
+          await requestAPI<any>('update_bkt', {
             body: JSON.stringify({
               initialCode: '',
               filledCode: '',
@@ -723,6 +728,13 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                 `Error on POST /jlab_ext_example/update_bkt .\n${reason}`
               );
             });
+          setSelectedChoice(''); // Next message must not resubmit this answer.
+        }
+        if (opts?.waitForReview) {
+          setCanGoOn(false);
+          setLastNeedResponse(false);
+          setIsTyping(false);
+          return;
         }
 
         // Go-On is now gated purely by whether CUR_SEQ is empty (which is
@@ -1259,27 +1271,32 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
   interface ICodeEditorWithBlanksProps {
     id: string;
     initialCode: string;
-    code: string; // The current state of the code, managed externally
-    onCodeChange: (newCode: string) => void; // Callback to update the code
+    answers: string[];
+    onAnswersChange: (answers: string[]) => void;
     videoId: string;
     currentSegmentIndex: number;
-    onReadyToSend: () => void; // Callback to notify when the code block is fully filled
+    onReadyToSend: (allCorrect: boolean) => void;
   }
 
   interface IChoiceResponse {
     [key: string]: string[];
   }
 
-  const handleCodeBlockReadyToSend = useCallback(() => {
-    // Logic to handle sending or preparing to send the message
-    handleSend('');
+  const handleCodeBlockReadyToSend = useCallback((allCorrect: boolean) => {
+    if (allCorrect) {
+      handleSend('');
+      return;
+    }
+    // Leave incorrect-answer feedback visible until the participant continues.
+    setCanGoOn(false);
+    setLastNeedResponse(false);
   }, [handleSend]);
 
   const CodeEditorWithBlanks: React.FC<ICodeEditorWithBlanksProps> = ({
     id,
     initialCode,
-    code,
-    onCodeChange,
+    answers,
+    onAnswersChange,
     videoId,
     currentSegmentIndex,
     onReadyToSend
@@ -1301,38 +1318,45 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
       currentSegmentIndexRef.current = currentSegmentIndex;
     }, [videoId, currentSegmentIndex]);
 
-    useEffect(() => {
-      // Only run the check if this code block's ID hasn't been checked yet
-      if (initialCode.includes('___') && !checkedCode.includes(id)) {
-        // Only run the check if all blanks haven't been confirmed as filled
-        const blanksRemaining = code.includes('___');
-        if (!blanksRemaining) {
-          setCheckedCode(prevIds => [...prevIds, id]);
-          requestAPI<any>('update_bkt', {
-            body: JSON.stringify({
-              initialCode: initialCode,
-              filledCode: code,
-              selectedChoice: '',
-              videoId: videoIdRef.current,
-              segmentIndex: currentSegmentIndexRef.current,
-              userId: userId,
-              sessionId: sessionId
-            }),
-            method: 'POST'
-          })
-            .then(response => {
-              console.log(response);
-            })
-            .catch(reason => {
-              console.error(
-                `Error on POST /jlab_ext_example/update_bkt .\n${reason}`
-              );
-            });
-          // setAllBlanksFilled(true); // Set this to true to prevent future checks
-          onReadyToSend(); // Call the parent callback instead of directly setting state
-        }
+    const submitted = checkedCode.includes(id);
+    const feedback = blankFeedback[id] || [];
+    const locked = submitted || submittingCodeId === id;
+    const parts = initialCode.split(/(___)/);
+    const blankCount = parts.filter(part => part === '___').length;
+    const complete = blankCount > 0 && Array.from({ length: blankCount }, (_, i) => answers[i]).every(Boolean);
+
+    const handleSubmit = async () => {
+      if (!complete || submitted || submittingCode.current) return;
+      submittingCode.current = true;
+      setSubmittingCodeId(id);
+      setCodeErrors(prev => ({ ...prev, [id]: '' }));
+      let index = 0;
+      const code = initialCode.replace(/___/g, () => answers[index++]);
+      try {
+        const response = await requestAPI<any>('update_bkt', {
+          body: JSON.stringify({
+            initialCode: initialCode,
+            filledCode: code,
+            selectedChoice: '',
+            videoId: videoIdRef.current,
+            segmentIndex: currentSegmentIndexRef.current,
+            userId: userId,
+            sessionId: sessionId
+          }),
+          method: 'POST'
+        });
+        setBlankFeedback(prev => ({ ...prev, [id]: response.blank_feedback || [] }));
+        setCheckedCode(prev => [...prev, id]);
+        onReadyToSend(response.blank_feedback?.length === blankCount &&
+          response.blank_feedback.every((item: { correct: boolean }) => item.correct === true));
+      } catch (reason) {
+        console.error('Failed to submit blanks:', reason);
+        setCodeErrors(prev => ({ ...prev, [id]: 'Could not save your answers. Please try again.' }));
+      } finally {
+        submittingCode.current = false;
+        setSubmittingCodeId(null);
       }
-    }, [code, onReadyToSend, id, checkedCode]);
+    };
 
     useEffect(() => {
       if (videoId && currentSegmentIndex >= 0) {
@@ -1358,24 +1382,17 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     }, [videoId, currentSegmentIndex]); // Dependencies on videoId and currentSegmentIndex to refetch when they change
 
     const handleSelectChoice = (choice: string) => {
-      if (menuAnchor === null) {
+      if (menuAnchor === null || locked) {
         return;
       }
       const targetIdx = menuAnchor.blankIdx;
-      let count = -1;
-      const newCode = code.replace(/___/g, match => {
-        count++;
-        return count === targetIdx ? choice : match;
-      });
-      onCodeChange(newCode);
+      const nextAnswers = [...answers];
+      nextAnswers[targetIdx] = choice;
+      onAnswersChange(nextAnswers);
       setMenuAnchor(null);
     };
 
-    // Split the code on the placeholder. The capturing group keeps the
-    // placeholders themselves in the array so we can render each one as
-    // an interactive button without losing positions in the surrounding
-    // monospace text.
-    const parts = code.split(/(___)/);
+    // Keep each original blank as a button, even after choosing an answer.
     let blankCounter = -1;
 
     return (
@@ -1400,11 +1417,14 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
             if (part === '___') {
               blankCounter += 1;
               const myIdx = blankCounter;
+              const result = submitted ? feedback[myIdx] : undefined;
               return (
                 <Button
                   key={`b-${i}`}
                   size="small"
                   variant="outlined"
+                  disabled={locked}
+                  aria-label={`Blank ${myIdx + 1}: ${answers[myIdx] || 'choose an answer'}`}
                   onClick={e =>
                     setMenuAnchor({
                       el: e.currentTarget,
@@ -1422,10 +1442,15 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                     color: '#0969da',
                     borderColor: '#0969da',
                     background: 'white',
-                    '&:hover': { background: '#ddf4ff' }
+                    '&:hover': { background: '#ddf4ff' },
+                    ...(result && { '&.Mui-disabled': {
+                      color: result.correct ? '#1e4620' : '#8a1c13',
+                      backgroundColor: result.correct ? '#e6f4ea' : '#fdecea',
+                      borderColor: result.correct ? '#b7e1c1' : '#f5c2c0'
+                    } })
                   }}
                 >
-                  ___
+                  {answers[myIdx] || '___'}
                 </Button>
               );
             }
@@ -1456,6 +1481,21 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
             ))
           )}
         </Menu>
+        <Button variant="contained" size="small" sx={{ ...cardPrimaryBtnSx, mt: 1 }}
+          disabled={!complete || locked} onClick={handleSubmit}>
+          {submitted ? 'Submitted' : submittingCodeId === id ? 'Submitting…' : 'Submit'}
+        </Button>
+        {submitted && (
+          <Box role="status" sx={{ mt: 1, fontSize: '0.85rem', color: '#24292f' }}>
+            {feedback.length === blankCount
+              ? `${feedback.filter(item => item.correct).length} of ${blankCount} blanks correct.`
+              : 'Your answer was saved, but detailed feedback is unavailable.'}
+            {feedback.map((item, index) => !item.correct && (
+              <div key={index}>Blank {index + 1}: correct answer is <code>{item.answer}</code>.</div>
+            ))}
+          </Box>
+        )}
+        {codeErrors[id] && <Typography role="alert" color="error" variant="body2" sx={{ mt: 1 }}>{codeErrors[id]}</Typography>}
       </>
     );
   };
@@ -1467,17 +1507,16 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     slots: string[];
     onSubmit: (combined: string) => void;
     isSubmitted: boolean;
-    submittedValue?: string;
   }
 
   const StructuredTextInput: React.FC<IStructuredTextInputProps> = ({
+    messageId,
     intro,
     slots,
     onSubmit,
-    isSubmitted,
-    submittedValue
+    isSubmitted
   }) => {
-    const [values, setValues] = useState<string[]>(() => slots.map(() => ''));
+    const [values, setValues] = useState<string[]>(() => structuredDrafts.current[messageId] || slots.map(() => ''));
     const allEmpty = values.every(v => !v.trim());
     return (
       <Box
@@ -1506,25 +1545,16 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
         )}
         {slots.map((slot, idx) => (
           <Box key={idx} sx={{ marginBottom: '8px' }}>
-            <Typography
-              sx={{
-                fontSize: '0.78rem',
-                color: '#57606a',
-                marginBottom: '2px',
-                fontWeight: 500
-              }}
-            >
-              {slot}
-            </Typography>
             <textarea
-              value={isSubmitted ? '' : values[idx]}
-              onChange={e =>
-                setValues(v =>
-                  v.map((x, i) => (i === idx ? e.target.value : x))
-                )
-              }
+              value={values[idx]}
+              onChange={e => {
+                const next = values.map((x, i) => i === idx ? e.target.value : x);
+                structuredDrafts.current[messageId] = next;
+                setValues(next);
+              }}
               disabled={isSubmitted}
-              placeholder="Write your thoughts here…"
+              placeholder={slot}
+              aria-label={slot}
               rows={2}
               style={{
                 width: '100%',
@@ -1558,20 +1588,6 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
         >
           {isSubmitted ? 'Submitted' : 'Submit'}
         </Button>
-        {isSubmitted && submittedValue && (
-          <Box
-            sx={{
-              marginTop: '10px',
-              padding: '10px 12px',
-              borderRadius: '8px',
-              backgroundColor: '#eef2f7',
-              fontSize: '0.85rem',
-              whiteSpace: 'pre-wrap'
-            }}
-          >
-            {submittedValue}
-          </Box>
-        )}
       </Box>
     );
   };
@@ -1905,6 +1921,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
       return (
         <Message
           key={message.sentTime}
+          style={{ marginBottom: '10px' }}
           model={{
             message: message.message,
             direction: message.direction,
@@ -2306,7 +2323,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                                     ...prev,
                                     [message.id]: selectedChoice
                                   }));
-                                  handleSend('');
+                                  handleSend('', { waitForReview: selectedChoice !== correctAnswer });
                                 }}
                                 disabled={!selectedChoice || isAnswered}
                                 sx={{
@@ -2361,7 +2378,6 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                             : []
                         }
                         isSubmitted={!!answeredQuestions[message.id]}
-                        submittedValue={answeredQuestions[message.id]}
                         onSubmit={combined => {
                           setAnsweredQuestions(prev => ({
                             ...prev,
@@ -2491,11 +2507,11 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                           <CodeEditorWithBlanks
                             id={message.id}
                             initialCode={message.code}
-                            code={codes[message.id] || message.code} // Use the current code from state, fallback to initial code
-                            onCodeChange={newCode =>
-                              setCodes(prev => ({
+                            answers={blankAnswers[message.id] || []}
+                            onAnswersChange={answers =>
+                              setBlankAnswers(prev => ({
                                 ...prev,
-                                [message.id]: newCode
+                                [message.id]: answers
                               }))
                             }
                             videoId={videoId}
@@ -2781,7 +2797,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
                       <div
                         style={{
                           marginTop: '8px',
-                          paddingBottom: isTyping ? '20px' : '10px'
+                          paddingBottom: '10px'
                         }}
                       >
                         {popupStates[i] ? (
@@ -2988,7 +3004,7 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
             segments.length > 0 && currentSegmentIndex === segments.length - 1;
           // Single morphing button. While the segment still has pending
           // teaching messages (canGoOn=false), it acts as "Next message"
-          // and is enabled only when the latest message was read-only
+          // and is enabled after a read-only message or a submitted exercise
           // (need_response=false). When the segment's CUR_SEQ is empty
           // (canGoOn=true), it becomes the "Go on to next clip" button
           // (or the "I have finished this video" final-segment variant).
