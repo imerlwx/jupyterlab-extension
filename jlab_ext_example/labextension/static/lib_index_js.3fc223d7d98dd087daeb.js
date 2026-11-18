@@ -112,7 +112,6 @@ const ChatComponent = (props) => {
     const [userId, setUserId] = (0,react__WEBPACK_IMPORTED_MODULE_1__.useState)('');
     const [sessionId] = (0,react__WEBPACK_IMPORTED_MODULE_1__.useState)(() => `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`);
     const [showUserIDDialog, setShowUserIDDialog] = (0,react__WEBPACK_IMPORTED_MODULE_1__.useState)(true);
-    const [studyGuideUrl, setStudyGuideUrl] = (0,react__WEBPACK_IMPORTED_MODULE_1__.useState)('');
     const [userCondition, setUserCondition] = (0,react__WEBPACK_IMPORTED_MODULE_1__.useState)('');
     const [segments, setSegments] = (0,react__WEBPACK_IMPORTED_MODULE_1__.useState)([]);
     const [messages, setMessages] = (0,react__WEBPACK_IMPORTED_MODULE_1__.useState)([
@@ -1547,14 +1546,12 @@ const ChatComponent = (props) => {
             message: response.message || ''
         };
     };
-    const handleGetStudyProgress = async (submittedUserId) => {
-        const progress = await (0,_handler__WEBPACK_IMPORTED_MODULE_10__.requestAPI)('get_study_progress', {
+    const handleGetStudyProgress = (0,react__WEBPACK_IMPORTED_MODULE_1__.useCallback)(async (submittedUserId) => {
+        return (0,_handler__WEBPACK_IMPORTED_MODULE_10__.requestAPI)('get_study_progress', {
             body: JSON.stringify({ userId: submittedUserId }),
             method: 'POST'
         });
-        setStudyGuideUrl(progress.studyGuideUrl || '');
-        return progress;
-    };
+    }, []);
     const handleMarkPendingPosttestComplete = async (submittedUserId, completedVideoId, completionCode) => {
         const response = await (0,_handler__WEBPACK_IMPORTED_MODULE_10__.requestAPI)('mark_posttest_complete', {
             body: JSON.stringify({
@@ -1660,8 +1657,11 @@ const ChatComponent = (props) => {
         }
     };
     return (react__WEBPACK_IMPORTED_MODULE_1___default().createElement("div", { style: { position: 'relative', height: '100%', width: '100%', display: 'flex', flexDirection: 'column' } },
-        react__WEBPACK_IMPORTED_MODULE_1___default().createElement(_UserIDDialog__WEBPACK_IMPORTED_MODULE_13__.UserIDDialog, { open: showUserIDDialog, posttestUrls: POSTTEST_QUALTRICS_URLS, videoLabels: VIDEO_LABELS, videoSelectionMode: USE_RANDOM_VIDEO_ASSIGNMENT ? 'assigned' : 'manual', onSubmit: handleUserIDSubmit, onMarkPretestComplete: handleMarkPretestComplete, onGetStudyProgress: handleGetStudyProgress, onMarkPendingPosttestComplete: handleMarkPendingPosttestComplete }),
-        react__WEBPACK_IMPORTED_MODULE_1___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_5__.Button, { component: "a", size: "small", sx: { alignSelf: 'flex-end', flexShrink: 0 }, href: studyGuideUrl || undefined, target: "_blank", rel: "noopener noreferrer", disabled: !studyGuideUrl }, "How to use Tutorly"),
+        react__WEBPACK_IMPORTED_MODULE_1___default().createElement(_UserIDDialog__WEBPACK_IMPORTED_MODULE_13__.UserIDDialog, { open: showUserIDDialog, onClose: userId ? () => setShowUserIDDialog(false) : undefined, currentVideo: videoId ? {
+                id: videoId, segmentIndex: currentSegmentIndex,
+                totalSegments: segments.length, finished: videoFinished
+            } : undefined, posttestUrls: POSTTEST_QUALTRICS_URLS, videoLabels: VIDEO_LABELS, videoSelectionMode: USE_RANDOM_VIDEO_ASSIGNMENT ? 'assigned' : 'manual', onSubmit: handleUserIDSubmit, onMarkPretestComplete: handleMarkPretestComplete, onGetStudyProgress: handleGetStudyProgress, onMarkPendingPosttestComplete: handleMarkPendingPosttestComplete }),
+        react__WEBPACK_IMPORTED_MODULE_1___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_5__.Button, { size: "small", sx: { alignSelf: 'flex-end', flexShrink: 0 }, onClick: () => setShowUserIDDialog(true), disabled: !userId }, "Study progress"),
         react__WEBPACK_IMPORTED_MODULE_1___default().createElement(_chatscope_chat_ui_kit_react__WEBPACK_IMPORTED_MODULE_2__.MainContainer, { style: { flex: 1, minHeight: 0, width: '100%' } },
             react__WEBPACK_IMPORTED_MODULE_1___default().createElement(_chatscope_chat_ui_kit_react__WEBPACK_IMPORTED_MODULE_2__.ChatContainer, { id: "chatContainerId", style: { height: '100%', width: '100%' } },
                 react__WEBPACK_IMPORTED_MODULE_1___default().createElement(_chatscope_chat_ui_kit_react__WEBPACK_IMPORTED_MODULE_2__.MessageList, { scrollBehavior: "auto", typingIndicator: isTyping ? react__WEBPACK_IMPORTED_MODULE_1___default().createElement(_chatscope_chat_ui_kit_react__WEBPACK_IMPORTED_MODULE_2__.TypingIndicator, { content: "Tutorly is typing" }) : null, style: {
@@ -2282,7 +2282,7 @@ const secondaryBtnSx = {
     borderColor: '#0969da',
     '&:hover': { background: '#ddf4ff', borderColor: '#0969da' }
 };
-const UserIDDialog = ({ open, videoSelectionMode = 'manual', videoLabels, posttestUrls, onSubmit, onMarkPretestComplete, onGetStudyProgress, onMarkPendingPosttestComplete }) => {
+const UserIDDialog = ({ open, onClose, currentVideo, videoSelectionMode = 'manual', videoLabels, posttestUrls, onSubmit, onMarkPretestComplete, onGetStudyProgress, onMarkPendingPosttestComplete }) => {
     // Two-step flow: the participant first submits their ID ("id" step), and
     // only then sees their learning progress and the continue gate ("progress"
     // step). Progress is fetched once on the step transition, never while the
@@ -2298,6 +2298,25 @@ const UserIDDialog = ({ open, videoSelectionMode = 'manual', videoLabels, postte
     const [posttestCode, setPosttestCode] = (0,react__WEBPACK_IMPORTED_MODULE_0__.useState)('');
     const [posttestCodeError, setPosttestCodeError] = (0,react__WEBPACK_IMPORTED_MODULE_0__.useState)('');
     const [isVerifyingPosttest, setIsVerifyingPosttest] = (0,react__WEBPACK_IMPORTED_MODULE_0__.useState)(false);
+    const reviewing = !!onClose;
+    (0,react__WEBPACK_IMPORTED_MODULE_0__.useEffect)(() => {
+        if (!open || !reviewing)
+            return;
+        let cancelled = false;
+        setIsLoading(true);
+        setError('');
+        onGetStudyProgress(userId).then(progress => {
+            if (!cancelled)
+                setStudyProgress(progress);
+        }).catch(() => {
+            if (!cancelled)
+                setError('Could not refresh progress. Please close and reopen this window to retry.');
+        }).finally(() => {
+            if (!cancelled)
+                setIsLoading(false);
+        });
+        return () => { cancelled = true; };
+    }, [open, reviewing, userId, onGetStudyProgress]);
     const isAssignedMode = videoSelectionMode === 'assigned';
     const assignedVideoId = (studyProgress === null || studyProgress === void 0 ? void 0 : studyProgress.videoOrder.find(id => !studyProgress.completedVideos.includes(id))) || '';
     const effectiveVideoId = isAssignedMode ? assignedVideoId || '' : videoId;
@@ -2411,7 +2430,7 @@ const UserIDDialog = ({ open, videoSelectionMode = 'manual', videoLabels, postte
                 textTransform: 'uppercase'
             } }, label));
     };
-    return (react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Dialog, { open: open, disableEscapeKeyDown: true, maxWidth: "sm", fullWidth: true, "aria-labelledby": "user-id-dialog-title", PaperProps: {
+    return (react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Dialog, { open: open, onClose: onClose, disableEscapeKeyDown: !reviewing, maxWidth: "sm", fullWidth: true, "aria-labelledby": "user-id-dialog-title", PaperProps: {
             sx: {
                 borderRadius: 3,
                 overflow: 'hidden',
@@ -2424,7 +2443,7 @@ const UserIDDialog = ({ open, videoSelectionMode = 'manual', videoLabels, postte
                 px: 4,
                 py: 3
             } },
-            react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Typography, { id: "user-id-dialog-title", sx: { fontSize: '1.4rem', fontWeight: 700, lineHeight: 1.2 } }, "Welcome to Tutorly"),
+            react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Typography, { id: "user-id-dialog-title", sx: { fontSize: '1.4rem', fontWeight: 700, lineHeight: 1.2 } }, reviewing ? 'Study progress' : 'Welcome to Tutorly'),
             react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Typography, { sx: { fontSize: '0.9rem', opacity: 0.92, mt: 0.5 } }, "Your personal AI tutor for exploratory data analysis")),
         react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.DialogContent, { sx: { px: 4, py: 3 } }, step === 'id' ? (react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Box, null,
             react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Typography, { variant: "body2", sx: { color: '#57606a', lineHeight: 1.5, mb: 2 } }, "Enter your Prolific ID, using the same ID as your initial Qualtrics questionnaire and all study sessions."),
@@ -2442,7 +2461,7 @@ const UserIDDialog = ({ open, videoSelectionMode = 'manual', videoLabels, postte
                     "Participant ID:",
                     ' ',
                     react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Box, { component: "span", sx: { fontWeight: 700, color: '#24292f' } }, userId.trim())),
-                react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Button, { size: "small", sx: {
+                react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Button, { size: "small", disabled: reviewing, sx: {
                         textTransform: 'none',
                         fontSize: '0.8rem',
                         color: '#0969da'
@@ -2454,7 +2473,9 @@ const UserIDDialog = ({ open, videoSelectionMode = 'manual', videoLabels, postte
                     borderRadius: 1,
                     backgroundColor: '#fafafa'
                 } },
-                react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Typography, { variant: "subtitle2", sx: { mb: 1 } }, "Study Progress"),
+                react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Typography, { variant: "subtitle2", sx: { mb: 1 } },
+                    "Study Progress",
+                    reviewing && isLoading && react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.CircularProgress, { size: 14, sx: { ml: 1 } })),
                 react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Button, { component: "a", size: "small", variant: "outlined", sx: { ...secondaryBtnSx, mb: 1 }, href: (studyProgress === null || studyProgress === void 0 ? void 0 : studyProgress.studyGuideUrl) || undefined, target: "_blank", rel: "noopener noreferrer", disabled: !(studyProgress === null || studyProgress === void 0 ? void 0 : studyProgress.studyGuideUrl) }, "How to use Tutorly"),
                 studyProgress && (react__WEBPACK_IMPORTED_MODULE_0___default().createElement((react__WEBPACK_IMPORTED_MODULE_0___default().Fragment), null,
                     react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Typography, { variant: "body2", sx: { mb: 0.5 } },
@@ -2470,19 +2491,25 @@ const UserIDDialog = ({ open, videoSelectionMode = 'manual', videoLabels, postte
                             ? postDone
                                 ? 'Video + Post-test Completed'
                                 : 'Video Completed, Post-test Pending'
-                            : 'Not Started';
+                            : id === (currentVideo === null || currentVideo === void 0 ? void 0 : currentVideo.id) ? 'In Progress' : 'Not Started';
                         const statusTone = videoDone
                             ? postDone
                                 ? 'success'
                                 : 'warning'
                             : 'neutral';
-                        return (react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Typography, { key: id, variant: "body2", sx: { mb: 0.5 } },
-                            "Video ",
-                            index + 1,
-                            " (",
-                            videoLabel,
-                            "):",
-                            renderStatusBadge(statusLabel, statusTone)));
+                        return (react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Box, { key: id, sx: { mb: 1 } },
+                            react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Typography, { variant: "body2" },
+                                "Video ",
+                                index + 1,
+                                " (",
+                                videoLabel,
+                                "):",
+                                renderStatusBadge(statusLabel, statusTone)),
+                            id === (currentVideo === null || currentVideo === void 0 ? void 0 : currentVideo.id) && currentVideo.totalSegments > 0 && (react__WEBPACK_IMPORTED_MODULE_0___default().createElement((react__WEBPACK_IMPORTED_MODULE_0___default().Fragment), null,
+                                react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.LinearProgress, { variant: "determinate", sx: { mt: 1 }, "aria-label": "Current video lesson progress", value: currentVideo.finished || videoDone ? 100 :
+                                        100 * Math.max(0, Math.min(currentVideo.segmentIndex, currentVideo.totalSegments)) / currentVideo.totalSegments }),
+                                react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Typography, { variant: "caption" }, currentVideo.finished || videoDone ? 'Lesson completed' :
+                                    `Current segment: ${Math.min(currentVideo.segmentIndex + 1, currentVideo.totalSegments)} of ${currentVideo.totalSegments}`)))));
                     }),
                     studyProgress.pendingPosttest.available &&
                         studyProgress.pendingPosttest.questionnaireId &&
@@ -2498,7 +2525,7 @@ const UserIDDialog = ({ open, videoSelectionMode = 'manual', videoLabels, postte
                                     setPosttestCode(e.target.value);
                                     setPosttestCodeError('');
                                 } }),
-                            react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Button, { variant: "contained", size: "small", sx: { ...primaryBtnSx, mt: 0.4 }, disabled: !posttestCode.trim() || isVerifyingPosttest, onClick: async () => {
+                            react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Button, { variant: "contained", size: "small", sx: { ...primaryBtnSx, mt: 0.4 }, disabled: !posttestCode.trim() || isVerifyingPosttest || isLoading, onClick: async () => {
                                     setIsVerifyingPosttest(true);
                                     setPosttestCodeError('');
                                     try {
@@ -2521,7 +2548,7 @@ const UserIDDialog = ({ open, videoSelectionMode = 'manual', videoLabels, postte
                                     }
                                 } }, "Finish Session & Return to Prolific")))),
                     studyProgress.studyCompleted && (react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Typography, { variant: "body2", sx: { mt: 1 } }, "All study tasks are completed."))))),
-            !pretestCompleted && (react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Box, { sx: {
+            !reviewing && !pretestCompleted && (react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Box, { sx: {
                     p: 2,
                     mb: 2,
                     border: '1px solid #d32f2f',
@@ -2534,16 +2561,16 @@ const UserIDDialog = ({ open, videoSelectionMode = 'manual', videoLabels, postte
                         setPretestCode(e.target.value);
                         setPretestCodeError('');
                     } }))),
-            !isAssignedMode ? (react__WEBPACK_IMPORTED_MODULE_0___default().createElement((react__WEBPACK_IMPORTED_MODULE_0___default().Fragment), null,
+            !reviewing && (!isAssignedMode ? (react__WEBPACK_IMPORTED_MODULE_0___default().createElement((react__WEBPACK_IMPORTED_MODULE_0___default().Fragment), null,
                 react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Typography, { variant: "body2", sx: { mb: 1 } }, "Please select a video topic:"),
                 react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material_RadioGroup__WEBPACK_IMPORTED_MODULE_2__["default"], { value: videoId, onChange: e => setVideoId(e.target.value), sx: { mb: 1 } },
                     react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material_FormControlLabel__WEBPACK_IMPORTED_MODULE_3__["default"], { value: "EF4A4OtQprg", control: react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material_Radio__WEBPACK_IMPORTED_MODULE_4__["default"], null), label: "Seattle Pet Names" }),
                     react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material_FormControlLabel__WEBPACK_IMPORTED_MODULE_3__["default"], { value: "1xsbTs9-a50", control: react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material_Radio__WEBPACK_IMPORTED_MODULE_4__["default"], null), label: "Franchise Revenue" }),
                     react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material_FormControlLabel__WEBPACK_IMPORTED_MODULE_3__["default"], { value: "-1x8Kpyndss", control: react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material_Radio__WEBPACK_IMPORTED_MODULE_4__["default"], null), label: "Coffee Ratings" })))) : (assignedVideoId && (react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Typography, { variant: "body2", sx: { fontWeight: 600 } },
                 "Next video: ",
-                (videoLabels === null || videoLabels === void 0 ? void 0 : videoLabels[assignedVideoId]) || assignedVideoId))),
+                (videoLabels === null || videoLabels === void 0 ? void 0 : videoLabels[assignedVideoId]) || assignedVideoId)))),
             error && (react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Typography, { variant: "body2", color: "error", sx: { mt: 1 } }, error))))),
-        react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.DialogActions, { sx: { px: 4, pb: 3, pt: 1 } }, step === 'id' ? (react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Button, { onClick: handleNextStep, variant: "contained", sx: primaryBtnSx, disabled: !userId.trim() || isLoading }, isLoading ? (react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.CircularProgress, { size: 18, sx: { color: 'white' } })) : ('Next Step'))) : (react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Button, { onClick: handleContinue, variant: "contained", sx: primaryBtnSx, disabled: isLoading ||
+        react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.DialogActions, { sx: { px: 4, pb: 3, pt: 1 } }, reviewing ? (react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Button, { onClick: onClose, variant: "contained", sx: primaryBtnSx }, "Return to study")) : step === 'id' ? (react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Button, { onClick: handleNextStep, variant: "contained", sx: primaryBtnSx, disabled: !userId.trim() || isLoading }, isLoading ? (react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.CircularProgress, { size: 18, sx: { color: 'white' } })) : ('Next Step'))) : (react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.Button, { onClick: handleContinue, variant: "contained", sx: primaryBtnSx, disabled: isLoading ||
                 (!isAssignedMode && !effectiveVideoId) ||
                 (!pretestCompleted && !pretestCode.trim()) }, isLoading ? (react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_mui_material__WEBPACK_IMPORTED_MODULE_1__.CircularProgress, { size: 18, sx: { color: 'white' } })) : ('Continue to Videos'))))));
 };
@@ -2768,4 +2795,4 @@ var _utils = __webpack_require__(/*! @mui/material/utils */ "./node_modules/@mui
 /***/ })
 
 }]);
-//# sourceMappingURL=lib_index_js.dd623cd8b8ccb7b5bbeb.js.map
+//# sourceMappingURL=lib_index_js.3fc223d7d98dd087daeb.js.map

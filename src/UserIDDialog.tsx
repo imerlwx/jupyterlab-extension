@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -7,7 +7,8 @@ import {
   Button,
   Typography,
   Box,
-  CircularProgress
+  CircularProgress,
+  LinearProgress
 } from '@mui/material';
 import Radio from '@mui/material/Radio';
 import RadioGroup from '@mui/material/RadioGroup';
@@ -55,6 +56,8 @@ const secondaryBtnSx = {
 
 interface IUserIDDialogProps {
   open: boolean;
+  onClose?: () => void;
+  currentVideo?: { id: string; segmentIndex: number; totalSegments: number; finished: boolean };
   videoSelectionMode?: 'manual' | 'assigned';
   videoLabels: Record<string, string>;
   posttestUrls: Record<number, string>;
@@ -88,6 +91,8 @@ interface IStudyProgress {
 
 export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
   open,
+  onClose,
+  currentVideo,
   videoSelectionMode = 'manual',
   videoLabels,
   posttestUrls,
@@ -113,6 +118,22 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
   const [posttestCode, setPosttestCode] = useState('');
   const [posttestCodeError, setPosttestCodeError] = useState('');
   const [isVerifyingPosttest, setIsVerifyingPosttest] = useState(false);
+  const reviewing = !!onClose;
+
+  useEffect(() => {
+    if (!open || !reviewing) return;
+    let cancelled = false;
+    setIsLoading(true);
+    setError('');
+    onGetStudyProgress(userId).then(progress => {
+      if (!cancelled) setStudyProgress(progress);
+    }).catch(() => {
+      if (!cancelled) setError('Could not refresh progress. Please close and reopen this window to retry.');
+    }).finally(() => {
+      if (!cancelled) setIsLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [open, reviewing, userId, onGetStudyProgress]);
 
   const isAssignedMode = videoSelectionMode === 'assigned';
   const assignedVideoId =
@@ -258,7 +279,8 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
   return (
     <Dialog
       open={open}
-      disableEscapeKeyDown
+      onClose={onClose}
+      disableEscapeKeyDown={!reviewing}
       maxWidth="sm"
       fullWidth
       aria-labelledby="user-id-dialog-title"
@@ -282,7 +304,7 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
           id="user-id-dialog-title"
           sx={{ fontSize: '1.4rem', fontWeight: 700, lineHeight: 1.2 }}
         >
-          Welcome to Tutorly
+          {reviewing ? 'Study progress' : 'Welcome to Tutorly'}
         </Typography>
         <Typography sx={{ fontSize: '0.9rem', opacity: 0.92, mt: 0.5 }}>
           Your personal AI tutor for exploratory data analysis
@@ -332,6 +354,7 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
               </Typography>
               <Button
                 size="small"
+                disabled={reviewing}
                 sx={{
                   textTransform: 'none',
                   fontSize: '0.8rem',
@@ -353,6 +376,7 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
             >
               <Typography variant="subtitle2" sx={{ mb: 1 }}>
                 Study Progress
+                {reviewing && isLoading && <CircularProgress size={14} sx={{ ml: 1 }} />}
               </Typography>
               <Button
                 component="a"
@@ -379,7 +403,7 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
                       ? postDone
                         ? 'Video + Post-test Completed'
                         : 'Video Completed, Post-test Pending'
-                      : 'Not Started';
+                      : id === currentVideo?.id ? 'In Progress' : 'Not Started';
                     const statusTone: 'success' | 'warning' | 'neutral' =
                       videoDone
                         ? postDone
@@ -387,10 +411,24 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
                           : 'warning'
                         : 'neutral';
                     return (
-                      <Typography key={id} variant="body2" sx={{ mb: 0.5 }}>
-                        Video {index + 1} ({videoLabel}):
-                        {renderStatusBadge(statusLabel, statusTone)}
-                      </Typography>
+                      <Box key={id} sx={{ mb: 1 }}>
+                        <Typography variant="body2">
+                          Video {index + 1} ({videoLabel}):
+                          {renderStatusBadge(statusLabel, statusTone)}
+                        </Typography>
+                        {id === currentVideo?.id && currentVideo.totalSegments > 0 && (
+                          <>
+                            <LinearProgress variant="determinate" sx={{ mt: 1 }}
+                              aria-label="Current video lesson progress"
+                              value={currentVideo.finished || videoDone ? 100 :
+                                100 * Math.max(0, Math.min(currentVideo.segmentIndex, currentVideo.totalSegments)) / currentVideo.totalSegments} />
+                            <Typography variant="caption">
+                              {currentVideo.finished || videoDone ? 'Lesson completed' :
+                                `Current segment: ${Math.min(currentVideo.segmentIndex + 1, currentVideo.totalSegments)} of ${currentVideo.totalSegments}`}
+                            </Typography>
+                          </>
+                        )}
+                      </Box>
                     );
                   })}
                   {studyProgress.pendingPosttest.available &&
@@ -443,7 +481,7 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
                             size="small"
                             sx={{ ...primaryBtnSx, mt: 0.4 }}
                             disabled={
-                              !posttestCode.trim() || isVerifyingPosttest
+                              !posttestCode.trim() || isVerifyingPosttest || isLoading
                             }
                             onClick={async () => {
                               setIsVerifyingPosttest(true);
@@ -493,7 +531,7 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
                 </>
               )}
             </Box>
-            {!pretestCompleted && (
+            {!reviewing && !pretestCompleted && (
               <Box
                 sx={{
                   p: 2,
@@ -526,7 +564,7 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
                 />
               </Box>
             )}
-            {!isAssignedMode ? (
+            {!reviewing && (!isAssignedMode ? (
               <>
                 <Typography variant="body2" sx={{ mb: 1 }}>
                   Please select a video topic:
@@ -559,7 +597,7 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
                   Next video: {videoLabels?.[assignedVideoId] || assignedVideoId}
                 </Typography>
               )
-            )}
+            ))}
             {error && (
               <Typography variant="body2" color="error" sx={{ mt: 1 }}>
                 {error}
@@ -569,7 +607,11 @@ export const UserIDDialog: React.FC<IUserIDDialogProps> = ({
         )}
       </DialogContent>
       <DialogActions sx={{ px: 4, pb: 3, pt: 1 }}>
-        {step === 'id' ? (
+        {reviewing ? (
+          <Button onClick={onClose} variant="contained" sx={primaryBtnSx}>
+            Return to study
+          </Button>
+        ) : step === 'id' ? (
           <Button
             onClick={handleNextStep}
             variant="contained"

@@ -159,7 +159,6 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     () => `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
   );
   const [showUserIDDialog, setShowUserIDDialog] = useState(true);
-  const [studyGuideUrl, setStudyGuideUrl] = useState('');
   const [userCondition, setUserCondition] = useState<string>('');
   const [segments, setSegments] = useState<ISegment[]>([]);
   const [messages, setMessages] = useState<IMessage[]>([
@@ -1998,14 +1997,12 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     };
   };
 
-  const handleGetStudyProgress = async (submittedUserId: string) => {
-    const progress = await requestAPI<any>('get_study_progress', {
+  const handleGetStudyProgress = useCallback(async (submittedUserId: string) => {
+    return requestAPI<any>('get_study_progress', {
       body: JSON.stringify({ userId: submittedUserId }),
       method: 'POST'
     });
-    setStudyGuideUrl(progress.studyGuideUrl || '');
-    return progress;
-  };
+  }, []);
 
   const handleMarkPendingPosttestComplete = async (
     submittedUserId: string,
@@ -2149,6 +2146,11 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
     <div style={{ position: 'relative', height: '100%', width: '100%', display: 'flex', flexDirection: 'column' }}>
       <UserIDDialog
         open={showUserIDDialog}
+        onClose={userId ? () => setShowUserIDDialog(false) : undefined}
+        currentVideo={videoId ? {
+          id: videoId, segmentIndex: currentSegmentIndex,
+          totalSegments: segments.length, finished: videoFinished
+        } : undefined}
         posttestUrls={POSTTEST_QUALTRICS_URLS}
         videoLabels={VIDEO_LABELS}
         videoSelectionMode={USE_RANDOM_VIDEO_ASSIGNMENT ? 'assigned' : 'manual'}
@@ -2157,10 +2159,9 @@ const ChatComponent = (props: ChatComponentProps): JSX.Element => {
         onGetStudyProgress={handleGetStudyProgress}
         onMarkPendingPosttestComplete={handleMarkPendingPosttestComplete}
       />
-      <Button component="a" size="small" sx={{ alignSelf: 'flex-end', flexShrink: 0 }}
-        href={studyGuideUrl || undefined} target="_blank" rel="noopener noreferrer"
-        disabled={!studyGuideUrl}>
-        How to use Tutorly
+      <Button size="small" sx={{ alignSelf: 'flex-end', flexShrink: 0 }}
+        onClick={() => setShowUserIDDialog(true)} disabled={!userId}>
+        Study progress
       </Button>
       <MainContainer style={{ flex: 1, minHeight: 0, width: '100%' }}>
         {/* <ModalComponent isOpen={isModalOpen} onClose={handleModalClose} /> */}

@@ -14,7 +14,9 @@ for the frontend extension.
 ## Prolific completion redirects
 
 Set `"study_guide_url": "https://..."` in `survey_codes.json` to enable the
-**How to use Tutorly** buttons in Study Progress and above the chat. The guide
+**How to use Tutorly** button in Study Progress. The **Study progress** button
+above the chat reopens this dialog without restarting the lesson. Its progress
+bar tracks segment navigation, not video watch time. The guide
 opens in a new tab. Leave it blank to disable the buttons. Use a publicly
 viewable HTTPS link; the setting reloads when study progress is fetched.
 

@@ -537,7 +537,6 @@ def plan_methods_for_knowledge(
     mastery: float,
     n_observations: int,
     video_content_type: str,
-    is_last_in_segment: bool,
 ) -> list:
     """Pick the CA methods to teach this knowledge item.
 
@@ -565,9 +564,7 @@ def plan_methods_for_knowledge(
         # 4. mastery ≥ 0.9 AND n_obs ≥ 3 (very high)           → [Exploration]
         # 5. mastery ≥ 0.7 OR (n_obs ≥ 3 AND mastery ≥ 0.3)    → [Articulation]
         # 6. mastery < 0.3 AND n_obs ≥ 3 (chronic-fail)        → [Scaffolding, Coaching]
-        # Last knowledge item also gets a trailing Reflection (show-code
-        # gestalt wrap-up) — EXCEPT Exploration, where the student works a
-        # novel task on their own, so the reference code isn't shown.
+        # plan_methods() adds one full-code Reflection at the segment's end.
         # Programming Articulation is an MC with its own built-in reveal, so
         # it doesn't need a paired Reflection.
         #
@@ -589,14 +586,6 @@ def plan_methods_for_knowledge(
             # back to Scaffolding alone would put them right back into the
             # same dead-end the n_obs bump was meant to fix.
             methods = ["Scaffolding", "Coaching"]
-        # Trailing show-code Reflection for the segment's last item, but not
-        # after Exploration (open task — showing the answer undercuts it).
-        if (
-            is_last_in_segment
-            and methods[-1] != "Reflection"
-            and methods[-1] != "Exploration"
-        ):
-            methods.append("Reflection")
     else:
         # Concept tier table. Scaffolding in concept_action is multiple-
         # choice, which already triggers a BKT update, so n_obs naturally
@@ -647,7 +636,6 @@ def plan_methods(
     Modeling card per item.
     """
     out = []
-    n = len(knowledge_list)
     for i, knowledge in enumerate(knowledge_list):
         if i == 0:
             # Segment opener: a single Modeling card framing the segment.
@@ -662,7 +650,6 @@ def plan_methods(
                 mastery=mastery,
                 n_observations=n_obs,
                 video_content_type=video_content_type,
-                is_last_in_segment=(i == n - 1),
             )
         out.append({"knowledge": knowledge, "method": method})
 
@@ -682,6 +669,9 @@ def plan_methods(
             else:
                 seen_exploration = True
 
+    # Always finish programming with one full-code wrap-up, including Exploration.
+    if video_content_type == "programming" and out:
+        out[-1]["method"].append("Reflection")
     return out
 
 
@@ -762,7 +752,7 @@ prog_action = {
         {
             "action": "Use {interaction} to guide the student through practice exercises, offering targeted hints and feedback",
             "interaction": "fill-in-blanks",
-            "prompt": "[Use one sentence to prompt the student to fill in the {code-line-with-blanks} below to practice the {knowledge}][Provide a brief hint to help them through it]",
+            "prompt": "[Use one sentence to prompt the student to fill in the {code-line-with-blanks} below to practice the {knowledge}][Provide a brief hint to help them through it, the hint should be a like a kind of heuristic thinking about the principle inside {knowledge} so that the student can think of which method and parameters to use rather than being told to use which function directly]",
             "parameters": ["code-line-with-blanks", "knowledge"],
             "need-response": True,
         }
@@ -789,7 +779,7 @@ prog_action = {
         {
             "action": "Encourage the student to independently apply the {knowledge} to a novel task using {interaction}",
             "interaction": "plain-text",
-            "prompt": "[Use one sentence to pose a related but new task that requires the student to adapt the {knowledge} to a different context, such as applying the same function to a different column or dataset][Tell the student to try writing the code in the notebook on their own, and to reply here when they have finished so we can move on]",
+            "prompt": "[Use one sentence to explicitly describe a related but new task that requires the student to adapt the {knowledge} to a different context][Tell the student to try writing the code in the chat on their own]",
             "parameters": ["knowledge"],
             "need-response": True,
         }
@@ -1744,16 +1734,10 @@ class UpdateSeqHandler(APIHandler):
                         {"knowledge": k, "method": _fixed_item_methods()}
                     )
 
-                # Programming: end the segment with a show-code Reflection
-                # (the gestalt wrap-up), matching full_coggen. Skip if the
-                # last item is already a Reflection (e.g. segments 7-8), and
-                # skip on an Exploration segment — there the student attempts a
-                # novel task on their own and replies when done; showing the
-                # reference code afterwards would undercut the open-ended point.
+                # Always end programming with one full-code Reflection.
                 if (
                     content_type == "programming"
-                    and not exploration_single
-                    and len(fixed_method_entries) > 1
+                    and fixed_method_entries
                     and fixed_method_entries[-1]["method"][-1] != "Reflection"
                 ):
                     fixed_method_entries[-1]["method"] = (
